@@ -1,0 +1,8 @@
+node_modules/
+*.log
+.DS_Store
+# Runtime data lives in ~/.config/telegram-mcp, but never commit it if it ends up here.
+config.json
+credentials.json
+session.db*
+token

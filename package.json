@@ -1,0 +1,27 @@
+{
+  "name": "telegram-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Always-on Telegram daemon with a thin per-session MCP bridge for Claude Code",
+  "bin": {
+    "tgmcp": "./src/cli.ts"
+  },
+  "scripts": {
+    "daemon": "bun run src/cli.ts daemon",
+    "mcp": "bun run src/cli.ts mcp",
+    "login": "bun run src/cli.ts login",
+    "status": "bun run src/cli.ts status",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.32.2",
+    "@mtcute/bun": "^0.32.7",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/bun": "^1.4.4",
+    "typescript": "^7.0.2"
+  }
+}

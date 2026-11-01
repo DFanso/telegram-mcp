@@ -1,0 +1,222 @@
+import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
+import { mkdtempSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
+import { Client } from '@modelcontextprotocol/sdk/client/index.js'
+import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
+import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js'
+import { z } from 'zod'
+import { createDaemon } from '../src/daemon/main'
+import { getPaths } from '../src/shared/paths'
+import { ANNA, FakeTelegram, KYC, LEO } from './fake-telegram'
+
+/**
+ * The real thing minus Telegram: the daemon on a random port with a fake Telegram, and the
+ * actual `tgmcp mcp` proxy spawned over stdio the way Claude Code spawns it.
+ */
+
+const home = mkdtempSync(join(tmpdir(), 'tgmcp-e2e-'))
+const paths = getPaths(home)
+writeFileSync(
+  paths.config,
+  JSON.stringify({
+    footer: '\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ',
+    guides: ['Be brief.'],
+    chats: {
+      leo: { id: LEO.id, username: 'leo_p', name: LEO.name },
+      anna: { id: ANNA.id, username: 'anna_k', name: ANNA.name },
+      kyc: { id: KYC.id, name: 'KYC' },
+    },
+    rules: { autoSend: ['leo'], requireApproval: ['kyc'] },
+  }),
+)
+
+const silent = () => {}
+let tg = new FakeTelegram().add(LEO, ANNA, KYC)
+let daemon: Awaited<ReturnType<typeof createDaemon>>
+let port = 0
+
+async function spawnProxy(extraArgs: string[] = [], onElicit?: () => 'accept' | 'decline') {
+  const transport = new StdioClientTransport({
+    command: process.execPath,
+    args: [resolve(import.meta.dir, '../src/cli.ts'), 'mcp', ...extraArgs],
+    env: { ...(process.env as Record<string, string>), TELEGRAM_MCP_HOME: home, TELEGRAM_MCP_PORT: String(port) },
+    stderr: 'ignore',
+  })
+  const client = new Client({ name: 'test', version: '0' }, { capabilities: onElicit ? { elicitation: {} } : {} })
+  if (onElicit) client.setRequestHandler(ElicitRequestSchema, async () => ({ action: onElicit() }))
+  await client.connect(transport)
+  return client
+}
+
+async function call(client: Client, name: string, args: Record<string, unknown> = {}) {
+  const r = (await client.callTool({ name, arguments: args })) as { content: { text: string }[]; isError?: boolean }
+  return { text: r.content.map(c => c.text).join('\n'), isError: r.isError ?? false }
+}
+
+function nextFrame(ws: WebSocket, ms = 5_000): Promise<string> {
+  return new Promise((res, rej) => {
+    const t = setTimeout(() => rej(new Error('no frame')), ms)
+    ws.addEventListener('message', ev => {
+      clearTimeout(t)
+      res(String(ev.data))
+    }, { once: true })
+  })
+}
+
+function openWs(url: string): Promise<WebSocket> {
+  return new Promise((res, rej) => {
+    const ws = new WebSocket(url)
+    ws.onopen = () => res(ws)
+    ws.onerror = () => rej(new Error(`could not open ${url}`))
+  })
+}
+
+async function until(check: () => boolean | Promise<boolean>, ms = 8_000) {
+  const end = Date.now() + ms
+  while (Date.now() < end) {
+    if (await check()) return
+    await Bun.sleep(50)
+  }
+  throw new Error('timed out waiting')
+}
+
+beforeAll(async () => {
+  daemon = await createDaemon({ paths, port: 0, telegram: tg, log: silent })
+  port = daemon.port
+})
+afterAll(async () => {
+  await daemon?.stop()
+})
+
+describe('proxy <-> daemon', () => {
+  test('lists the tools and reports status', async () => {
+    const client = await spawnProxy()
+    const { tools } = await client.listTools()
+    expect(tools.map(t => t.name)).toContain('telegram_send_message')
+    expect(tools).toHaveLength(14)
+    const inst = client.getInstructions() ?? ''
+    expect(inst).toContain('Be brief.')
+    const s = await call(client, 'telegram_status')
+    expect(s.text).toContain('Telegram: connected')
+    await client.close()
+  })
+
+  test('approval goes through the client dialog: decline sends nothing, accept sends', async () => {
+    let answer: 'accept' | 'decline' = 'decline'
+    let asked = 0
+    const client = await spawnProxy([], () => {
+      asked++
+      return answer
+    })
+    const no = await call(client, 'telegram_send_message', { to: 'kyc', text: 'QA please' })
+    expect(asked).toBe(1)
+    expect(no.text).toContain('declined')
+    expect(tg.sent).toHaveLength(0)
+
+    answer = 'accept'
+    const yes = await call(client, 'telegram_send_message', { to: 'kyc', text: 'QA please' })
+    expect(asked).toBe(2)
+    expect(yes.text).toContain('approved')
+    expect(tg.sent.at(-1)).toMatchObject({ chatId: KYC.id, text: 'QA please\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ' })
+
+    const auto = await call(client, 'telegram_send_message', { to: 'leo', text: 'hi' })
+    expect(asked).toBe(2) // autoSend: no dialog
+    expect(auto.text).toContain('Sent to')
+    await client.close()
+  })
+
+  test('without a dialog the model gets an approval id to confirm', async () => {
+    const before = tg.sent.length
+    const client = await spawnProxy()
+    const r = await call(client, 'telegram_send_message', { to: 'kyc', text: 'x' })
+    const id = /Approval id: (a_\w+)/.exec(r.text)?.[1]
+    expect(id).toBeDefined()
+    expect(tg.sent.length).toBe(before)
+    const ok = await call(client, 'telegram_confirm_send', { approvalId: id })
+    expect(ok.isError).toBe(false)
+    expect(tg.sent.length).toBe(before + 1)
+    await client.close()
+  })
+
+  test('watch -> Monitor websocket gets each message; survives a daemon restart', async () => {
+    const client = await spawnProxy()
+    const w = await call(client, 'telegram_watch', { chat: 'anna' })
+    const url = /ws\.url: (\S+)/.exec(w.text)?.[1]
+    expect(url).toBeDefined()
+
+    let ws = await openWs(url!)
+    const first = nextFrame(ws)
+    tg.emit(ANNA.id, 'are you there?')
+    expect(await first).toContain('are you there?')
+
+    // Kill the daemon and start a fresh one on the same port (as launchd would).
+    await daemon.stop()
+    tg = new FakeTelegram().add(LEO, ANNA, KYC)
+    daemon = await createDaemon({ paths, port, telegram: tg, log: silent })
+
+    // The proxy reconnects on its own and restores its watch.
+    await until(() => daemon.hub.isWatching(daemon.hub.summary()[0]?.id ?? '', ANNA.id))
+    ws = await openWs(url!)
+    const second = nextFrame(ws)
+    tg.emit(ANNA.id, 'still here after restart')
+    expect(await second).toContain('still here after restart')
+
+    // Tools keep working through the same MCP connection.
+    const s = await call(client, 'telegram_status')
+    expect(s.text).toContain('Watches:')
+    expect(s.text).toContain('Anna K')
+    ws.close()
+    await client.close()
+  })
+
+  test('messages queue when nothing listens, and tool results say so', async () => {
+    const client = await spawnProxy()
+    await call(client, 'telegram_watch', { chat: 'leo' })
+    tg.emit(LEO.id, 'queued one')
+    const any = await call(client, 'telegram_get_rules')
+    expect(any.text).toContain('1 watched message(s) waiting')
+    const e = await call(client, 'telegram_get_events')
+    expect(e.text).toContain('queued one')
+    await client.close()
+  })
+
+  test('channel mode pushes notifications into the session', async () => {
+    const client = await spawnProxy(['--channel'])
+    const got: { content: string; meta: Record<string, string> }[] = []
+    client.setNotificationHandler(
+      z.object({
+        method: z.literal('notifications/claude/channel'),
+        params: z.object({ content: z.string(), meta: z.record(z.string(), z.string()) }),
+      }),
+      async n => {
+        got.push(n.params)
+      },
+    )
+    const w = await call(client, 'telegram_watch', { chat: 'leo' })
+    expect(w.text).toContain('<channel>')
+    tg.emit(LEO.id, 'pushed!')
+    await until(() => got.length > 0)
+    expect(got[0]!.content).toBe('pushed!')
+    expect(got[0]!.meta).toMatchObject({ chat: 'leo', chat_id: String(LEO.id), from: 'Leo Perera' })
+    await client.close()
+  })
+
+  test('the session survives the daemon being down at first', async () => {
+    await daemon.stop()
+    const client = await spawnProxy()
+    expect((await client.listTools()).tools.length).toBe(14)
+    tg = new FakeTelegram().add(LEO, ANNA, KYC)
+    daemon = await createDaemon({ paths, port, telegram: tg, log: silent })
+    const s = await call(client, 'telegram_status')
+    expect(s.text).toContain('Telegram: connected')
+    await client.close()
+  })
+
+  test('rejects requests without the token', async () => {
+    const res = await fetch(`http://127.0.0.1:${port}/status`)
+    expect(res.status).toBe(401)
+    const health = await fetch(`http://127.0.0.1:${port}/health`)
+    expect(health.status).toBe(200)
+  })
+})

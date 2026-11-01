@@ -1,0 +1,101 @@
+import type { SendOptions, TelegramPort } from '../src/daemon/telegram'
+import type { DialogInfo, IncomingMessage, MessageInfo, PeerInfo, TelegramState } from '../src/shared/protocol'
+
+/** In-memory stand-in for Telegram. Never touches the network. */
+export class FakeTelegram implements TelegramPort {
+  me: PeerInfo = { id: 1, type: 'user', name: 'Me', username: 'me_user', isSelf: true }
+  peers = new Map<number, PeerInfo>()
+  /** Ids that getPeer(id) pretends not to know yet (no access hash), like a fresh session. */
+  uncached = new Set<number>()
+  sent: { chatId: number; text: string; opts: SendOptions }[] = []
+  history = new Map<number, MessageInfo[]>()
+  phase: TelegramState['phase'] = 'connected'
+  #listeners: ((m: IncomingMessage) => void)[] = []
+  #nextId = 1000
+
+  add(...peers: PeerInfo[]): this {
+    for (const p of peers) this.peers.set(p.id, p)
+    return this
+  }
+
+  state(): TelegramState {
+    return { phase: this.phase, me: this.phase === 'connected' ? this.me : null, since: 0, reconnects: 0, lastError: null }
+  }
+  start() {}
+  async stop() {}
+  async reconnect() {}
+  onMessage(cb: (m: IncomingMessage) => void) {
+    this.#listeners.push(cb)
+  }
+
+  emit(chatId: number, text: string, fromId = chatId, extra: Partial<IncomingMessage> = {}): IncomingMessage {
+    const chat = this.peers.get(chatId)!
+    const from = this.peers.get(fromId) ?? null
+    const msg: IncomingMessage = {
+      id: this.#nextId++,
+      chatId,
+      chat,
+      date: new Date().toISOString(),
+      from,
+      outgoing: false,
+      text,
+      media: null,
+      replyToId: null,
+      topicId: null,
+      ...extra,
+    }
+    for (const l of this.#listeners) l(msg)
+    return msg
+  }
+
+  async getPeer(ref: number | string): Promise<PeerInfo> {
+    if (ref === 'me') return this.me
+    if (typeof ref === 'number') {
+      const p = this.peers.get(ref)
+      if (!p || this.uncached.has(ref)) throw new Error(`peer ${ref} not found`)
+      return p
+    }
+    const u = ref.replace(/^@/, '').toLowerCase()
+    for (const p of this.peers.values()) if (p.username?.toLowerCase() === u) return p
+    throw new Error(`USERNAME_NOT_OCCUPIED: @${u}`)
+  }
+
+  async sendText(chatId: number, text: string, opts: SendOptions = {}): Promise<MessageInfo> {
+    this.sent.push({ chatId, text, opts })
+    return {
+      id: this.#nextId++,
+      chatId,
+      date: new Date().toISOString(),
+      from: this.me,
+      outgoing: true,
+      text,
+      media: null,
+      replyToId: opts.replyTo ?? null,
+      topicId: opts.topicId ?? null,
+    }
+  }
+
+  async getHistory(chatId: number, opts: { limit: number }): Promise<MessageInfo[]> {
+    return (this.history.get(chatId) ?? []).slice(-opts.limit)
+  }
+
+  async listDialogs(opts: { limit: number }): Promise<DialogInfo[]> {
+    for (const id of this.uncached) this.uncached.delete(id)
+    return [...this.peers.values()].slice(0, opts.limit).map(peer => ({ peer, unread: 0, pinned: false, lastMessage: null }))
+  }
+
+  async searchChats(query: string): Promise<(PeerInfo & { global: boolean })[]> {
+    const q = query.toLowerCase()
+    return [...this.peers.values()]
+      .filter(p => p.name.toLowerCase().includes(q) || p.username?.toLowerCase().includes(q))
+      .map(p => ({ ...p, global: false }))
+  }
+
+  async markRead() {}
+}
+
+export const LEO: PeerInfo = { id: 10, type: 'user', name: 'Leo Perera', username: 'leo_p' }
+export const LEONARDO: PeerInfo = { id: 11, type: 'user', name: 'Leonardo Silva', username: 'leonardo_s' }
+export const ANNA: PeerInfo = { id: 12, type: 'user', name: 'Anna K', username: 'anna_k' }
+export const KYC: PeerInfo = { id: -1004413557834, type: 'group', name: 'KYC', username: null, isForum: true }
+export const L2: PeerInfo = { id: -1004243362352, type: 'group', name: 'System Testing L2', username: null }
