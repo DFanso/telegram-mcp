@@ -618,20 +618,107 @@ struct RecentChatRow: View {
 
 // MARK: - Menu bar icon
 
+/// The menu bar icon, drawn like Telegram's: a glyph with a small badge on its lower-right corner.
+/// It's a template image, so macOS tints it for light, dark and coloured menu bars. The badge text
+/// is knocked out of the badge (the bar shows through), with a clear ring separating it from the glyph.
+enum MenuBarIcon {
+    static func image(symbol: String, badge: String?) -> NSImage {
+        let size = NSSize(width: badge == nil ? 18 : 22, height: 18)
+        let image = NSImage(size: size, flipped: false) { rect in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
+            if let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: "Telegram MCP")?
+                .withSymbolConfiguration(config) {
+                let g = glyph.size
+                let x = badge == nil ? (rect.width - g.width) / 2 : 1
+                glyph.draw(in: NSRect(x: x, y: (rect.height - g.height) / 2 + 1, width: g.width, height: g.height))
+            }
+            guard let badge else { return true }
+
+            let font = NSFont.systemFont(ofSize: 8.5, weight: .heavy)
+            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black]
+            let textSize = (badge as NSString).size(withAttributes: attrs)
+            let height: CGFloat = 10.5
+            let width = max(height, textSize.width + 4.5)
+            let pill = NSRect(x: rect.width - width, y: 0, width: width, height: height)
+
+            ctx.setBlendMode(.clear) // gap between badge and glyph
+            NSBezierPath(roundedRect: pill.insetBy(dx: -1.4, dy: -1.4), xRadius: height / 2 + 1.4, yRadius: height / 2 + 1.4).fill()
+            ctx.setBlendMode(.normal)
+            NSColor.black.setFill()
+            NSBezierPath(roundedRect: pill, xRadius: height / 2, yRadius: height / 2).fill()
+            ctx.setBlendMode(.destinationOut) // number shows the bar through the badge
+            (badge as NSString).draw(
+                at: NSPoint(x: pill.midX - textSize.width / 2, y: pill.midY - textSize.height / 2 + 0.3),
+                withAttributes: attrs)
+            ctx.setBlendMode(.normal)
+            return true
+        }
+        image.isTemplate = true
+        return image
+    }
+
+    static func badgeText(_ n: Int) -> String { n > 99 ? "99+" : "\(n)" }
+}
+
 struct MenuIcon: View {
     @ObservedObject var store: Store
 
     var body: some View {
         let waiting = store.state?.approvals.count ?? 0
         let healthy = store.reachable && store.state?.telegram.phase == "connected"
+        let symbol = store.listening.isEmpty ? "paperplane" : "paperplane.fill"
         if waiting > 0 {
-            Text("\(Image(systemName: "paperplane.fill")) \(waiting)")
+            Image(nsImage: MenuBarIcon.image(symbol: symbol, badge: MenuBarIcon.badgeText(waiting)))
         } else if !healthy {
-            Image(systemName: "exclamationmark.triangle")
-        } else if !store.listening.isEmpty {
-            Image(systemName: "paperplane.circle")
+            Image(nsImage: MenuBarIcon.image(symbol: symbol, badge: "!"))
         } else {
-            Image(systemName: "paperplane")
+            Image(nsImage: MenuBarIcon.image(symbol: symbol, badge: nil))
+        }
+    }
+}
+
+/// `--icons out.png`: every icon state, tinted the way macOS tints template images, on dark and light bars.
+@MainActor
+enum IconPreview {
+    static func run(to path: String) {
+        _ = NSApplication.shared
+        let states: [(String, String?)] = [
+            ("paperplane", nil), ("paperplane.fill", nil), ("paperplane", "1"),
+            ("paperplane", "2"), ("paperplane.fill", "12"), ("paperplane", "!"),
+        ]
+        let scale: CGFloat = 6
+        let cell = NSSize(width: 34, height: 24)
+        let bars: [(NSColor, NSColor)] = [
+            (NSColor(srgbRed: 0.27, green: 0.20, blue: 0.62, alpha: 1), .white), // tinted (like the screenshot)
+            (NSColor(white: 0.12, alpha: 1), .white),
+            (NSColor(white: 0.93, alpha: 1), .black),
+        ]
+        let size = NSSize(width: cell.width * CGFloat(states.count) * scale, height: cell.height * CGFloat(bars.count) * scale)
+        let out = NSImage(size: size, flipped: false) { _ in
+            for (row, bar) in bars.enumerated() {
+                let y = CGFloat(bars.count - 1 - row) * cell.height * scale
+                bar.0.setFill()
+                NSRect(x: 0, y: y, width: size.width, height: cell.height * scale).fill()
+                for (col, state) in states.enumerated() {
+                    let icon = MenuBarIcon.image(symbol: state.0, badge: state.1)
+                    let tinted = NSImage(size: icon.size, flipped: false) { r in
+                        icon.draw(in: r)
+                        bar.1.setFill()
+                        r.fill(using: .sourceAtop)
+                        return true
+                    }
+                    let w = icon.size.width * scale, h = icon.size.height * scale
+                    let x = CGFloat(col) * cell.width * scale + (cell.width * scale - w) / 2
+                    tinted.draw(in: NSRect(x: x, y: y + (cell.height * scale - h) / 2, width: w, height: h))
+                }
+            }
+            return true
+        }
+        if let tiff = out.tiffRepresentation, let rep = NSBitmapImageRep(data: tiff),
+           let png = rep.representation(using: .png, properties: [:]) {
+            try? png.write(to: URL(fileURLWithPath: path))
+            print("wrote \(path)")
         }
     }
 }
@@ -682,6 +769,10 @@ enum Snapshot {
 enum Main {
     static func main() {
         let args = CommandLine.arguments
+        if let i = args.firstIndex(of: "--icons"), i + 1 < args.count {
+            MainActor.assumeIsolated { IconPreview.run(to: args[i + 1]) }
+            return
+        }
         if let i = args.firstIndex(of: "--snapshot"), i + 1 < args.count {
             MainActor.assumeIsolated { Snapshot.run(to: args[i + 1]) }
             return
