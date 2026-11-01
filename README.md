@@ -134,3 +134,7 @@ bun test          # unit tests + an end-to-end test that spawns the real proxy a
 bun run typecheck
 bun scripts/demo-daemon.ts      # daemon with a fake Telegram and sample state, for working on the menu bar app
 ```
+
+## License
+
+MIT. See [LICENSE](LICENSE).

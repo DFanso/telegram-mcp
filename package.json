@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Always-on Telegram daemon with a thin per-session MCP bridge for Claude Code",
+  "license": "MIT",
   "bin": {
     "tgmcp": "./src/cli.ts"
   },
