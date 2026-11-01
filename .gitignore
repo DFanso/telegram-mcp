@@ -6,3 +6,4 @@ config.json
 credentials.json
 session.db*
 token
+menubar/build/

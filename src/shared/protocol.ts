@@ -81,6 +81,59 @@ export interface ApprovalRequest {
   to: string
   text: string
   reason: string
+  /** The menu bar app is running, so the decision is made there. */
+  uiActive: boolean
+  /** First message to a chat on neither autoSend nor requireApproval: the approver also picks which list it joins. */
+  firstTime: boolean
+  nickname: string | null
+  suggestedNickname: string
+}
+
+// ---- what the menu bar app shows ----------------------------------------------------
+
+export interface SentRecord {
+  at: string
+  chatId: number
+  chatLabel: string
+  text: string
+  messageId: number
+  /** auto = allowed by the rules; menubar / dialog / chat = approved there. */
+  via: 'auto' | 'menubar' | 'dialog' | 'chat'
+  sessionLabel: string | null
+}
+
+export interface UiApproval {
+  id: string
+  to: string
+  detail: string
+  text: string
+  reason: string
+  sessionId: string
+  sessionLabel: string
+  createdAt: string
+  expiresAt: string
+  firstTime: boolean
+  nickname: string | null
+  suggestedNickname: string
+}
+
+export interface UiSession {
+  id: string
+  label: string
+  connected: boolean
+  channel: boolean
+  monitors: number
+  pending: number
+  watches: WatchSpec[]
+}
+
+export interface UiState {
+  telegram: TelegramState
+  configError: string | null
+  footer: string
+  approvals: UiApproval[]
+  sessions: UiSession[]
+  recent: SentRecord[]
 }
 
 export interface ToolResult {

@@ -51,8 +51,15 @@ export const TOOLS = {
   },
   telegram_confirm_send: {
     description:
-      'Send a message that is waiting for approval. Only call this after the user has explicitly said yes to that exact message and recipient in this conversation.',
-    input: z.object({ approvalId: z.string().min(1) }),
+      'Send a message that is waiting for approval. Only call this after the user has explicitly said yes to that exact message and recipient in this conversation. For a first message to a chat, pass remember with what the user chose for next time.',
+    input: z.object({
+      approvalId: z.string().min(1),
+      remember: z
+        .enum(['autoSend', 'requireApproval'])
+        .optional()
+        .describe('First message to a chat only, and only as the user chose: "autoSend" = always allow from now on, "requireApproval" = ask every time (the default).'),
+      nickname: z.string().optional().describe('Nickname to save the chat as, if the user gave one.'),
+    }),
   },
   telegram_cancel_send: {
     description: 'Drop a message that is waiting for approval.',
@@ -76,7 +83,7 @@ export const TOOLS = {
   },
   telegram_watch: {
     description:
-      'Keep listening to a chat and notify this session about each new incoming message until you call telegram_unwatch (or the session ends). Optionally only messages from one sender, or one forum topic.',
+      'Subscribe this session to a chat on the autoReply list: every new incoming message is pushed to every subscribed session until it calls telegram_unwatch (or ends), and replies there go out without approval meanwhile. Optionally only messages from one sender, or one forum topic.',
     input: z.object({
       chat: chatRef,
       from: chatRef.optional().describe('Only messages from this person (useful in groups).'),

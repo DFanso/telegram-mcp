@@ -163,6 +163,29 @@ export function rulesMentioning(config: Config, name: string): RuleList[] {
   )
 }
 
+/** A name no other chat, alias or rule uses yet. */
+export function isFreeNickname(config: Config, name: string): boolean {
+  return validateNickname(name) === null && resolveRef(config, name).kind === 'unknown' && rulesMentioning(config, name).length === 0
+}
+
+/** A nickname for a chat seen for the first time: first name, then username, then full name, then name-2… */
+export function suggestNickname(config: Config, peer: { name: string; username: string | null; type: PeerType }): string {
+  const slug = (s: string) =>
+    normalizeNickname(s)
+      .replace(/[^\p{L}\p{N} _.-]/gu, '')
+      .trim()
+      .replace(/\s+/g, '-')
+  const person = peer.type === 'user' || peer.type === 'bot'
+  const candidates = [
+    person ? slug(peer.name.split(/\s+/)[0] ?? '') : '',
+    peer.username ? normalizeUsername(peer.username) : '',
+    slug(peer.name),
+  ].filter(c => c !== '')
+  for (const c of candidates) if (isFreeNickname(config, c)) return c
+  const base = candidates[0] ?? 'chat'
+  for (let i = 2; ; i++) if (isFreeNickname(config, `${base}-${i}`)) return `${base}-${i}`
+}
+
 export function nicknameFor(config: Config, chatId: number): string | undefined {
   for (const [nickname, entry] of Object.entries(config.chats)) if (entry.id === chatId) return nickname
   return undefined

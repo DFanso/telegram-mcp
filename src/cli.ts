@@ -15,6 +15,9 @@ const HELP = `tgmcp: always-on Telegram daemon + per-session MCP bridge
   tgmcp login         log in to Telegram (interactive; run it in a terminal)
   tgmcp logs          follow the daemon log
   tgmcp config        print the rules file path
+  tgmcp menubar       build and start the menu bar app (approvals, listeners, recent sends) at login
+  tgmcp menubar uninstall
+  tgmcp call <tool> [json]   call a tool as a one-off session, e.g. tgmcp call telegram_get_rules
   tgmcp mcp-add       print the command that registers the MCP server with Claude Code
   tgmcp daemon        run the daemon in the foreground
   tgmcp mcp [--channel]  stdio MCP server (Claude Code starts this, one per session)
@@ -39,6 +42,7 @@ async function status() {
     startedAt: string
     telegram: { phase: string; me: { name: string; username: string | null; id: number } | null; reconnects: number; lastError: string | null; since: number }
     config: { path: string; error: string | null }
+    menubar: boolean
     sessions: { id: string; label: string; connected: boolean; channel: boolean; monitors: number; watches: number; pending: number }[]
   }
   try {
@@ -56,6 +60,7 @@ async function status() {
     `telegram: ${t.phase}${t.me ? ` as ${t.me.name}${t.me.username ? ` (@${t.me.username})` : ''}` : ''}, ${t.reconnects} reconnects${t.lastError && t.phase !== 'connected' ? `\n  last error: ${t.lastError}` : ''}`,
   )
   console.log(`config: ${body.config.path}${body.config.error ? `\n  ${body.config.error}` : ''}`)
+  console.log(`menu bar app: ${body.menubar ? 'connected (approvals go there)' : 'not running (approvals use the Claude Code dialog)'}`)
   console.log(`sessions: ${body.sessions.length}`)
   for (const s of body.sessions) {
     console.log(
@@ -164,6 +169,47 @@ switch (cmd) {
   case 'config':
     console.log(getPaths().config)
     break
+  case 'call': {
+    // Call a tool as a throwaway session: tgmcp call telegram_status '{}'
+    const [tool, json] = rest
+    if (!tool) {
+      console.log('usage: tgmcp call <tool> [json-args]')
+      process.exit(1)
+    }
+    const { DaemonClient } = await import('./mcp/daemon-client')
+    const { newId } = await import('./daemon/sessions')
+    const paths = getPaths()
+    const client = new DaemonClient({
+      url: () => {
+        const token = readToken(paths)
+        return token ? `ws://127.0.0.1:${getPort()}/bridge?token=${token}` : null
+      },
+      sessionId: newId('s_'),
+      label: 'tgmcp call',
+      channel: false,
+      log: () => {},
+    })
+    client.start()
+    try {
+      const { result } = await client.call(tool, json ? JSON.parse(json) : {})
+      console.log(result.text)
+      if (result.isError) process.exitCode = 1
+    } catch (e) {
+      console.error(e instanceof Error ? e.message : e)
+      process.exitCode = 1
+    }
+    client.close()
+    process.exit()
+  }
+  case 'menubar': {
+    const sub = rest[0] ?? 'install'
+    const { buildMenubar, installMenubar, uninstallMenubar } = await import('./launchd')
+    if (sub === 'build') console.log(buildMenubar())
+    else if (sub === 'install') console.log(`Menu bar app running and starts at login: ${installMenubar(getPaths())}`)
+    else if (sub === 'uninstall') console.log(uninstallMenubar() ? 'Removed the menu bar app agent.' : 'It was not installed.')
+    else console.log('usage: tgmcp menubar [install|uninstall|build]')
+    break
+  }
   case 'mcp-add':
     mcpAdd()
     break

@@ -33,11 +33,13 @@ function sameToken(given: string | null, token: string): boolean {
  * Localhost only. Everything except /health needs the token from the token file, which also
  * keeps web pages in a browser (which can reach 127.0.0.1) from reading your messages.
  *
- *   GET  /health             liveness, no auth
- *   GET  /status             JSON status
- *   POST /admin/reconnect    rebuild the Telegram client (used after `tgmcp login`)
- *   WS   /bridge             one per Claude session: the MCP proxy's tool calls and pushes
- *   WS   /events?session=ID  Monitor stream: one text frame per watched message
+ *   GET  /health                 liveness, no auth
+ *   GET  /status                 JSON status
+ *   POST /admin/reconnect        rebuild the Telegram client (used after `tgmcp login`)
+ *   GET  /ui/state               what the menu bar app shows
+ *   POST /ui/approvals/:id       {"decision": "approve" | "deny", "remember"?: "autoSend" | "requireApproval", "nickname"?: "…"}
+ *   WS   /bridge                 one per Claude session: the MCP proxy's tool calls and pushes
+ *   WS   /events?session=ID      Monitor stream: one text frame per watched message
  */
 export function startServer(o: ServerOptions) {
   const send = (ws: ServerWebSocket<WsData>, msg: ServerMessage) => ws.send(JSON.stringify(msg))
@@ -59,10 +61,31 @@ export function startServer(o: ServerOptions) {
       }
       if (url.pathname === '/events') {
         const sid = url.searchParams.get('session')
-        if (!sid || !o.hub.has(sid)) return new Response('unknown session (is the Claude session still running?)\n', { status: 404 })
+        if (!sid || !/^s_[a-z0-9]{8}$/.test(sid)) return new Response('bad session id\n', { status: 400 })
         return server.upgrade(req, { data: { kind: 'events', sessionId: sid } })
           ? undefined
           : new Response('expected a websocket\n', { status: 400 })
+      }
+      if (url.pathname === '/ui/state' && req.method === 'GET') {
+        o.service.touchUi()
+        return Response.json(o.service.uiState())
+      }
+      const decision = /^\/ui\/approvals\/([\w-]+)$/.exec(url.pathname)
+      if (decision && req.method === 'POST') {
+        return (async () => {
+          const body = (await req.json().catch(() => ({}))) as { decision?: unknown; remember?: unknown; nickname?: unknown }
+          if (body.decision !== 'approve' && body.decision !== 'deny') {
+            return Response.json({ ok: false, text: 'decision must be "approve" or "deny"' }, { status: 400 })
+          }
+          const remember = body.remember === 'autoSend' || body.remember === 'requireApproval' ? body.remember : undefined
+          const nickname = typeof body.nickname === 'string' ? body.nickname : undefined
+          try {
+            const r = await o.service.decide(decision[1]!, body.decision === 'approve', 'menubar', null, { remember, nickname })
+            return Response.json({ ok: !r.isError, text: r.text }, { status: r.isError ? 409 : 200 })
+          } catch (e) {
+            return Response.json({ ok: false, text: e instanceof Error ? e.message : String(e) }, { status: 409 })
+          }
+        })()
       }
       if (url.pathname === '/status' && req.method === 'GET') {
         return Response.json({
@@ -70,6 +93,7 @@ export function startServer(o: ServerOptions) {
           startedAt: new Date(o.startedAt).toISOString(),
           telegram: o.tg.state(),
           config: { path: o.store.path, error: o.store.error() },
+          menubar: o.service.uiActive(),
           sessions: o.hub.summary(),
         })
       }
@@ -83,9 +107,7 @@ export function startServer(o: ServerOptions) {
       idleTimeout: 120,
       sendPings: true,
       open(ws) {
-        if (ws.data.kind === 'events' && ws.data.sessionId && !o.hub.attachMonitor(ws.data.sessionId, ws)) {
-          ws.close(4004, 'unknown session')
-        }
+        if (ws.data.kind === 'events' && ws.data.sessionId) o.hub.attachMonitor(ws.data.sessionId, ws)
       },
       message(ws, raw) {
         if (ws.data.kind !== 'bridge') return

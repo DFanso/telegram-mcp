@@ -1,10 +1,13 @@
 import { z } from 'zod'
 import {
   RULE_LISTS,
+  isFreeNickname,
   isListed,
   nicknameFor,
+  suggestNickname,
   normalizeNickname,
   normalizeUsername,
+  rawId,
   resolveRef,
   rulesMentioning,
   validateNickname,
@@ -13,9 +16,10 @@ import {
   type ConfigStore,
 } from '../shared/config'
 import { decideSend, policyLabel, withFooter } from '../shared/policy'
-import type { IncomingMessage, MessageInfo, PeerInfo, TgEvent, ToolResult } from '../shared/protocol'
+import { readFileSync, renameSync, writeFileSync } from 'node:fs'
+import type { IncomingMessage, MessageInfo, PeerInfo, SentRecord, TgEvent, ToolResult, UiState } from '../shared/protocol'
 import { TOOLS, isToolName, type ToolInput, type ToolName } from '../shared/tools'
-import type { Approvals } from './approvals'
+import type { Approvals, DecideOptions, PendingSend } from './approvals'
 import { formatEvent, type SessionHub } from './sessions'
 import type { TelegramPort } from './telegram'
 
@@ -26,6 +30,15 @@ export interface ServiceDeps {
   approvals: Approvals
   /** The Monitor WebSocket url for a session. */
   eventsUrl: (sessionId: string) => string
+  /** Where the last sent messages are kept across restarts (for the menu bar). */
+  recentPath?: string
+}
+
+const VIA_TEXT: Record<SentRecord['via'], string> = {
+  auto: 'by the rules',
+  menubar: 'in the menu bar',
+  dialog: 'in the Claude Code dialog',
+  chat: 'in chat',
 }
 
 interface Target {
@@ -78,9 +91,27 @@ type Handlers = { [N in ToolName]: (sessionId: string, p: ToolInput<N>) => Promi
 
 /** The tools, independent of how they're reached. */
 export class Service {
-  constructor(private readonly d: ServiceDeps) {}
+  #recent: SentRecord[] = []
+  #uiSeen = 0
+
+  constructor(private readonly d: ServiceDeps) {
+    if (d.recentPath) {
+      try {
+        this.#recent = JSON.parse(readFileSync(d.recentPath, 'utf8')) as SentRecord[]
+      } catch {}
+    }
+  }
 
   async call(sessionId: string, method: string, params: unknown): Promise<ToolResult> {
+    // Internal calls from the proxy; never listed to the model.
+    if (method === '__await_approval') {
+      const { approvalId } = params as { approvalId: string }
+      return (await this.d.approvals.wait(approvalId)).result
+    }
+    if (method === '__decide') {
+      const { approvalId, approve, remember, nickname } = params as { approvalId: string; approve: boolean } & DecideOptions
+      return this.decide(approvalId, approve, 'dialog', sessionId, { remember, nickname }).catch(e => fail(errText(e)))
+    }
     if (!isToolName(method)) return fail(`Unknown tool: ${method}`)
     const parsed = TOOLS[method].input.safeParse(params ?? {})
     if (!parsed.success) return fail(`Invalid arguments:\n${z.prettifyError(parsed.error)}`)
@@ -153,6 +184,129 @@ export class Service {
     }
   }
 
+  // ---- approvals, the sent log, the menu bar -------------------------------------------
+
+  touchUi(): void {
+    this.#uiSeen = Date.now()
+  }
+
+  /** The menu bar app polls every 2 s; a few missed polls and approvals fall back to the dialog. */
+  uiActive(): boolean {
+    return Date.now() - this.#uiSeen < 10_000
+  }
+
+  #record(r: Omit<SentRecord, 'at'>) {
+    this.#recent = [...this.#recent, { ...r, at: new Date().toISOString() }].slice(-20)
+    if (!this.d.recentPath) return
+    try {
+      const tmp = `${this.d.recentPath}.tmp`
+      writeFileSync(tmp, JSON.stringify(this.#recent, null, 2), { mode: 0o600 })
+      renameSync(tmp, this.d.recentPath)
+    } catch {}
+  }
+
+  /**
+   * After the first approved message to a chat: save it (if it has no nickname yet) and put it on
+   * the list the approver picked, so the next send there follows that choice.
+   */
+  #remember(item: PendingSend, opts: DecideOptions): string {
+    const list = opts.remember ?? 'requireApproval'
+    const config = this.d.store.get()
+    if (isListed(config, 'autoSend', item.peer) || isListed(config, 'requireApproval', item.peer)) return ''
+    let nick = nicknameFor(config, item.chatId)
+    let note = ''
+    if (!nick) {
+      const wanted = opts.nickname?.trim() ? normalizeNickname(opts.nickname) : item.suggestedNickname
+      if (isFreeNickname(config, wanted)) nick = wanted
+      else {
+        nick = suggestNickname(config, item.peer)
+        note = ` ("${wanted}" was taken or not allowed)`
+      }
+    }
+    const name = nick
+    this.d.store.update(c => {
+      c.chats[name] ??= {
+        id: item.peer.id,
+        username: item.peer.username,
+        name: item.peer.name,
+        type: item.peer.type,
+        aliases: [],
+      }
+      if (!c.rules[list].includes(name)) c.rules[list].push(name)
+    })
+    return list === 'autoSend'
+      ? ` Saved as "${name}"${note} and whitelisted: next messages there send without asking.`
+      : ` Saved as "${name}"${note} with "ask every time": next messages there need approval too.`
+  }
+
+  /** Approve or deny a draft. `sessionId` null = the menu bar, which may decide for any session. */
+  async decide(
+    id: string,
+    approve: boolean,
+    via: 'menubar' | 'dialog' | 'chat',
+    sessionId: string | null,
+    opts: DecideOptions = {},
+  ): Promise<ToolResult> {
+    const item = this.d.approvals.take(id, sessionId)
+    let result: ToolResult
+    if (!approve) {
+      result = { text: `Declined ${VIA_TEXT[via]}: the message to ${item.chatLabel} was not sent.` }
+    } else {
+      // The rules may have changed since the draft was made.
+      const decision = decideSend(this.d.store.get(), { id: item.chatId, username: item.username }, { isWatching: false })
+      if (decision.action === 'block') {
+        result = fail(`Not sent to ${item.chatLabel}: ${decision.reason}.`)
+      } else {
+        try {
+          const sent = await this.d.tg.sendText(item.chatId, item.text, {
+            replyTo: item.replyTo,
+            topicId: item.topicId,
+            parseMode: item.parseMode,
+          })
+          this.#record({ chatId: item.chatId, chatLabel: item.chatLabel, text: item.text, messageId: sent.id, via, sessionLabel: item.sessionLabel })
+          let saved = ''
+          if (item.firstTime) {
+            try {
+              saved = this.#remember(item, opts)
+            } catch (e) {
+              saved = ` (Could not save it to the rules: ${errText(e)})`
+            }
+          }
+          result = { text: `Approved ${VIA_TEXT[via]}. Sent to ${item.chatLabel} (message #${sent.id}).${saved}` }
+        } catch (e) {
+          result = fail(`Approved, but sending to ${item.chatLabel} failed: ${errText(e)}`)
+        }
+      }
+    }
+    this.d.approvals.settle(id, { approved: approve && !result.isError, result })
+    return result
+  }
+
+  uiState(): UiState {
+    const ttl = this.d.approvals.ttlMs
+    return {
+      telegram: this.d.tg.state(),
+      configError: this.d.store.error(),
+      footer: this.d.store.get().footer,
+      approvals: this.d.approvals.list().map(a => ({
+        id: a.id,
+        to: a.chatLabel,
+        detail: a.chatDetail,
+        text: a.text,
+        reason: a.reason,
+        sessionId: a.sessionId,
+        sessionLabel: a.sessionLabel,
+        createdAt: new Date(a.createdAt).toISOString(),
+        expiresAt: new Date(a.createdAt + ttl).toISOString(),
+        firstTime: a.firstTime,
+        nickname: a.nickname,
+        suggestedNickname: a.suggestedNickname,
+      })),
+      sessions: this.d.hub.snapshot().filter(s => s.watches.length > 0 || s.connected),
+      recent: [...this.#recent].reverse(),
+    }
+  }
+
   // ---- delivery hint -------------------------------------------------------------------
 
   #delivery(sessionId: string): string {
@@ -160,11 +314,10 @@ export class Service {
     if (hub.isChannel(sessionId)) return 'New messages arrive by themselves as <channel> events in this session.'
     if (hub.monitorCount(sessionId) > 0) return 'Your Monitor is connected: new messages show up as Monitor notifications.'
     return [
-      'To be notified, start the Monitor tool with:',
+      'Start the Monitor tool now with:',
       `  ws.url: ${this.d.eventsUrl(sessionId)}`,
       '  description: "Telegram watch", timeout_ms: 1800000',
-      'Each message arrives as one notification. When the Monitor expires, start it again with the same url (nothing is lost meanwhile: messages queue up).',
-      'Without a Monitor, telegram_get_events collects whatever arrived.',
+      'Each message arrives as one notification. A Monitor stops after 30 minutes (or if the daemon restarts): whenever it ends while this session still has watches, start it again straight away with the same url, without asking the user. Nothing is lost in between; messages queue up.',
     ].join('\n')
   }
 
@@ -190,7 +343,9 @@ export class Service {
           `  ${w.id}: ${w.chatLabel}${w.fromLabel ? `, only from ${w.fromLabel}` : ''}${w.topicId ? `, topic ${w.topicId}` : ''}${w.note ? ` (${w.note})` : ''}`,
         )
       }
-      if (watches.length && !hub.isChannel(sid) && hub.monitorCount(sid) === 0) lines.push(this.#delivery(sid))
+      if (watches.length && !hub.isChannel(sid)) {
+        lines.push(hub.monitorCount(sid) > 0 ? `Monitor url (connected): ${this.d.eventsUrl(sid)}` : this.#delivery(sid))
+      }
       return { text: lines.join('\n') }
     },
 
@@ -200,6 +355,10 @@ export class Service {
         const r = resolveRef(c, ref)
         if (r.kind === 'entry') return `${r.nickname} (id ${r.entry.id}${r.entry.username ? `, @${r.entry.username}` : ''})`
         if (r.kind === 'unknown') return `${ref} (not a saved nickname: matches nothing)`
+        if (r.kind === 'id') {
+          const same = Object.entries(c.chats).find(([, e]) => rawId(e.id) === rawId(r.id))
+          if (same) return `${ref} (= ${same[1].name ?? same[0]} [${same[0]}])`
+        }
         return String(ref)
       }
       const out = ['Guides:', ...(c.guides.length ? c.guides.map(g => `- ${g}`) : ['- (none)'])]
@@ -273,12 +432,22 @@ export class Service {
       const text = withFooter(p.text, config.footer)
       if (decision.action === 'send') {
         const sent = await this.d.tg.sendText(t.peer.id, text, { replyTo: p.replyTo, topicId, parseMode: p.parseMode })
+        this.#record({ chatId: t.peer.id, chatLabel: t.label, text, messageId: sent.id, via: 'auto', sessionLabel: this.d.hub.label(sid) })
         return { text: `Sent to ${t.label} (message #${sent.id}${topicId ? `, topic ${topicId}` : ''}). Allowed because ${decision.reason}.` }
       }
+      const uiActive = this.uiActive()
+      const firstTime = !isListed(config, 'autoSend', t.peer) && !isListed(config, 'requireApproval', t.peer)
+      const nickname = t.nickname ?? nicknameFor(config, t.peer.id) ?? null
       const pending = this.d.approvals.create({
+        peer: t.peer,
+        firstTime,
+        nickname,
+        suggestedNickname: nickname ?? suggestNickname(config, t.peer),
         sessionId: sid,
+        sessionLabel: this.d.hub.label(sid),
         chatId: t.peer.id,
-        chatLabel: `${t.label} · ${fmtPeer(t.peer)}`,
+        chatLabel: `${t.label}${topicId ? ` · topic ${topicId}` : ''}`,
+        chatDetail: fmtPeer(t.peer),
         username: t.peer.username,
         text,
         replyTo: p.replyTo,
@@ -289,33 +458,36 @@ export class Service {
       return {
         text: [
           `Not sent yet: needs the user's approval (${decision.reason}). Approval id: ${pending.id}`,
-          `To: ${pending.chatLabel}${topicId ? ` · topic ${topicId}` : ''}`,
+          `To: ${pending.chatLabel} (${pending.chatDetail})`,
           'Message:',
           text,
           '',
-          'Show the user this exact message and recipient. Only if they say yes, call telegram_confirm_send with the approval id; otherwise telegram_cancel_send.',
-        ].join('\n'),
-        approval: { id: pending.id, to: pending.chatLabel, text, reason: decision.reason },
+          firstTime
+            ? `First message to this chat: approving also saves it${nickname ? '' : ` (as "${pending.suggestedNickname}")`} and the user picks "always allow" (autoSend) or "ask every time" (requireApproval) for next time.`
+            : null,
+          uiActive
+            ? 'It is waiting in the menu bar for the user to approve or deny.'
+            : `Show the user this exact message and recipient. Only if they say yes, call telegram_confirm_send with the approval id${firstTime ? ' and remember set to what they chose ("autoSend" = always allow, "requireApproval" = ask every time)' : ''}; otherwise telegram_cancel_send.`,
+        ]
+          .filter(line => line !== null)
+          .join('\n'),
+        approval: {
+          id: pending.id,
+          to: pending.chatLabel,
+          text,
+          reason: decision.reason,
+          uiActive,
+          firstTime,
+          nickname,
+          suggestedNickname: pending.suggestedNickname,
+        },
       }
     },
 
-    telegram_confirm_send: async (sid, p) => {
-      const item = this.d.approvals.take(p.approvalId, sid)
-      // The rules may have changed since the draft was made.
-      const decision = decideSend(this.d.store.get(), { id: item.chatId, username: item.username }, { isWatching: false })
-      if (decision.action === 'block') return fail(`Not sent to ${item.chatLabel}: ${decision.reason}.`)
-      const sent = await this.d.tg.sendText(item.chatId, item.text, {
-        replyTo: item.replyTo,
-        topicId: item.topicId,
-        parseMode: item.parseMode,
-      })
-      return { text: `Sent to ${item.chatLabel} (message #${sent.id}).` }
-    },
+    telegram_confirm_send: async (sid, p) =>
+      this.decide(p.approvalId, true, 'chat', sid, { remember: p.remember, nickname: p.nickname }),
 
-    telegram_cancel_send: async (sid, p) => {
-      const item = this.d.approvals.take(p.approvalId, sid)
-      return { text: `Dropped the draft to ${item.chatLabel}. Nothing was sent.` }
-    },
+    telegram_cancel_send: async (sid, p) => this.decide(p.approvalId, false, 'chat', sid),
 
     telegram_save_chat: async (_sid, p) => {
       const problem = validateNickname(p.nickname)
@@ -387,6 +559,11 @@ export class Service {
 
     telegram_watch: async (sid, p) => {
       const t = await this.#resolve(p.chat, false)
+      if (!isListed(this.d.store.get(), 'autoReply', t.peer)) {
+        return fail(
+          `${t.label} is not on the autoReply list, so sessions can't listen to it. Ask the user to add it to rules.autoReply in ${this.d.store.path} (only a human can change the rules), then watch again.`,
+        )
+      }
       const from = p.from !== undefined ? await this.#resolve(p.from, false) : undefined
       const topicId = p.topicId ?? t.entry?.topicId
       const w = this.d.hub.addWatch(sid, {
@@ -397,16 +574,20 @@ export class Service {
         ...(p.note ? { note: p.note } : {}),
       })
       const config = this.d.store.get()
-      const replies = isListed(config, 'autoReply', t.peer) && !isListed(config, 'requireApproval', t.peer) && !isListed(config, 'blocked', t.peer)
-        ? 'This chat is on autoReply: your replies there go out without asking while this watch is on.'
-        : `Replies there follow the normal rules: ${policyLabel(config, t.peer)}.`
+      const replies = isListed(config, 'requireApproval', t.peer) || isListed(config, 'blocked', t.peer)
+        ? `Replies there follow the stricter rule: ${policyLabel(config, t.peer)}.`
+        : 'Your replies there go out without asking while this watch is on.'
+      const others = this.d.hub.subscribers(t.peer.id).filter(id => id !== sid).length
       return {
         text: [
           `Watching ${t.label}${from ? `, only messages from ${from.label}` : ''}${topicId ? `, topic ${topicId}` : ''}. Watch id: ${w.id}.`,
+          others ? `${others} other session(s) also watch this chat; each gets every message.` : null,
           replies,
           this.#delivery(sid),
           'Stop with telegram_unwatch when the user says so.',
-        ].join('\n'),
+        ]
+          .filter(Boolean)
+          .join('\n'),
       }
     },
 

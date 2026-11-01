@@ -27,7 +27,7 @@ writeFileSync(
       anna: { id: ANNA.id, username: 'anna_k', name: ANNA.name },
       kyc: { id: KYC.id, name: 'KYC' },
     },
-    rules: { autoSend: ['leo'], requireApproval: ['kyc'] },
+    rules: { autoSend: ['leo'], requireApproval: ['kyc'], autoReply: ['anna', 'leo'] },
   }),
 )
 
@@ -111,13 +111,13 @@ describe('proxy <-> daemon', () => {
     })
     const no = await call(client, 'telegram_send_message', { to: 'kyc', text: 'QA please' })
     expect(asked).toBe(1)
-    expect(no.text).toContain('declined')
+    expect(no.text).toContain('Declined in the Claude Code dialog')
     expect(tg.sent).toHaveLength(0)
 
     answer = 'accept'
     const yes = await call(client, 'telegram_send_message', { to: 'kyc', text: 'QA please' })
     expect(asked).toBe(2)
-    expect(yes.text).toContain('approved')
+    expect(yes.text).toContain('Approved in the Claude Code dialog')
     expect(tg.sent.at(-1)).toMatchObject({ chatId: KYC.id, text: 'QA please\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ' })
 
     const auto = await call(client, 'telegram_send_message', { to: 'leo', text: 'hi' })
@@ -211,6 +211,72 @@ describe('proxy <-> daemon', () => {
     const s = await call(client, 'telegram_status')
     expect(s.text).toContain('Telegram: connected')
     await client.close()
+  })
+
+  test('first message from the dialog: the choice and nickname are saved', async () => {
+    tg.add({ id: 70, type: 'user', name: 'Nimal Silva', username: 'nimal_s' })
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [resolve(import.meta.dir, '../src/cli.ts'), 'mcp'],
+      env: { ...(process.env as Record<string, string>), TELEGRAM_MCP_HOME: home, TELEGRAM_MCP_PORT: String(port) },
+      stderr: 'ignore',
+    })
+    const client = new Client({ name: 'test', version: '0' }, { capabilities: { elicitation: {} } })
+    let schema: Record<string, unknown> = {}
+    client.setRequestHandler(ElicitRequestSchema, async req => {
+      schema = (req.params as { requestedSchema: { properties: Record<string, unknown> } }).requestedSchema.properties
+      return { action: 'accept', content: { next_time: 'autoSend', nickname: 'nimal' } }
+    })
+    await client.connect(transport)
+    const r = await call(client, 'telegram_send_message', { to: '@nimal_s', text: 'hello' })
+    expect(Object.keys(schema).sort()).toEqual(['next_time', 'nickname'])
+    expect(r.text).toContain('Saved as "nimal" and whitelisted')
+    const again = await call(client, 'telegram_send_message', { to: 'nimal', text: 'second' })
+    expect(again.text).toContain('Sent to')
+    await client.close()
+  })
+
+  test('menu bar approvals: the tool call waits for the click', async () => {
+    const token = daemon.token
+    const ui = (path: string, init?: RequestInit) =>
+      fetch(`http://127.0.0.1:${port}${path}`, { ...init, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' } })
+    // The menu bar app polls; that is what makes approvals go to it instead of the dialog.
+    let dialogs = 0
+    const client = await spawnProxy([], () => {
+      dialogs++
+      return 'decline'
+    })
+    await ui('/ui/state')
+    const before = tg.sent.length
+
+    const pending = call(client, 'telegram_send_message', { to: 'kyc', text: 'from the menu bar' })
+    let id = ''
+    await until(async () => {
+      const s = (await (await ui('/ui/state')).json()) as { approvals: { id: string; text: string }[] }
+      id = s.approvals[0]?.id ?? ''
+      return id !== ''
+    })
+    const res = await ui(`/ui/approvals/${id}`, { method: 'POST', body: JSON.stringify({ decision: 'approve' }) })
+    expect(res.status).toBe(200)
+    const out = await pending
+    expect(out.text).toContain('Approved in the menu bar')
+    expect(dialogs).toBe(0)
+    expect(tg.sent.length).toBe(before + 1)
+
+    const state = (await (await ui('/ui/state')).json()) as { recent: { text: string; via: string }[] }
+    expect(state.recent[0]).toMatchObject({ via: 'menubar' })
+    expect(state.recent[0]!.text).toStartWith('from the menu bar')
+
+    const again = await ui(`/ui/approvals/${id}`, { method: 'POST', body: JSON.stringify({ decision: 'deny' }) })
+    expect(again.status).toBe(409)
+    await client.close()
+  })
+
+  test('a Monitor can connect before its proxy (right after a daemon restart)', async () => {
+    const url = `ws://127.0.0.1:${port}/events?session=s_early123&token=${daemon.token}`
+    const ws = await openWs(url)
+    expect(daemon.hub.has('s_early123')).toBe(true)
+    ws.close()
   })
 
   test('rejects requests without the token', async () => {

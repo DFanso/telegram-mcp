@@ -94,12 +94,30 @@ export class SessionHub {
     s.disconnectedAt = this.#now()
   }
 
-  attachMonitor(id: string, sink: Sink): boolean {
-    const s = this.#sessions.get(id)
-    if (!s) return false
+  /**
+   * A Monitor may connect before its proxy does (right after a daemon restart), so an unknown
+   * session gets a placeholder; the proxy's hello fills it in, or the sweep removes it.
+   */
+  attachMonitor(id: string, sink: Sink): void {
+    const s = this.#ensure(id)
     s.monitors.add(sink)
     this.#flush(s)
-    return true
+  }
+
+  label(id: string): string {
+    return this.#sessions.get(id)?.label ?? id
+  }
+
+  snapshot() {
+    return [...this.#sessions.values()].map(s => ({
+      id: s.id,
+      label: s.label,
+      connected: s.proxy !== null,
+      channel: s.channel,
+      monitors: s.monitors.size,
+      pending: s.queue.length,
+      watches: [...s.watches.values()],
+    }))
   }
 
   detachMonitor(id: string, sink: Sink): void {
@@ -140,6 +158,11 @@ export class SessionHub {
 
   watches(id: string): WatchSpec[] {
     return [...(this.#sessions.get(id)?.watches.values() ?? [])]
+  }
+
+  /** Sessions with at least one watch on this chat. */
+  subscribers(chatId: number): string[] {
+    return [...this.#sessions.values()].filter(s => [...s.watches.values()].some(w => w.chatId === chatId)).map(s => s.id)
   }
 
   isWatching(id: string, chatId: number): boolean {

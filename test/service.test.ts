@@ -37,7 +37,7 @@ const baseConfig = {
     kyc: { id: KYC.id, name: 'KYC', topicId: 246 },
     l2: { id: L2.id, name: 'System Testing L2' },
   },
-  rules: { blocked: [4243362352], requireApproval: ['kyc'], autoSend: ['leo', 'l2'], autoReply: ['anna'] },
+  rules: { blocked: [4243362352], requireApproval: ['kyc'], autoSend: ['leo', 'l2'], autoReply: ['anna', 'leo', 'kyc'] },
 }
 
 describe('sending', () => {
@@ -212,4 +212,138 @@ test('invalid arguments come back as an error, not a crash', async () => {
   const r = await svc.call('s1', 'telegram_send_message', { to: 'leo' })
   expect(r.isError).toBe(true)
   expect(r.text).toContain('Invalid arguments')
+})
+
+describe('autoReply subscriptions', () => {
+  beforeEach(() => setup(baseConfig))
+
+  test('only chats on the autoReply list can be watched', async () => {
+    const r = await svc.call('s1', 'telegram_watch', { chat: 'leonardo' })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('not on the autoReply list')
+    expect(hub.watches('s1')).toHaveLength(0)
+  })
+
+  test('every subscribed session gets every message', async () => {
+    await svc.call('s1', 'telegram_watch', { chat: 'anna' })
+    const second = await svc.call('s2', 'telegram_watch', { chat: 'anna' })
+    expect(second.text).toContain('1 other session(s) also watch this chat')
+    tg.emit(ANNA.id, 'hello both')
+    expect((await svc.call('s1', 'telegram_get_events', {})).text).toContain('hello both')
+    expect((await svc.call('s2', 'telegram_get_events', {})).text).toContain('hello both')
+  })
+
+  test('watching a requireApproval chat still asks before replying', async () => {
+    const w = await svc.call('s1', 'telegram_watch', { chat: 'kyc' })
+    expect(w.text).toContain('stricter rule')
+    const r = await svc.call('s1', 'telegram_send_message', { to: 'kyc', text: 'x' })
+    expect(r.approval).toBeDefined()
+  })
+})
+
+describe('menu bar approvals and the sent log', () => {
+  beforeEach(() => setup(baseConfig))
+
+  test('the menu bar can approve any session\'s draft; waiters hear the outcome', async () => {
+    svc.touchUi()
+    const r = await svc.call('s1', 'telegram_send_message', { to: 'kyc', text: 'QA please' })
+    expect(r.approval?.uiActive).toBe(true)
+    expect(r.text).toContain('menu bar')
+    const waiting = svc.call('s1', '__await_approval', { approvalId: r.approval!.id })
+
+    const state = svc.uiState()
+    expect(state.approvals).toHaveLength(1)
+    expect(state.approvals[0]).toMatchObject({ id: r.approval!.id, sessionLabel: 'one' })
+
+    const decided = await svc.decide(r.approval!.id, true, 'menubar', null)
+    expect(decided.text).toContain('Approved in the menu bar')
+    expect((await waiting).text).toContain('Approved in the menu bar')
+    expect(tg.sent).toHaveLength(1)
+    expect(svc.uiState().approvals).toHaveLength(0)
+  })
+
+  test('deny sends nothing and a second decision is refused', async () => {
+    const r = await svc.call('s1', 'telegram_send_message', { to: 'kyc', text: 'x' })
+    expect(r.approval?.uiActive).toBe(false)
+    const denied = await svc.decide(r.approval!.id, false, 'menubar', null)
+    expect(denied.text).toContain('Declined in the menu bar')
+    await expect(svc.decide(r.approval!.id, true, 'menubar', null)).rejects.toThrow('already declined')
+    expect(tg.sent).toHaveLength(0)
+  })
+
+  test('recent sends, newest first, kept to the last 20', async () => {
+    for (let i = 1; i <= 22; i++) await svc.call('s1', 'telegram_send_message', { to: 'leo', text: `m${i}` })
+    const recent = svc.uiState().recent
+    expect(recent).toHaveLength(20)
+    expect(recent[0]!.text).toStartWith('m22')
+    expect(recent[19]!.text).toStartWith('m3')
+    expect(recent[0]).toMatchObject({ chatLabel: 'Leo Perera [leo]', via: 'auto', sessionLabel: 'one' })
+  })
+})
+
+describe('first message to a new chat', () => {
+  beforeEach(() => setup(baseConfig))
+  const NEW = { id: 60, type: 'user' as const, name: 'Kasun Perera', username: 'kasun_p' }
+  const saved = () => JSON.parse(readFileSync(path, 'utf8'))
+
+  test('needs approval; "always allow" saves it and whitelists it', async () => {
+    tg.add(NEW)
+    const r = await svc.call('s1', 'telegram_send_message', { to: '@kasun_p', text: 'hi' })
+    expect(r.approval).toMatchObject({ firstTime: true, nickname: null, suggestedNickname: 'kasun' })
+    expect(r.text).toContain('First message to this chat')
+
+    const ok = await svc.decide(r.approval!.id, true, 'menubar', null, { remember: 'autoSend' })
+    expect(ok.text).toContain('Saved as "kasun" and whitelisted')
+    expect(saved().chats.kasun).toMatchObject({ id: 60, username: 'kasun_p', name: 'Kasun Perera', type: 'user' })
+    expect(saved().rules.autoSend).toContain('kasun')
+
+    const next = await svc.call('s1', 'telegram_send_message', { to: 'kasun', text: 'again' })
+    expect(next.approval).toBeUndefined()
+    expect(tg.sent).toHaveLength(2)
+  })
+
+  test('"ask every time" saves it on requireApproval; later sends ask without the choice', async () => {
+    tg.add(NEW)
+    const r = await svc.call('s1', 'telegram_send_message', { to: '@kasun_p', text: 'hi' })
+    await svc.decide(r.approval!.id, true, 'menubar', null, { remember: 'requireApproval', nickname: 'Kasun P' })
+    expect(saved().chats['kasun p'].id).toBe(60)
+    expect(saved().rules.requireApproval).toContain('kasun p')
+    const next = await svc.call('s1', 'telegram_send_message', { to: 'kasun p', text: 'again' })
+    expect(next.approval).toMatchObject({ firstTime: false })
+  })
+
+  test('no choice given defaults to ask every time; deny saves nothing', async () => {
+    tg.add(NEW)
+    const denied = await svc.call('s1', 'telegram_send_message', { to: '@kasun_p', text: 'x' })
+    await svc.decide(denied.approval!.id, false, 'menubar', null, { remember: 'autoSend' })
+    expect(saved().chats.kasun).toBeUndefined()
+    expect(saved().rules.autoSend).not.toContain('kasun')
+
+    const r = await svc.call('s1', 'telegram_send_message', { to: '@kasun_p', text: 'y' })
+    await svc.call('s1', 'telegram_confirm_send', { approvalId: r.approval!.id })
+    expect(saved().rules.requireApproval).toContain('kasun')
+  })
+
+  test('a taken nickname falls back to a free one', async () => {
+    tg.add({ id: 61, type: 'user', name: 'Leo Fernando', username: 'leo_f' })
+    const r = await svc.call('s1', 'telegram_send_message', { to: '@leo_f', text: 'x' })
+    expect(r.approval!.suggestedNickname).toBe('leo_f') // "leo" is taken
+    const ok = await svc.decide(r.approval!.id, true, 'menubar', null, { remember: 'autoSend', nickname: 'leonardo' })
+    expect(ok.text).toContain('"leonardo" was taken')
+    expect(saved().chats.leo_f.id).toBe(61)
+    expect(saved().chats.leonardo.id).toBe(LEONARDO.id)
+  })
+
+  test('an already saved chat keeps its nickname and just joins the list', async () => {
+    const r = await svc.call('s1', 'telegram_send_message', { to: 'leonardo', text: 'x' })
+    expect(r.approval).toMatchObject({ firstTime: true, nickname: 'leonardo' })
+    await svc.decide(r.approval!.id, true, 'menubar', null, { remember: 'autoSend' })
+    expect(saved().rules.autoSend).toContain('leonardo')
+    expect(Object.keys(saved().chats).filter(k => saved().chats[k].id === LEONARDO.id)).toEqual(['leonardo'])
+  })
+
+  test('chats already on requireApproval are not "first time"', async () => {
+    const r = await svc.call('s1', 'telegram_send_message', { to: 'kyc', text: 'x' })
+    expect(r.approval!.firstTime).toBe(false)
+  })
 })

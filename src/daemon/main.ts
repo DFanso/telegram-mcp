@@ -1,4 +1,5 @@
-import { ConfigStore } from '../shared/config'
+import { join } from 'node:path'
+import { ConfigStore, isListed } from '../shared/config'
 import { ensureHome, ensureToken, loadCredentials, makeLogger } from '../shared/files'
 import { getPaths, getPort, type Paths } from '../shared/paths'
 import { Approvals } from './approvals'
@@ -35,6 +36,7 @@ export async function createDaemon(o: DaemonOptions) {
     hub,
     approvals,
     eventsUrl: sid => `ws://127.0.0.1:${port}/events?session=${sid}&token=${token}`,
+    recentPath: join(o.paths.home, 'recent.json'),
   })
 
   // Bind first: if another daemon already owns the port, fail before touching the Telegram session.
@@ -43,6 +45,8 @@ export async function createDaemon(o: DaemonOptions) {
   store.watch()
 
   tg.onMessage(msg => {
+    // Taking a chat off autoReply ends listening to it at once, even for existing watches.
+    if (!isListed(store.get(), 'autoReply', msg.chat)) return
     const n = hub.dispatch(msg, m => describeMessage(store, m))
     if (n > 0) log(`message ${msg.chatId}:${msg.id} -> ${n} session(s)`)
   })
