@@ -59,19 +59,19 @@ The daemon listens on `127.0.0.1:47823` (`TELEGRAM_MCP_PORT`).
   "footer": "\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ",        // appended to every message, once
   "defaultPolicy": "approve",                // chats in no list: "approve" or "block"
   "rules": {
-    "blocked":         [4243362352],         // never send
-    "requireApproval": ["kyc-qa"],           // always ask you first ("Ask every time")
+    "blocked":         [5550001111],         // never send
+    "requireApproval": ["team-qa"],          // always ask you first ("Ask every time")
     "autoSend":        ["me", "@someone"],   // send without asking ("Always allow")
     "autoReply":       ["leo"]               // sessions may listen to these chats and reply without asking
   },
   "chats": {
     "leo": { "id": 123456789, "username": "leo_example", "name": "Leo Perera", "aliases": ["leonard"] },
-    "kyc-qa": { "id": -1004413557834, "name": "KYC", "topicId": 246 }
+    "team-qa": { "id": -1001234567890, "name": "Team QA", "topicId": 42 }
   }
 }
 ```
 
-**Lists** take a nickname, an `@username`, a numeric id, or `"me"`. If a chat is on more than one list, the safer list wins: blocked > requireApproval > autoSend > autoReply > defaultPolicy. `blocked` matches the raw id, so `4243362352` also blocks `-1004243362352`.
+**Lists** take a nickname, an `@username`, a numeric id, or `"me"`. If a chat is on more than one list, the safer list wins: blocked > requireApproval > autoSend > autoReply > defaultPolicy. `blocked` matches the raw id, so `5550001111` also blocks `-1005550001111`.
 
 **autoReply** chats are the ones Claude sessions may listen to. A session subscribes with `telegram_watch` and stays subscribed until it says stop. Every incoming message from that chat goes to every subscribed session, and each one decides how to reply (the auto reply happens on the Claude side). While subscribed, a session's replies to that chat go out without approval, unless the chat is also on `requireApproval` or `blocked`. Taking a chat off the list stops delivery at once.
 

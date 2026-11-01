@@ -9,9 +9,9 @@ const config = parseConfig(
     chats: {
       leo: { id: 10, username: 'leo_p', name: 'Leo Perera', aliases: ['lp'] },
       leonardo: { id: 11, username: 'leonardo_s', name: 'Leonardo Silva' },
-      kyc: { id: -1004413557834, name: 'KYC', topicId: 246 },
+      qa: { id: -1001234567890, name: 'Team QA', topicId: 42 },
     },
-    rules: { blocked: [4243362352], autoSend: ['leo', '@anna_k'], requireApproval: ['kyc'] },
+    rules: { blocked: [5550001111], autoSend: ['leo', '@anna_k'], requireApproval: ['qa'] },
   }),
 )
 
@@ -22,7 +22,7 @@ describe('resolveRef', () => {
     expect(resolveRef(config, 'lp')).toMatchObject({ kind: 'entry', nickname: 'leo' })
     expect(resolveRef(config, 'leonardo silva')).toMatchObject({ kind: 'entry', nickname: 'leonardo' })
     expect(resolveRef(config, '@Leo_P')).toMatchObject({ kind: 'entry', nickname: 'leo' })
-    expect(resolveRef(config, '-1004413557834')).toMatchObject({ kind: 'entry', nickname: 'kyc' })
+    expect(resolveRef(config, '-1001234567890')).toMatchObject({ kind: 'entry', nickname: 'qa' })
     expect(resolveRef(config, 11)).toMatchObject({ kind: 'entry', nickname: 'leonardo' })
   })
 
@@ -43,9 +43,9 @@ describe('resolveRef', () => {
 
 describe('lists', () => {
   test('blocked matches raw ids whatever the marking', () => {
-    expect(rawId(-1004243362352)).toBe(4243362352)
-    expect(isListed(config, 'blocked', { id: -1004243362352 })).toBe(true)
-    expect(isListed(config, 'blocked', { id: 4243362352 })).toBe(true)
+    expect(rawId(-1005550001111)).toBe(5550001111)
+    expect(isListed(config, 'blocked', { id: -1005550001111 })).toBe(true)
+    expect(isListed(config, 'blocked', { id: 5550001111 })).toBe(true)
   })
 
   test('allow lists match exactly, by nickname or username', () => {

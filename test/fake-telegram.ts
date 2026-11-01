@@ -97,5 +97,5 @@ export class FakeTelegram implements TelegramPort {
 export const LEO: PeerInfo = { id: 10, type: 'user', name: 'Leo Perera', username: 'leo_p' }
 export const LEONARDO: PeerInfo = { id: 11, type: 'user', name: 'Leonardo Silva', username: 'leonardo_s' }
 export const ANNA: PeerInfo = { id: 12, type: 'user', name: 'Anna K', username: 'anna_k' }
-export const KYC: PeerInfo = { id: -1004413557834, type: 'group', name: 'KYC', username: null, isForum: true }
-export const L2: PeerInfo = { id: -1004243362352, type: 'group', name: 'System Testing L2', username: null }
+export const TEAM_QA: PeerInfo = { id: -1001234567890, type: 'group', name: 'Team QA', username: null, isForum: true }
+export const ALL_HANDS: PeerInfo = { id: -1005550001111, type: 'group', name: 'Company All-Hands', username: null }

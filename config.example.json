@@ -6,8 +6,8 @@
   "footer": "\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ",
   "defaultPolicy": "approve",
   "rules": {
-    "blocked": [4243362352],
-    "requireApproval": ["kyc-qa"],
+    "blocked": [5550001111],
+    "requireApproval": ["team-qa"],
     "autoSend": ["me"],
     "autoReply": ["leo"]
   },
@@ -19,12 +19,12 @@
       "type": "user",
       "aliases": ["leonard"]
     },
-    "kyc-qa": {
-      "id": -1004413557834,
-      "name": "KYC",
+    "team-qa": {
+      "id": -1001234567890,
+      "name": "Team QA",
       "type": "group",
-      "topicId": 246,
-      "notes": "QA Review topic"
+      "topicId": 42,
+      "notes": "QA topic"
     }
   }
 }

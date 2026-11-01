@@ -4,11 +4,11 @@ import { decideSend, withFooter } from '../src/shared/policy'
 
 const config = parseConfig(
   JSON.stringify({
-    chats: { leo: { id: 10 }, anna: { id: 12 }, both: { id: 13 }, l2: { id: -1004243362352 } },
+    chats: { leo: { id: 10 }, anna: { id: 12 }, both: { id: 13 }, allhands: { id: -1005550001111 } },
     rules: {
-      blocked: [4243362352],
+      blocked: [5550001111],
       requireApproval: ['both'],
-      autoSend: ['leo', 'both', 'l2'],
+      autoSend: ['leo', 'both', 'allhands'],
       autoReply: ['anna'],
     },
   }),
@@ -17,7 +17,7 @@ const off = { isWatching: false }
 
 describe('decideSend', () => {
   test('blocked beats everything, even autoSend', () => {
-    expect(decideSend(config, { id: -1004243362352 }, off).action).toBe('block')
+    expect(decideSend(config, { id: -1005550001111 }, off).action).toBe('block')
   })
   test('requireApproval beats autoSend', () => {
     expect(decideSend(config, { id: 13 }, off).action).toBe('approve')

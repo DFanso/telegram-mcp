@@ -28,7 +28,7 @@ const ChatEntrySchema = z.looseObject({
 export type ChatEntry = z.infer<typeof ChatEntrySchema>
 
 const RulesSchema = z.looseObject({
-  /** Never send here, no matter what. Matches on the raw id, so 4243362352 also blocks -1004243362352. */
+  /** Never send here, no matter what. Matches on the raw id, so 5550001111 also blocks -1005550001111. */
   blocked: z.array(ChatRefSchema).default([]),
   /** Every send needs a human yes first. */
   requireApproval: z.array(ChatRefSchema).default([]),

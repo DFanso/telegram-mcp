@@ -8,7 +8,7 @@ import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { createDaemon } from '../src/daemon/main'
 import { getPaths } from '../src/shared/paths'
-import { ANNA, FakeTelegram, KYC, LEO } from './fake-telegram'
+import { ANNA, FakeTelegram, TEAM_QA, LEO } from './fake-telegram'
 
 /**
  * The real thing minus Telegram: the daemon on a random port with a fake Telegram, and the
@@ -25,14 +25,14 @@ writeFileSync(
     chats: {
       leo: { id: LEO.id, username: 'leo_p', name: LEO.name },
       anna: { id: ANNA.id, username: 'anna_k', name: ANNA.name },
-      kyc: { id: KYC.id, name: 'KYC' },
+      qa: { id: TEAM_QA.id, name: 'Team QA' },
     },
-    rules: { autoSend: ['leo'], requireApproval: ['kyc'], autoReply: ['anna', 'leo'] },
+    rules: { autoSend: ['leo'], requireApproval: ['qa'], autoReply: ['anna', 'leo'] },
   }),
 )
 
 const silent = () => {}
-let tg = new FakeTelegram().add(LEO, ANNA, KYC)
+let tg = new FakeTelegram().add(LEO, ANNA, TEAM_QA)
 let daemon: Awaited<ReturnType<typeof createDaemon>>
 let port = 0
 
@@ -109,16 +109,16 @@ describe('proxy <-> daemon', () => {
       asked++
       return answer
     })
-    const no = await call(client, 'telegram_send_message', { to: 'kyc', text: 'QA please' })
+    const no = await call(client, 'telegram_send_message', { to: 'qa', text: 'QA please' })
     expect(asked).toBe(1)
     expect(no.text).toContain('Declined in the Claude Code dialog')
     expect(tg.sent).toHaveLength(0)
 
     answer = 'accept'
-    const yes = await call(client, 'telegram_send_message', { to: 'kyc', text: 'QA please' })
+    const yes = await call(client, 'telegram_send_message', { to: 'qa', text: 'QA please' })
     expect(asked).toBe(2)
     expect(yes.text).toContain('Approved in the Claude Code dialog')
-    expect(tg.sent.at(-1)).toMatchObject({ chatId: KYC.id, text: 'QA please\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ' })
+    expect(tg.sent.at(-1)).toMatchObject({ chatId: TEAM_QA.id, text: 'QA please\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ' })
 
     const auto = await call(client, 'telegram_send_message', { to: 'leo', text: 'hi' })
     expect(asked).toBe(2) // autoSend: no dialog
@@ -129,7 +129,7 @@ describe('proxy <-> daemon', () => {
   test('without a dialog the model gets an approval id to confirm', async () => {
     const before = tg.sent.length
     const client = await spawnProxy()
-    const r = await call(client, 'telegram_send_message', { to: 'kyc', text: 'x' })
+    const r = await call(client, 'telegram_send_message', { to: 'qa', text: 'x' })
     const id = /Approval id: (a_\w+)/.exec(r.text)?.[1]
     expect(id).toBeDefined()
     expect(tg.sent.length).toBe(before)
@@ -152,7 +152,7 @@ describe('proxy <-> daemon', () => {
 
     // Kill the daemon and start a fresh one on the same port (as launchd would).
     await daemon.stop()
-    tg = new FakeTelegram().add(LEO, ANNA, KYC)
+    tg = new FakeTelegram().add(LEO, ANNA, TEAM_QA)
     daemon = await createDaemon({ paths, port, telegram: tg, log: silent })
 
     // The proxy reconnects on its own and restores its watch.
@@ -206,7 +206,7 @@ describe('proxy <-> daemon', () => {
     await daemon.stop()
     const client = await spawnProxy()
     expect((await client.listTools()).tools.length).toBe(14)
-    tg = new FakeTelegram().add(LEO, ANNA, KYC)
+    tg = new FakeTelegram().add(LEO, ANNA, TEAM_QA)
     daemon = await createDaemon({ paths, port, telegram: tg, log: silent })
     const s = await call(client, 'telegram_status')
     expect(s.text).toContain('Telegram: connected')
@@ -249,7 +249,7 @@ describe('proxy <-> daemon', () => {
     await ui('/ui/state')
     const before = tg.sent.length
 
-    const pending = call(client, 'telegram_send_message', { to: 'kyc', text: 'from the menu bar' })
+    const pending = call(client, 'telegram_send_message', { to: 'qa', text: 'from the menu bar' })
     let id = ''
     await until(async () => {
       const s = (await (await ui('/ui/state')).json()) as { approvals: { id: string; text: string }[] }
