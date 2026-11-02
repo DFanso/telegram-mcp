@@ -146,6 +146,7 @@ Nothing is sent unless you accept. Drafts expire after 20 minutes. The rules are
 | `telegram_send_message` | send, following the rules |
 | `telegram_send_file` | send a local file with a caption, following the same rules (but see files to watched chats, above); credentials and this tool's own files are always refused |
 | `telegram_send_sticker` | re-send a sticker someone posted (by chat and message id), following the same rules; stickers take no caption, so no footer |
+| `telegram_page` | page the user for something that needs a human now: the desktop rings until they ack, and the phone gets a push (see [Pages](#pages)) |
 | `telegram_answer_reply` | make this session answer `/reply`: type `/reply` (or `/reply <what to say>`) in any chat from your own account and that chat is handed to the session; `/reply stop` takes it back |
 | `telegram_download_media` | save a message's file, photo, video or voice note and return the path |
 | `telegram_confirm_send` / `telegram_cancel_send` | approval fallback for clients without dialogs |
@@ -163,6 +164,36 @@ Nothing is sent unless you accept. Drafts expire after 20 minutes. The rules are
 3. **Queue**: `telegram_get_events` drains it. Every other tool result also mentions when messages are waiting.
 
 A session's watches outlive a daemon restart, because the proxy re-sends them. They also outlive a proxy blip for 5 minutes. They end when the Claude session ends.
+
+## Pages
+
+A page is for something that needs you now: production down, a blocker someone is waiting on, "call me". The menu bar app (macOS) or the tray app (Windows) plays a looping alarm and opens a window above everything, and it keeps ringing until you press **Ack** or **Snooze** (15 minutes or an hour). With a pager bot, your phone gets the page as a push too, with the same buttons. An Ack anywhere stops it everywhere.
+
+Only the daemon decides what pages, from the `paging` section of the rules file:
+
+```jsonc
+"paging": {
+  "pageFrom": [5550001111],          // numeric user ids whose "/page <reason>" pages you (a username can change hands)
+  "vip": ["team-qa"],                // chats where a keyword alone pages you
+  "keywords": ["urgent", "down", "prod", "asap"],
+  "retryMinutes": 5, "tries": 3,     // phone retries while nobody acks
+  "perSenderMinutes": 10             // at most one page per sender in this window
+}
+```
+
+- **`/page <reason>`** from someone on `pageFrom` pages you. Anyone else's `/page` is ignored, and so is your own.
+- **A keyword** (as a whole word) pages you only in a `vip` chat. Elsewhere, "urgent" pages no one.
+- **Claude** can page you with `telegram_page`, under the same rate limit.
+
+The sender gets fixed replies, never text Claude wrote and never their own reason echoed back: "Paging Leo now. I'll tell you when they've seen it.", "Leo saw it.", and, if nobody acks after the last try on the phone, "Leo hasn't seen it yet. Try calling." The desktop keeps ringing after that. A page only ever notifies you; its reason is shown as text and nothing in it is acted on. Every page, retry, ack and snooze is written to `pages.jsonl` in the home folder (without the reason). Pages live in the daemon's memory, so a restart drops the ones still ringing.
+
+**The phone.** Messages from your own account don't buzz your phone, so pages reach it through a bot of your own:
+
+1. Make one with [@BotFather](https://t.me/BotFather) (`/newbot`), then run `tgmcp page setup` and paste its token. It goes to the keystore.
+2. Open the bot, press **Start**, and keep that chat unmuted, or the phone won't buzz.
+3. `tgmcp restart`, then `tgmcp page test` to hear the alarm, check the volume and try Ack.
+
+The bot only messages the account you're logged in as, and ignores button presses from anyone else.
 
 ## Menu bar app
 
