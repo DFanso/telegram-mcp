@@ -1,13 +1,13 @@
 #!/usr/bin/env bun
 import { spawn } from 'node:child_process'
-import { resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
 import { ensureHome } from './shared/files'
 import { getPaths, getPort } from './shared/paths'
 import { FileSecretStore, loadCredentials, openSecretStore, readToken, saveCredentials } from './shared/secrets'
 import { ConfigStore } from './shared/config'
+import { VERSION, isCompiled, selfCommand, shellJoin } from './shared/runtime'
 
-const HELP = `tgmcp: always-on Telegram daemon + per-session MCP bridge
+const HELP = `tgmcp ${VERSION}: always-on Telegram daemon + per-session MCP bridge
 
   tgmcp install       install/refresh the launchd agent (starts now and at every login, restarts on exit)
   tgmcp uninstall     remove the launchd agent
@@ -24,6 +24,7 @@ const HELP = `tgmcp: always-on Telegram daemon + per-session MCP bridge
   tgmcp mcp-add       print the command that registers the MCP server with Claude Code
   tgmcp daemon        run the daemon in the foreground
   tgmcp mcp [--channel]  stdio MCP server (Claude Code starts this, one per session)
+  tgmcp version       print the version
 
 Files live in ${getPaths().home} (override with TELEGRAM_MCP_HOME). Port ${getPort()} (TELEGRAM_MCP_PORT).
 Secrets (login key, API token, api_hash) live in the OS keystore; TELEGRAM_MCP_SECRET_STORE=file keeps them in files.`
@@ -156,11 +157,11 @@ async function login(askCredentials: boolean) {
 }
 
 function mcpAdd() {
-  const cli = resolve(import.meta.dir, 'cli.ts')
+  const self = shellJoin(selfCommand())
   console.log('Register for every project (user scope):\n')
-  console.log(`  claude mcp add --scope user tg -- ${process.execPath} ${cli} mcp\n`)
+  console.log(`  claude mcp add --scope user tg -- ${self} mcp\n`)
   console.log('Optional push mode (messages appear in the session by themselves; needs the dev-channels flag at launch):\n')
-  console.log(`  claude mcp add --scope user tg -- ${process.execPath} ${cli} mcp --channel`)
+  console.log(`  claude mcp add --scope user tg -- ${self} mcp --channel`)
   console.log('  claude --dangerously-load-development-channels server:tg')
 }
 
@@ -270,6 +271,11 @@ switch (cmd) {
   }
   case 'mcp-add':
     mcpAdd()
+    break
+  case 'version':
+  case '--version':
+  case '-v':
+    console.log(`tgmcp ${VERSION} (${isCompiled() ? `release build, ${process.platform}-${process.arch}` : `from source, bun ${Bun.version}`})`)
     break
   default:
     console.log(HELP)

@@ -1,10 +1,14 @@
 {
   "name": "telegram-mcp",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
   "description": "Always-on Telegram daemon with a thin per-session MCP bridge for Claude Code",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/iddhi-sulakshana/telegram-mcp.git"
+  },
   "bin": {
     "tgmcp": "./src/cli.ts"
   },

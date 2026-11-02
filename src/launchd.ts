@@ -1,8 +1,9 @@
 import { spawnSync } from 'node:child_process'
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
-import { dirname, join, resolve } from 'node:path'
+import { dirname, join } from 'node:path'
 import { LAUNCHD_LABEL, type Paths } from './shared/paths'
+import { isCompiled, repoRoot, selfCommand } from './shared/runtime'
 
 export const plistPath = join(homedir(), 'Library', 'LaunchAgents', `${LAUNCHD_LABEL}.plist`)
 const domain = () => `gui/${process.getuid?.() ?? 0}`
@@ -18,9 +19,11 @@ function passThrough(env: Record<string, string>) {
   return env
 }
 
-/** A user LaunchAgent: starts at login, restarts whenever the daemon exits. */
-export function buildPlist(paths: Paths): string {
-  const cli = resolve(import.meta.dir, 'cli.ts')
+/**
+ * A user LaunchAgent: starts at login, restarts whenever the daemon exits. It runs whichever
+ * tgmcp ran `tgmcp install`: a release binary, or bun with this checkout's src/cli.ts.
+ */
+export function buildPlist(paths: Paths, compiled = isCompiled()): string {
   const env = passThrough({
     PATH: `${dirname(process.execPath)}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin`,
     TELEGRAM_MCP_HOME: paths.home,
@@ -35,11 +38,9 @@ export function buildPlist(paths: Paths): string {
     <key>Label</key><string>${LAUNCHD_LABEL}</string>
     <key>ProgramArguments</key>
     <array>
-      <string>${esc(process.execPath)}</string>
-      <string>${esc(cli)}</string>
-      <string>daemon</string>
+${[...selfCommand(compiled), 'daemon'].map(a => `      <string>${esc(a)}</string>`).join('\n')}
     </array>
-    <key>WorkingDirectory</key><string>${esc(resolve(import.meta.dir, '..'))}</string>
+    <key>WorkingDirectory</key><string>${esc(compiled ? paths.home : repoRoot)}</string>
     <key>EnvironmentVariables</key>
     <dict>
 ${envXml}
@@ -98,17 +99,38 @@ export function restartAgent(): void {
 
 export const MENUBAR_LABEL = 'com.telegram-mcp.menubar'
 export const menubarPlistPath = join(homedir(), 'Library', 'LaunchAgents', `${MENUBAR_LABEL}.plist`)
-const repoRoot = resolve(import.meta.dir, '..')
+const APP_NAME = 'Telegram MCP.app'
 
+/** Builds menubar/ into menubar/build/ (needs a checkout and Xcode's command line tools). */
 export function buildMenubar(): string {
+  if (isCompiled()) {
+    throw new Error('Building the menu bar app needs a checkout of telegram-mcp. A release already includes it: run `tgmcp menubar`.')
+  }
   const r = spawnSync(join(repoRoot, 'menubar', 'build.sh'), { encoding: 'utf8' })
   if (r.status !== 0) throw new Error(`menu bar build failed:\n${r.stdout}${r.stderr}`)
   return r.stdout.trim().split('\n').at(-1)!
 }
 
+/**
+ * The menu bar app a release installed: TELEGRAM_MCP_MENUBAR_APP, next to the binary, or in
+ * ~/Applications or /Applications (where the release installer puts it).
+ */
+export function findMenubarApp(candidates = [
+  process.env.TELEGRAM_MCP_MENUBAR_APP,
+  join(dirname(process.execPath), APP_NAME),
+  join(homedir(), 'Applications', APP_NAME),
+  join('/Applications', APP_NAME),
+]): string {
+  const app = candidates.find(p => p && existsSync(join(p, 'Contents', 'MacOS', 'TelegramMCPBar')))
+  if (!app) {
+    throw new Error(`Couldn't find "${APP_NAME}". The release installer puts it in ~/Applications; run it again, or set TELEGRAM_MCP_MENUBAR_APP to the app's path.`)
+  }
+  return app
+}
+
 /** Starts at login; restarts after a crash but stays quit when you choose Quit. */
 export function installMenubar(paths: Paths): string {
-  const app = buildMenubar()
+  const app = isCompiled() ? findMenubarApp() : buildMenubar()
   const env = passThrough({ TELEGRAM_MCP_HOME: paths.home })
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">

@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/social-preview.svg" width="100%" alt="telegram-mcp: let Claude use your Telegram, and send only what you allow. One always-on Telegram daemon, shared by every Claude Code session.">
+</p>
+
 # telegram-mcp
 
 Telegram for Claude Code, through **one always-on daemon** instead of a Telegram connection per session.
@@ -22,9 +26,19 @@ Claude session C ─┘                                          127.0.0.1      
 
 ## Setup
 
+Install a prebuilt binary. On macOS and Linux it goes into `~/.local/bin`, and on macOS the menu bar app goes into `~/Applications`. On Windows, `tgmcp.exe` and the tray app go into `%LOCALAPPDATA%\Programs\tgmcp`, which is added to your PATH:
+
 ```sh
-bun install
-bun link                          # puts `tgmcp` on your PATH (or use `bun run src/cli.ts …`)
+curl --proto '=https' --tlsv1.2 -LsSf https://github.com/iddhi-sulakshana/telegram-mcp/releases/latest/download/tgmcp-installer.sh | sh
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -c "irm https://github.com/iddhi-sulakshana/telegram-mcp/releases/latest/download/tgmcp-installer.ps1 | iex"
+```
+
+or run it from a checkout with [Bun](https://bun.sh): `bun install && bun link` puts `tgmcp` on your PATH (or use `bun run src/cli.ts …`). Then:
+
+```sh
 tgmcp install                     # launchd agent: starts the daemon now and at every login
 tgmcp login                       # in a terminal: api_id/api_hash (if not saved yet), phone, code, 2FA
                                   # (tgmcp login --credentials to enter api_id/api_hash again)
@@ -32,6 +46,10 @@ tgmcp menubar                     # menu bar app (macOS) or tray app (Windows): 
 tgmcp mcp-add                     # prints the `claude mcp add` command for your paths
 tgmcp status
 ```
+
+`tgmcp install` (the launchd agent) is macOS-only. On Linux, run `tgmcp daemon` from a systemd user service (or any way that keeps it running). On Windows, keep `tgmcp daemon` running in a terminal. `tgmcp menubar` starts the menu bar app on macOS and the [tray app](#tray-app-windows) on Windows. Everything else works the same.
+
+**Upgrading** a release: run the installer again, then `tgmcp install && tgmcp menubar` to restart both on the new version. Each new version is a new program to macOS, so it asks once more whether tgmcp and "Telegram MCP" may use the "telegram-mcp" Keychain item: choose **Always Allow**. **Moving from a checkout to a release**: `tgmcp install` points the launchd agent at whichever `tgmcp` runs it, so check `which tgmcp` (a `bun link` in `~/.bun/bin` may come first on your PATH), then run `tgmcp install`, `tgmcp menubar` and `tgmcp mcp-add` again. Your config, login and secrets stay where they are.
 
 `tgmcp call <tool> '<json>'` runs any tool as a one-off session, e.g. `tgmcp call telegram_get_rules`.
 
@@ -211,6 +229,25 @@ export TELEGRAM_MCP_HOME=/tmp/tgmcp-demo TELEGRAM_MCP_PORT=47901 TELEGRAM_MCP_SE
 "$APP" --snapshot docs/menubar-approvals.png
 SNAPSHOT_HOVER=recent SNAPSHOT_SCREEN_HEIGHT=4000 "$APP" --snapshot /tmp/history-full.png   # SNAPSHOT_HOVER: 1, approvals or recent
 SNAPSHOT_PAGE=contacts SNAPSHOT_OPEN=team-qa "$APP" --snapshot docs/menubar-contacts.png    # SNAPSHOT_OPEN: a nickname to open
+```
+
+### Releasing
+
+Releases are built by [`.github/workflows/release.yml`](.github/workflows/release.yml), like key-vault-for-llm's:
+
+1. Set the new version in `package.json` and add a `## <version>` section at the top of [CHANGELOG.md](CHANGELOG.md). It becomes the release's "What's new".
+2. Merge that to `main`, then tag it and push the tag:
+   ```sh
+   git tag v1.2.3 && git push origin v1.2.3
+   ```
+
+The workflow runs the tests and `bun scripts/release.ts`. That builds `tgmcp` for Apple Silicon and Intel macOS, x64 and ARM64 Linux, and x64 Windows (`bun build --compile`, so no Bun is needed to run it), plus a universal menu bar app for the macOS archives. It writes a SHA-256 checksum for every file, and the two installers with the version filled in. Each build is then installed with its own installer on its own platform, and the daemon is started there. Only if all of that passes is the GitHub release published. A tag that doesn't match `package.json`, or a version without a CHANGELOG section, stops the build. A tag with a suffix (`v1.3.0-rc.1`) is published as a prerelease. Pull requests that touch these files run the same build and install checks without publishing.
+
+To build locally (the cross-compile downloads Bun for each platform into Bun's install cache):
+
+```sh
+bun scripts/release.ts --out /tmp/tgmcp-dist                                # every platform
+bun scripts/release.ts --out /tmp/tgmcp-dist --targets aarch64-apple-darwin  # just one
 ```
 
 ## License

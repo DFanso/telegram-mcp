@@ -12,3 +12,4 @@ tray/build/
 tray/**/bin/
 tray/**/obj/
 tray/TestResults/
+dist/
