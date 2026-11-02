@@ -212,3 +212,52 @@ describe('telegram_send_file', () => {
     expect(tg.sentFiles).toHaveLength(0)
   })
 })
+
+describe('telegram_send_sticker', () => {
+  function setup() {
+    const dir = mkdtempSync(join(tmpdir(), 'tgmcp-'))
+    const path = join(dir, 'config.json')
+    writeFileSync(
+      path,
+      JSON.stringify({
+        footer: '\n\n-- sent by a bot',
+        chats: { leo: { id: LEO.id, username: 'leo_p', name: LEO.name }, anna: { id: ANNA.id, username: 'anna_k', name: ANNA.name } },
+        rules: { autoSend: ['leo'], requireApproval: ['anna'] },
+      }),
+    )
+    const tg = new FakeTelegram().add(LEO, ANNA)
+    tg.stickers.add(`${ANNA.id}:77`)
+    const svc = new Service({ store: new ConfigStore(path), tg, hub: new SessionHub(), approvals: new Approvals(), eventsUrl: () => 'ws://x', mcpHome: join(dir, 'mcp') })
+    return { tg, svc }
+  }
+
+  test('an autoSend chat gets the sticker at once, with no footer and nothing uploaded', async () => {
+    const { tg, svc } = setup()
+    const r = await svc.call('s1', 'telegram_send_sticker', { to: 'leo', fromChat: 'anna', messageId: 77, replyTo: 5 })
+    expect(r.isError).toBeFalsy()
+    expect(tg.sentStickers).toHaveLength(1)
+    expect(tg.sentStickers[0]).toMatchObject({ chatId: LEO.id, from: { chatId: ANNA.id, messageId: 77 }, opts: { replyTo: 5 } })
+    expect(tg.sent).toHaveLength(0)
+    expect(tg.sentFiles).toHaveLength(0)
+    expect(svc.uiState().recent.at(-1)!.text).toBe('[sticker]')
+  })
+
+  test('a chat that needs approval waits, then sends the sticker', async () => {
+    const { tg, svc } = setup()
+    tg.stickers.add(`${LEO.id}:9`)
+    const r = await svc.call('s1', 'telegram_send_sticker', { to: 'anna', fromChat: 'leo', messageId: 9 })
+    expect(r.approval!.text).toBe('[sticker]')
+    expect(svc.uiState().approvals[0]!.text).toBe('[sticker]')
+    expect(tg.sentStickers).toHaveLength(0)
+    await svc.call('s1', 'telegram_confirm_send', { approvalId: r.approval!.id })
+    expect(tg.sentStickers).toHaveLength(1)
+  })
+
+  test('a message without a sticker is an error', async () => {
+    const { tg, svc } = setup()
+    const r = await svc.call('s1', 'telegram_send_sticker', { to: 'leo', fromChat: 'anna', messageId: 1 })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('not a sticker')
+    expect(tg.sentStickers).toHaveLength(0)
+  })
+})

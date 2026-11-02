@@ -25,7 +25,7 @@ import type { IncomingMessage, MessageInfo, PeerInfo, SendMode, SentRecord, TgEv
 import { TOOLS, isToolName, type ToolInput, type ToolName } from '../shared/tools'
 import type { Approvals, DecideOptions, PendingSend } from './approvals'
 import { formatEvent, type SessionHub } from './sessions'
-import type { SendFileOptions, TelegramPort } from './telegram'
+import type { SendFileOptions, StickerRef, TelegramPort } from './telegram'
 
 export interface ServiceDeps {
   store: ConfigStore
@@ -81,6 +81,8 @@ function autoReplyText(c: UiContact): string {
   if (c.sendMode === 'blocked') return "auto-reply on: sessions may listen there, but can't reply (blocked wins)"
   return 'auto-reply on: sessions may listen there and reply without asking while they listen'
 }
+
+const STICKER_TEXT = '[sticker]'
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 const fail = (text: string): ToolResult => ({ text, isError: true })
@@ -232,7 +234,14 @@ export class Service {
     return Date.now() - this.#uiSeen < 10_000
   }
 
-  #deliver(chatId: number, text: string, file: OutgoingFile | undefined, opts: SendFileOptions): Promise<MessageInfo> {
+  #deliver(
+    chatId: number,
+    text: string,
+    file: OutgoingFile | undefined,
+    opts: SendFileOptions,
+    sticker?: StickerRef,
+  ): Promise<MessageInfo> {
+    if (sticker) return this.d.tg.sendSticker(chatId, sticker, opts)
     return file ? this.d.tg.sendFile(chatId, file, text, opts) : this.d.tg.sendText(chatId, text, opts)
   }
 
@@ -304,13 +313,15 @@ export class Service {
           if (file && item.fileDigest && (await fileDigest(file.path)) !== item.fileDigest) {
             throw new Error(`${file.path} changed after approval was asked, so it was not sent. Ask again to send the current version.`)
           }
-          const sent = await this.#deliver(item.chatId, item.text, file, {
-            replyTo: item.replyTo,
-            topicId: item.topicId,
-            parseMode: item.parseMode,
-            asPhoto: item.asPhoto,
-          })
-          this.#record({ chatId: item.chatId, chatLabel: item.chatLabel, text: describeOutgoing(item.text, file), messageId: sent.id, via, sessionLabel: item.sessionLabel })
+          const sent = await this.#deliver(
+            item.chatId,
+            item.text,
+            file,
+            { replyTo: item.replyTo, topicId: item.topicId, parseMode: item.parseMode, asPhoto: item.asPhoto },
+            item.sticker,
+          )
+          const shown = item.sticker ? STICKER_TEXT : describeOutgoing(item.text, file)
+          this.#record({ chatId: item.chatId, chatLabel: item.chatLabel, text: shown, messageId: sent.id, via, sessionLabel: item.sessionLabel })
           let saved = ''
           if (item.firstTime) {
             try {
@@ -382,7 +393,7 @@ export class Service {
         id: a.id,
         to: a.chatLabel,
         detail: a.chatDetail,
-        text: describeOutgoing(a.text, a.file, true),
+        text: a.sticker ? STICKER_TEXT : describeOutgoing(a.text, a.file, true),
         reason: a.reason,
         sessionId: a.sessionId,
         sessionLabel: a.sessionLabel,
@@ -401,7 +412,7 @@ export class Service {
   async #send(
     sid: string,
     p: { to: ChatRef; replyTo?: number; topicId?: number; parseMode: 'plain' | 'markdown' | 'html' },
-    draft: { text: string; file?: string; asPhoto?: boolean },
+    draft: { text: string; file?: string; asPhoto?: boolean; sticker?: StickerRef },
   ): Promise<ToolResult> {
     const config = this.d.store.get()
     const t = await this.#resolve(p.to, true)
@@ -410,18 +421,25 @@ export class Service {
     const decision = decideSend(config, t.peer, { isWatching: this.d.hub.isWatching(sid, t.peer.id), file: file !== undefined })
     if (decision.action === 'block') return fail(`Not sent to ${t.label}: ${decision.reason}.`)
     // A file with no caption still carries the footer, without the blank lines that lead into it.
-    const footed = withFooter(draft.text, config.footer)
+    // A sticker takes no caption, so it goes out without the footer.
+    const footed = draft.sticker ? '' : withFooter(draft.text, config.footer)
     const text = file && draft.text.trim() === '' ? footed.trimStart() : footed
-    const shown = describeOutgoing(text, file)
+    const shown = draft.sticker ? STICKER_TEXT : describeOutgoing(text, file)
     if (decision.action === 'send') {
-      const sent = await this.#deliver(t.peer.id, text, file, { replyTo: p.replyTo, topicId, parseMode: p.parseMode, asPhoto: draft.asPhoto })
+      const sent = await this.#deliver(
+        t.peer.id,
+        text,
+        file,
+        { replyTo: p.replyTo, topicId, parseMode: p.parseMode, asPhoto: draft.asPhoto },
+        draft.sticker,
+      )
       this.#record({ chatId: t.peer.id, chatLabel: t.label, text: shown, messageId: sent.id, via: 'auto', sessionLabel: this.d.hub.label(sid) })
       return { text: `Sent to ${t.label} (message #${sent.id}${topicId ? `, topic ${topicId}` : ''}). Allowed because ${decision.reason}.` }
     }
     const uiActive = this.uiActive()
     const firstTime = !isListed(config, 'autoSend', t.peer) && !isListed(config, 'requireApproval', t.peer)
     const nickname = t.nickname ?? nicknameFor(config, t.peer.id) ?? null
-    const asked = describeOutgoing(text, file, true)
+    const asked = draft.sticker ? STICKER_TEXT : describeOutgoing(text, file, true)
     const pending = this.d.approvals.create({
       peer: t.peer,
       firstTime,
@@ -437,6 +455,7 @@ export class Service {
       file,
       ...(file ? { fileDigest: await fileDigest(file.path) } : {}),
       asPhoto: draft.asPhoto,
+      sticker: draft.sticker,
       replyTo: p.replyTo,
       topicId,
       parseMode: p.parseMode,
@@ -604,6 +623,11 @@ export class Service {
     telegram_send_message: async (sid, p) => this.#send(sid, p, { text: p.text }),
 
     telegram_send_file: async (sid, p) => this.#send(sid, p, { text: p.caption ?? '', file: p.path, asPhoto: p.asPhoto }),
+
+    telegram_send_sticker: async (sid, p) => {
+      const from = await this.#resolve(p.fromChat, false)
+      return this.#send(sid, { ...p, parseMode: 'plain' }, { text: '', sticker: { chatId: from.peer.id, messageId: p.messageId } })
+    },
 
     telegram_confirm_send: async (sid, p) =>
       this.decide(p.approvalId, true, 'chat', sid, { remember: p.remember, nickname: p.nickname }),

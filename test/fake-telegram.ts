@@ -1,6 +1,6 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { SendFileOptions, SendOptions, TelegramPort } from '../src/daemon/telegram'
+import type { SendFileOptions, SendOptions, StickerRef, TelegramPort } from '../src/daemon/telegram'
 import type { DialogInfo, DownloadedFile, IncomingMessage, MessageInfo, PeerInfo, TelegramState } from '../src/shared/protocol'
 import { downloadFileName, type OutgoingFile } from '../src/shared/media'
 
@@ -91,6 +91,26 @@ export class FakeTelegram implements TelegramPort {
       outgoing: true,
       text: caption,
       media: opts.asPhoto ? 'photo' : `document: ${file.name}`,
+      replyToId: opts.replyTo ?? null,
+      topicId: opts.topicId ?? null,
+    }
+  }
+
+  /** Message refs (`${chatId}:${messageId}`) that hold a sticker. */
+  stickers = new Set<string>()
+  sentStickers: { chatId: number; from: StickerRef; opts: SendOptions }[] = []
+
+  async sendSticker(chatId: number, from: StickerRef, opts: SendOptions = {}): Promise<MessageInfo> {
+    if (!this.stickers.has(`${from.chatId}:${from.messageId}`)) throw new Error(`Message #${from.messageId} has no attachment, not a sticker.`)
+    this.sentStickers.push({ chatId, from, opts })
+    return {
+      id: this.#nextId++,
+      chatId,
+      date: new Date().toISOString(),
+      from: this.me,
+      outgoing: true,
+      text: '',
+      media: 'sticker',
       replyToId: opts.replyTo ?? null,
       topicId: opts.topicId ?? null,
     }

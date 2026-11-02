@@ -19,6 +19,12 @@ export interface SendOptions {
   parseMode?: 'plain' | 'markdown' | 'html'
 }
 
+/** Where a sticker to re-send was posted. */
+export interface StickerRef {
+  chatId: number
+  messageId: number
+}
+
 export interface SendFileOptions extends SendOptions {
   /** Send an image as a compressed photo instead of a file. */
   asPhoto?: boolean
@@ -34,6 +40,8 @@ export interface TelegramPort {
   getPeer(ref: number | string): Promise<PeerInfo>
   sendText(chatId: number, text: string, opts?: SendOptions): Promise<MessageInfo>
   sendFile(chatId: number, file: OutgoingFile, caption: string, opts?: SendFileOptions): Promise<MessageInfo>
+  /** Re-send the sticker attached to an existing message (by its Telegram file id, nothing is uploaded). */
+  sendSticker(chatId: number, from: StickerRef, opts?: SendOptions): Promise<MessageInfo>
   getHistory(chatId: number, opts: { limit: number; beforeId?: number; topicId?: number }): Promise<MessageInfo[]>
   listDialogs(opts: { limit: number; unreadOnly: boolean }): Promise<DialogInfo[]>
   searchChats(query: string, limit: number): Promise<(PeerInfo & { global: boolean })[]>
@@ -416,6 +424,20 @@ export class MtcuteTelegram implements TelegramPort {
       ? InputMedia.photo(local, { caption: text })
       : InputMedia.document(local, { caption: text, fileName: file.name, fileSize: file.size })
     const sent = await c.sendMedia(chatId, media, {
+      ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
+      ...(opts.topicId ? { threadId: opts.topicId } : {}),
+    })
+    return messageInfo(sent)
+  }
+
+  async sendSticker(chatId: number, from: StickerRef, opts: SendOptions = {}): Promise<MessageInfo> {
+    const c = await this.#ready()
+    const [m] = await c.getMessages(from.chatId, [from.messageId])
+    if (!m) throw new Error(`Message #${from.messageId} not found in that chat.`)
+    if (m.media?.type !== 'sticker') {
+      throw new Error(`Message #${from.messageId} has ${m.media ? `a ${m.media.type}` : 'no attachment'}, not a sticker.`)
+    }
+    const sent = await c.sendMedia(chatId, m.media.fileId, {
       ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
       ...(opts.topicId ? { threadId: opts.topicId } : {}),
     })
