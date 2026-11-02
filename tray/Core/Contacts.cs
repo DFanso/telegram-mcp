@@ -34,6 +34,10 @@ public static class Contacts
 
     public static Tag? AutoReplyTag(UiContact c) => c.AutoReply ? new("auto-reply", TagKind.Info) : null;
 
+    /// <summary>Blocked by its own rule, or on no list while the default blocks: nothing is sent there, pages included.</summary>
+    public static bool Blocked(UiContact c, string? defaultPolicy) =>
+        c.SendMode == "blocked" || (c.SendMode == "none" && defaultPolicy == "block");
+
     public static Tag? PageFromTag(UiContact c) => c.PagesMe ? new("can page me", TagKind.Warn) : null;
 
     public static string Subtitle(UiContact c) =>

@@ -174,7 +174,7 @@ public sealed class ContactVM : Observable
     }
 
     public string PageButtonText => _paging ? "Paging…" : "Page";
-    bool CanSendPage => !_paging && _c.SendMode != "blocked";
+    bool CanSendPage => !_paging && !Contacts.Blocked(_c, _defaultPolicy);
 
     public bool IsOpen => _panel.OpenNickname == Nickname;
     public string Chevron => IsOpen ? "" : "";

@@ -1060,7 +1060,7 @@ struct ContactRow: View {
                             Label(paging ? "Paging…" : "Page", systemImage: "bell.and.waves.left.and.right.fill")
                         }
                         .buttonStyle(PillButton(tint: .red, filled: true))
-                        .disabled(paging || contact.sendMode == "blocked")
+                        .disabled(paging || blocked)
                         .help("Sends \u{201C}/page <reason>\u{201D} to \(contact.nickname) from your account. It rings them if you\u{2019}re on their pageFrom.")
                     }
                 }
@@ -1095,8 +1095,13 @@ struct ContactRow: View {
         Task { await store.editContact(contact.nickname, change) }
     }
 
+    /// Blocked by its own rule, or on no list while the default blocks: the daemon refuses a page.
+    private var blocked: Bool {
+        contact.sendMode == "blocked" || (contact.sendMode == "none" && defaultPolicy == "block")
+    }
+
     private func page() {
-        guard !paging else { return }
+        guard !paging, !blocked else { return }
         let why = reason
         Task { if await store.pageContact(contact.nickname, reason: why) { reason = "" } }
     }

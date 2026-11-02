@@ -124,6 +124,17 @@ public class ContactsTests
     static UiContact Person(bool? pageable, bool? pageFrom) =>
         new("leo", 1188107983, "Leo F", "dfansoo", "user", null, [], null, "autoSend", false, "policy", [], pageable, pageFrom);
 
+    [Theory]
+    [InlineData("blocked", "approve", true)]
+    [InlineData("none", "block", true)]
+    [InlineData("none", "approve", false)]
+    [InlineData("autoSend", "block", false)]
+    [InlineData("requireApproval", "block", false)]
+    public void Blocked_counts_the_default_rule(string mode, string defaultPolicy, bool blocked)
+    {
+        Assert.Equal(blocked, Contacts.Blocked(C(sendMode: mode), defaultPolicy));
+    }
+
     [Fact]
     public void Can_page_me_tag_only_when_on()
     {

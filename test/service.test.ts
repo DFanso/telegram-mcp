@@ -477,6 +477,14 @@ describe('paging from the Contacts page', () => {
     expect(tg.sent).toHaveLength(0)
   })
 
+  test('a contact whose username changed is not paged, and a block by the new @username applies', async () => {
+    setup({ ...baseConfig, chats: { ...baseConfig.chats, anna: { id: ANNA.id, username: 'anna_old', name: ANNA.name } } })
+    expect((await svc.pageContact('anna', 'x')).text).toContain('was @anna_old, but Telegram now says @anna_k')
+    setup({ ...baseConfig, rules: { ...baseConfig.rules, blocked: ['@anna_k'] } })
+    expect((await svc.pageContact('anna', 'x')).text).toBe('Not paged: "anna" is blocked (this chat is on the blocked list).')
+    expect(tg.sent).toHaveLength(0)
+  })
+
   test('a long reason is cut at a whole character', () => {
     const long = '🔥'.repeat(PAGE_REASON_MAX + 50)
     const cut = pageReason(long)

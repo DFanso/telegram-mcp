@@ -470,12 +470,15 @@ export class Service {
       return { ok: false, text: `Not paged: ${errText(e)}` }
     }
     const { nickname: key, entry } = target
-    const rule = decideSend(config, { id: entry.id, username: entry.username }, { isWatching: false })
-    if (rule.action === 'block') return { ok: false, text: `Not paged: "${key}" is blocked (${rule.reason}).` }
     const why = pageReason(reason)
     const text = why ? `/page ${why}` : '/page'
     try {
-      const sent = await this.#deliver(entry.id, text, undefined, { parseMode: 'plain' })
+      // Like any send: the saved id must still have the saved username, and the rules are checked
+      // against the live chat, so a block by its current @username applies too.
+      const { peer } = await this.#verifyEntry(key, entry, true)
+      const rule = decideSend(config, peer, { isWatching: false })
+      if (rule.action === 'block') return { ok: false, text: `Not paged: "${key}" is blocked (${rule.reason}).` }
+      const sent = await this.#deliver(peer.id, text, undefined, { parseMode: 'plain' })
       this.#record({ chatId: entry.id, chatLabel: key, text, messageId: sent.id, via: 'menubar', sessionLabel: null })
       return { ok: true, text: `Paged ${key}. If you're on their pageFrom, their desktop rings and you'll hear back here.` }
     } catch (e) {
