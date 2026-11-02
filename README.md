@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/social-preview.svg" width="100%" alt="telegram-mcp: let Claude use your Telegram, and send only what you allow. One always-on Telegram daemon, shared by every Claude Code session.">
+</p>
+
 # telegram-mcp
 
 Telegram for Claude Code, through **one always-on daemon** instead of a Telegram connection per session.

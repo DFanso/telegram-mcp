@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640">
+<defs>
+  <radialGradient id="glow" cx="80%" cy="10%" r="70%">
+    <stop offset="0" stop-color="#2aabee" stop-opacity="0.30"/>
+    <stop offset="1" stop-color="#0d1117" stop-opacity="0"/>
+  </radialGradient>
+</defs>
+<rect width="1280" height="640" fill="#0d1117"/>
+<rect width="1280" height="640" fill="url(#glow)"/>
+
+<g transform="translate(80 102)">
+  <circle cx="16" cy="16" r="16" fill="#2aabee"/>
+  <path d="M7.2 15.6 L23.4 9.3 C24.2 9 24.9 9.5 24.6 10.7 L21.9 23.5 C21.7 24.4 21.1 24.6 20.3 24.2 L16.2 21.2 L14.2 23.1 C14 23.3 13.8 23.5 13.4 23.5 L13.7 19.3 L21.3 12.4 C21.6 12.1 21.2 12 20.8 12.2 L11.4 18.1 L7.3 16.8 C6.4 16.5 6.4 15.9 7.2 15.6 Z" fill="#ffffff"/>
+</g>
+
+<g font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif">
+  <text x="124" y="128" fill="#8b949e" font-size="26" font-family="ui-monospace, Consolas, Menlo, monospace">iddhi-sulakshana / telegram-mcp</text>
+  <text x="80" y="210" fill="#f0f6fc" font-size="64" font-weight="700">Let Claude use your Telegram,</text>
+  <text x="80" y="284" fill="#f0f6fc" font-size="64" font-weight="700">and send only <tspan fill="#2aabee">what you allow.</tspan></text>
+  <text x="80" y="340" fill="#c9d1d9" font-size="28">One always-on Telegram daemon, shared by every Claude Code session.</text>
+</g>
+
+<g font-family="ui-monospace, Consolas, Menlo, monospace" font-size="22">
+  <rect x="80" y="380" width="1120" height="164" rx="12" fill="#161b22" stroke="#30363d"/>
+  <circle cx="106" cy="404" r="7" fill="#ff5f57"/>
+  <circle cx="130" cy="404" r="7" fill="#febc2e"/>
+  <circle cx="154" cy="404" r="7" fill="#28c840"/>
+  <text x="104" y="448" fill="#6e7681">claude</text>
+  <text x="200" y="448" fill="#c9d1d9">telegram_send_message(to: <tspan fill="#a5d6ff">"team-qa"</tspan>, text: <tspan fill="#a5d6ff">"v2.3 is on staging"</tspan>)</text>
+  <text x="104" y="482" fill="#6e7681">daemon</text>
+  <text x="200" y="482" fill="#c9d1d9"><tspan fill="#d29922" font-weight="700">waiting for approval</tspan> · team-qa is on requireApproval</text>
+  <text x="104" y="516" fill="#6e7681">you</text>
+  <text x="200" y="516" fill="#c9d1d9"><tspan fill="#3fb950" font-weight="700">✓ Approve</tspan> in the menu bar → Sent to Team QA (message #4211)</text>
+</g>
+
+<g font-family="'Segoe UI', -apple-system, Helvetica, Arial, sans-serif" font-size="22" fill="#8b949e">
+  <text x="80" y="592">MCP · approvals · contacts · watch &amp; auto-reply · files</text>
+  <text x="1200" y="592" text-anchor="end">Bun · TypeScript · SwiftUI menu bar</text>
+</g>
+</svg>
