@@ -113,6 +113,8 @@ Downloads go to `~/Downloads/telegram-mcp/<chat>/` (`TELEGRAM_MCP_DOWNLOADS`), n
 
 **Lists** take a nickname, an `@username`, a numeric id, or `"me"`. If a chat is on more than one list, the safer list wins: blocked > requireApproval > autoSend > autoReply > defaultPolicy. `blocked` matches the raw id, so `5550001111` also blocks `-1005550001111`.
 
+**/reply** hands one chat to the session that called `telegram_answer_reply`, for two hours or until `/reply stop`. Typing `/reply` in that chat counts as your approval, so the session's replies there go out without asking even when the chat is on `requireApproval`; `blocked` still refuses, and files still ask. Only a `/reply` you type on your phone or desktop counts: messages the daemon sent itself are ignored, and Claude cannot send a message that starts with `/reply`, formatted or not.
+
 **autoReply** chats are the ones Claude sessions may listen to. A session subscribes with `telegram_watch` and stays subscribed until it says stop. Every incoming message from that chat goes to every subscribed session, and each one decides how to reply (the auto reply happens on the Claude side). While subscribed, a session's replies to that chat go out without approval, unless the chat is also on `requireApproval` or `blocked`.
 
 **Files to a watched chat always ask**, even when the chat is on `autoSend`. While a session watches a chat it acts on what people there write, so "send me that file" may be their request, not yours. Text replies still follow the lists. Files to an `autoSend` chat that the session isn't watching go out without asking. Taking a chat off the list stops delivery at once.

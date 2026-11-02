@@ -30,6 +30,17 @@ describe('parsing /reply', () => {
     expect(looksLikeReplyCommand('  /reply hi')).toBe(true)
     expect(looksLikeReplyCommand('use /reply to hand me a chat')).toBe(false)
   })
+
+  test('the send guard sees through formatting', () => {
+    for (const t of ['**/reply** hi', '_/reply_', '`/reply`', '||/reply||', '[/reply](https://x.y)']) {
+      expect(looksLikeReplyCommand(t, 'markdown')).toBe(true)
+    }
+    for (const t of ['<b>/reply</b>', '<i> /reply stop</i>', '&#47;reply', '&#x2F;reply', '&sol;reply']) {
+      expect(looksLikeReplyCommand(t, 'html')).toBe(true)
+    }
+    expect(looksLikeReplyCommand('<b>use</b> /reply', 'html')).toBe(false)
+    expect(looksLikeReplyCommand('**use** /reply', 'markdown')).toBe(false)
+  })
 })
 
 describe('policy', () => {
@@ -141,6 +152,37 @@ describe('takeover', () => {
     const r = await svc.call('s1', 'telegram_send_message', { to: 'anna', text: '/reply stop' })
     expect(r.isError).toBe(true)
     expect(tg.sent).toHaveLength(0)
+  })
+
+  test('Claude may not send /reply hidden in markdown or html either', async () => {
+    const { tg, svc } = setup({ autoSend: ['anna'] })
+    const md = await svc.call('s1', 'telegram_send_message', { to: 'anna', text: '**/reply**', parseMode: 'markdown' })
+    const html = await svc.call('s1', 'telegram_send_message', { to: 'anna', text: '<b>/reply</b>', parseMode: 'html' })
+    expect(md.isError).toBe(true)
+    expect(html.isError).toBe(true)
+    expect(tg.sent).toHaveLength(0)
+  })
+
+  test("the echo of a message the daemon sent is never read as the user's /reply", async () => {
+    const { tg, hub, svc } = setup({ autoSend: ['anna'] })
+    await svc.call('s1', 'telegram_answer_reply', {})
+    // Telegram reports our own sends back as outgoing messages, with the formatting stripped.
+    // Echo before the send returns, the order that leaves the least room.
+    const send = tg.sendText.bind(tg)
+    tg.sendText = async (chatId, text, opts) => {
+      const p = send(chatId, text, opts)
+      const m = await p
+      tg.emit(chatId, '/reply', 1, { id: m.id, outgoing: true, from: tg.me })
+      return p
+    }
+    await svc.call('s1', 'telegram_send_message', { to: 'anna', text: 'hello' })
+    await flush()
+    expect(hub.takeoverOf(ANNA.id)).toBeNull()
+    expect(tg.deleted).toHaveLength(0)
+    // A /reply the user really types still works.
+    mine(tg, ANNA.id, '/reply')
+    await flush()
+    expect(hub.takeoverOf(ANNA.id)).toBe('s1')
   })
 
   test('the notice reads as a takeover, not a chat message', () => {

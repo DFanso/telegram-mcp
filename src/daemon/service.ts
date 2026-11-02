@@ -131,6 +131,10 @@ type Handlers = { [N in ToolName]: (sessionId: string, p: ToolInput<N>) => Promi
 export class Service {
   #recent: SentRecord[] = []
   #uiSeen = 0
+  /** Messages the daemon sent itself (`chatId:id`), so their echo is never read as a /reply typed by the user. */
+  #ownSent = new Set<string>()
+  /** Sends still on the way, per chat: the echo can arrive before the send returns its id. */
+  #inflight = new Map<number, Set<Promise<unknown>>>()
 
   get #mcpHome(): string {
     return this.d.mcpHome ?? join(homedir(), '.config', 'telegram-mcp')
@@ -247,6 +251,9 @@ export class Service {
     if (!msg.outgoing) return false
     const cmd = parseReplyCommand(msg.text)
     if (!cmd) return false
+    // Only a /reply typed on the phone or desktop counts, never one the daemon sent.
+    await Promise.allSettled(this.#inflight.get(msg.chatId) ?? [])
+    if (this.#ownSent.has(`${msg.chatId}:${msg.id}`)) return false
     const { hub, store, tg } = this.d
     const base = describeMessage(store, msg)
     let sid: string | null
@@ -269,8 +276,25 @@ export class Service {
     opts: SendFileOptions,
     sticker?: StickerRef,
   ): Promise<MessageInfo> {
-    if (sticker) return this.d.tg.sendSticker(chatId, sticker, opts)
-    return file ? this.d.tg.sendFile(chatId, file, text, opts) : this.d.tg.sendText(chatId, text, opts)
+    const { tg } = this.d
+    const sending = sticker
+      ? tg.sendSticker(chatId, sticker, opts)
+      : file
+        ? tg.sendFile(chatId, file, text, opts)
+        : tg.sendText(chatId, text, opts)
+    const inflight = this.#inflight.get(chatId) ?? new Set()
+    this.#inflight.set(chatId, inflight.add(sending))
+    void sending
+      .then(m => {
+        this.#ownSent.add(`${chatId}:${m.id}`)
+        if (this.#ownSent.size > 1000) this.#ownSent.delete(this.#ownSent.values().next().value!)
+      })
+      .catch(() => {})
+      .finally(() => {
+        inflight.delete(sending)
+        if (inflight.size === 0) this.#inflight.delete(chatId)
+      })
+    return sending
   }
 
   #record(r: Omit<SentRecord, 'at'>) {
@@ -446,7 +470,7 @@ export class Service {
     const t = await this.#resolve(p.to, true)
     const file = draft.file ? checkSendable(draft.file, { mcpHome: this.#mcpHome }) : undefined
     const topicId = p.topicId ?? t.entry?.topicId
-    if (looksLikeReplyCommand(draft.text)) return fail('Not sent: a message starting with /reply would start a takeover. Reword it.')
+    if (looksLikeReplyCommand(draft.text, p.parseMode)) return fail('Not sent: a message starting with /reply would start a takeover. Reword it.')
     const decision = decideSend(config, t.peer, {
       isWatching: this.d.hub.isWatching(sid, t.peer.id),
       file: file !== undefined,
