@@ -118,6 +118,12 @@ describe('telegram_send_file', () => {
     expect(tg.sent).toHaveLength(0)
   })
 
+  test('a text message keeps its leading spaces', async () => {
+    const { tg, svc } = setup()
+    await svc.call('s1', 'telegram_send_message', { to: 'leo', text: '    indented code' })
+    expect(tg.sent[0]!.text).toBe(`    indented code${FOOTER}`)
+  })
+
   test('no caption still gets the footer, without leading blank lines', async () => {
     const { tg, svc, report } = setup()
     await svc.call('s1', 'telegram_send_file', { to: 'leo', path: report })
