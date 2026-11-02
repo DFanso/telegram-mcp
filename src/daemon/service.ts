@@ -15,12 +15,13 @@ import {
   type ChatRef,
   type ConfigStore,
 } from '../shared/config'
+import { listContacts, renameContact, setAutoReply, setSendMode } from '../shared/contacts'
 import { decideSend, policyLabel, withFooter } from '../shared/policy'
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { checkSendable, describeOutgoing, fileDigest, fmtBytes, safeFileName, type OutgoingFile } from '../shared/media'
-import type { IncomingMessage, MessageInfo, PeerInfo, SentRecord, TgEvent, ToolResult, UiState } from '../shared/protocol'
+import type { IncomingMessage, MessageInfo, PeerInfo, SendMode, SentRecord, TgEvent, ToolResult, UiContact, UiState } from '../shared/protocol'
 import { TOOLS, isToolName, type ToolInput, type ToolName } from '../shared/tools'
 import type { Approvals, DecideOptions, PendingSend } from './approvals'
 import { formatEvent, type SessionHub } from './sessions'
@@ -54,6 +55,31 @@ interface Target {
   entry?: ChatEntry
   label: string
   warning?: string
+}
+
+/** A Contacts-page edit: any of these, applied in this order. */
+export interface ContactChange {
+  nickname: string
+  sendMode?: SendMode
+  autoReply?: boolean
+  rename?: string
+}
+
+const SEND_MODE_TEXT: Record<SendMode, (defaultPolicy: 'approve' | 'block') => string> = {
+  autoSend: () => 'always allow: messages there send without asking',
+  requireApproval: () => 'ask every time: every message there waits for your approval',
+  blocked: () => 'blocked: nothing is sent there',
+  none: p =>
+    p === 'block'
+      ? 'on no list: blocked by defaultPolicy'
+      : 'on no list: the next message there asks, and you choose for next time',
+}
+
+function autoReplyText(c: UiContact): string {
+  if (!c.autoReply) return "auto-reply off: sessions can't listen there"
+  if (c.sendMode === 'requireApproval') return 'auto-reply on: sessions may listen there, but their replies ask first (Ask every time wins)'
+  if (c.sendMode === 'blocked') return "auto-reply on: sessions may listen there, but can't reply (blocked wins)"
+  return 'auto-reply on: sessions may listen there and reply without asking while they listen'
 }
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e))
@@ -303,12 +329,55 @@ export class Service {
     return result
   }
 
+  /**
+   * One edit from the menu bar's Contacts page. Only the menu bar reaches this (over /ui, with the
+   * token): it is the human changing the rules, which sessions can't do through any tool.
+   * Nothing is written when the chat already had what was asked for.
+   */
+  editContact(change: ContactChange): { ok: boolean; text: string; nickname?: string } {
+    const meId = this.d.tg.state().me?.id
+    let key = change.nickname
+    let sendText: string | null = null
+    let replyChanged = false
+    let renamedFrom: string | null = null
+    const unchanged = new Error('unchanged')
+    try {
+      const saved = this.d.store.update(c => {
+        if (change.sendMode !== undefined && setSendMode(c, key, change.sendMode, meId)) {
+          sendText = SEND_MODE_TEXT[change.sendMode](c.defaultPolicy)
+        }
+        if (change.autoReply !== undefined) replyChanged = setAutoReply(c, key, change.autoReply, meId)
+        if (change.rename !== undefined) {
+          const before = Object.keys(c.chats).find(k => normalizeNickname(k) === normalizeNickname(key)) ?? key
+          key = renameContact(c, key, change.rename)
+          if (key !== before) renamedFrom = before
+        }
+        if (sendText === null && !replyChanged && renamedFrom === null) throw unchanged
+      })
+      // Auto-reply is described from the result, since the sending rule decides whether replies ask.
+      const contact = listContacts(saved, meId).find(x => x.nickname === key)
+      const tighter = contact?.sendMode === 'requireApproval' || contact?.sendMode === 'blocked'
+      const said = [
+        sendText,
+        contact && (replyChanged || (sendText !== null && contact.autoReply && tighter)) ? autoReplyText(contact) : null,
+        renamedFrom !== null ? `renamed from "${renamedFrom}"` : null,
+      ].filter(s => s !== null)
+      return { ok: true, text: `"${key}": ${said.join('; ')}.`, nickname: key }
+    } catch (e) {
+      if (e === unchanged) return { ok: true, text: `"${key}" already has that setting.`, nickname: key }
+      return { ok: false, text: `Not changed: ${errText(e)}` }
+    }
+  }
+
   uiState(): UiState {
     const ttl = this.d.approvals.ttlMs
+    const config = this.d.store.get()
     return {
       telegram: this.d.tg.state(),
       configError: this.d.store.error(),
-      footer: this.d.store.get().footer,
+      footer: config.footer,
+      defaultPolicy: config.defaultPolicy,
+      contacts: listContacts(config, this.d.tg.state().me?.id),
       approvals: this.d.approvals.list().map(a => ({
         id: a.id,
         to: a.chatLabel,

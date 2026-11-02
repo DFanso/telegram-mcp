@@ -135,13 +135,40 @@ export interface UiSession {
   watches: WatchSpec[]
 }
 
+/**
+ * Which sending list decides a chat, the safest one winning as in the policy:
+ * blocked > requireApproval > autoSend. `none` = in none of them, so defaultPolicy applies.
+ */
+export type SendMode = 'autoSend' | 'requireApproval' | 'blocked' | 'none'
+
+/** A saved chat (`chats` in the rules file) and the rules that apply to it, for the Contacts page. */
+export interface UiContact {
+  nickname: string
+  chatId: number
+  name: string | null
+  username: string | null
+  type: PeerType | null
+  topicId: number | null
+  aliases: string[]
+  notes: string | null
+  sendMode: SendMode
+  /** On the autoReply list: sessions may watch it and reply without asking while they do. */
+  autoReply: boolean
+  /** What sending there does now, in words (the same label telegram_get_rules shows). */
+  policy: string
+  /** Other nicknames saved for the same chat. Rules are per chat, so they change together. */
+  sameChat: string[]
+}
+
 export interface UiState {
   telegram: TelegramState
   configError: string | null
   footer: string
+  defaultPolicy: 'approve' | 'block'
   approvals: UiApproval[]
   sessions: UiSession[]
   recent: SentRecord[]
+  contacts: UiContact[]
 }
 
 export interface ToolResult {

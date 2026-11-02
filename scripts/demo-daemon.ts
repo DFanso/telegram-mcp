@@ -6,7 +6,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createDaemon } from '../src/daemon/main'
 import { DaemonClient } from '../src/mcp/daemon-client'
 import { getPaths } from '../src/shared/paths'
-import { ANNA, FakeTelegram, TEAM_QA, LEO, LEONARDO } from '../test/fake-telegram'
+import { ALL_HANDS, ANNA, FakeTelegram, TEAM_QA, LEO, LEONARDO } from '../test/fake-telegram'
 
 process.env.TELEGRAM_MCP_SECRET_STORE = 'file'
 const home = '/tmp/tgmcp-demo'
@@ -18,14 +18,15 @@ writeFileSync(
   JSON.stringify({
     footer: '\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ',
     chats: {
-      leo: { id: LEO.id, username: 'leo_p', name: LEO.name },
-      anna: { id: ANNA.id, username: 'anna_k', name: ANNA.name },
-      'team-qa': { id: TEAM_QA.id, name: 'Team QA', topicId: 42 },
+      leo: { id: LEO.id, username: 'leo_p', name: LEO.name, type: 'user', aliases: ['leonard'] },
+      anna: { id: ANNA.id, username: 'anna_k', name: ANNA.name, type: 'user' },
+      'team-qa': { id: TEAM_QA.id, name: 'Team QA', type: 'group', topicId: 42, notes: 'QA topic' },
+      'all-hands': { id: ALL_HANDS.id, name: ALL_HANDS.name, type: 'group' },
     },
-    rules: { autoSend: ['leo', 'anna'], requireApproval: ['team-qa'], autoReply: ['anna', 'leo'] },
+    rules: { blocked: ['all-hands'], autoSend: ['leo', 'anna'], requireApproval: ['team-qa'], autoReply: ['anna', 'leo'] },
   }),
 )
-const tg = new FakeTelegram().add(LEO, ANNA, TEAM_QA, LEONARDO)
+const tg = new FakeTelegram().add(LEO, ANNA, TEAM_QA, LEONARDO, ALL_HANDS)
 const daemon = await createDaemon({ paths, port: 47901, telegram: tg, log: () => {} })
 
 function session(label: string) {
