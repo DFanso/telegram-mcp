@@ -144,6 +144,7 @@ Nothing is sent unless you accept. Drafts expire after 20 minutes. The rules are
 | `telegram_send_message` | send, following the rules |
 | `telegram_send_file` | send a local file with a caption, following the same rules (but see files to watched chats, above); credentials and this tool's own files are always refused |
 | `telegram_send_sticker` | re-send a sticker someone posted (by chat and message id), following the same rules; stickers take no caption, so no footer |
+| `telegram_answer_reply` | make this session answer `/reply`: type `/reply` (or `/reply <what to say>`) in any chat from your own account and that chat is handed to the session; `/reply stop` takes it back |
 | `telegram_download_media` | save a message's file, photo, video or voice note and return the path |
 | `telegram_confirm_send` / `telegram_cancel_send` | approval fallback for clients without dialogs |
 | `telegram_save_chat` / `telegram_remove_chat` | manage nicknames |

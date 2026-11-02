@@ -21,6 +21,7 @@ import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { checkSendable, describeOutgoing, fileDigest, fmtBytes, safeFileName, type OutgoingFile } from '../shared/media'
+import { looksLikeReplyCommand, parseReplyCommand } from '../shared/takeover'
 import type { IncomingMessage, MessageInfo, PeerInfo, SendMode, SentRecord, TgEvent, ToolResult, UiContact, UiState } from '../shared/protocol'
 import { TOOLS, isToolName, type ToolInput, type ToolName } from '../shared/tools'
 import type { Approvals, DecideOptions, PendingSend } from './approvals'
@@ -38,6 +39,8 @@ export interface ServiceDeps {
   recentPath?: string
   /** Where downloads go, one folder per chat. */
   downloadsDir?: string
+  /** How long a /reply takeover lasts. */
+  takeoverMinutes?: number
   /** This tool's own folder (login session, token): never sent as a file. */
   mcpHome?: string
 }
@@ -234,6 +237,31 @@ export class Service {
     return Date.now() - this.#uiSeen < 10_000
   }
 
+  /**
+   * The account owner's own messages: "/reply" hands that chat to the session that answers it,
+   * "/reply stop" takes it back. The command is deleted once a session has it, so the chat never
+   * sees it; with no session to take it, it stays, which shows the user nothing happened.
+   * Returns whether the message was a command.
+   */
+  async handleOwnMessage(msg: IncomingMessage): Promise<boolean> {
+    if (!msg.outgoing) return false
+    const cmd = parseReplyCommand(msg.text)
+    if (!cmd) return false
+    const { hub, store, tg } = this.d
+    const base = describeMessage(store, msg)
+    let sid: string | null
+    if (cmd.action === 'stop') {
+      sid = hub.stopTakeover(msg.chatId, { ...base, takeover: { action: 'stop' } })
+    } else if (isListed(store.get(), 'blocked', msg.chat)) {
+      sid = null
+    } else {
+      const minutes = this.d.takeoverMinutes ?? 120
+      sid = hub.startTakeover(msg.chatId, minutes * 60_000, { ...base, takeover: { action: 'start', instruction: cmd.instruction, minutes } })
+    }
+    if (sid) await tg.deleteMessage(msg.chatId, msg.id).catch(() => {})
+    return true
+  }
+
   #deliver(
     chatId: number,
     text: string,
@@ -418,7 +446,12 @@ export class Service {
     const t = await this.#resolve(p.to, true)
     const file = draft.file ? checkSendable(draft.file, { mcpHome: this.#mcpHome }) : undefined
     const topicId = p.topicId ?? t.entry?.topicId
-    const decision = decideSend(config, t.peer, { isWatching: this.d.hub.isWatching(sid, t.peer.id), file: file !== undefined })
+    if (looksLikeReplyCommand(draft.text)) return fail('Not sent: a message starting with /reply would start a takeover. Reword it.')
+    const decision = decideSend(config, t.peer, {
+      isWatching: this.d.hub.isWatching(sid, t.peer.id),
+      file: file !== undefined,
+      takenOver: this.d.hub.isTakenOverBy(sid, t.peer.id),
+    })
     if (decision.action === 'block') return fail(`Not sent to ${t.label}: ${decision.reason}.`)
     // A file with no caption still carries the footer, without the blank lines that lead into it.
     // A sticker takes no caption, so it goes out without the footer.
@@ -520,6 +553,11 @@ export class Service {
       lines.push(
         `Delivery: ${hub.isChannel(sid) ? 'channel push' : hub.monitorCount(sid) > 0 ? 'Monitor connected' : 'nothing listening (messages queue up)'}`,
       )
+      lines.push(`Answers /reply: ${hub.isReplyHandler(sid) ? 'yes' : 'no'}`)
+      for (const t of hub.takeovers()) {
+        if (t.sessionId !== sid) continue
+        lines.push(`  taken over: chat ${t.chatId} until ${new Date(t.until).toISOString()}`)
+      }
       lines.push(watches.length ? 'Watches:' : 'Watches: none')
       for (const w of watches) {
         lines.push(
@@ -621,6 +659,19 @@ export class Service {
     },
 
     telegram_send_message: async (sid, p) => this.#send(sid, p, { text: p.text }),
+
+    telegram_answer_reply: async (sid, p) => {
+      const { hub } = this.d
+      hub.setReplyHandler(sid, p.on)
+      if (!p.on) return { text: 'This session no longer answers /reply. Takeovers it had are over.' }
+      const minutes = this.d.takeoverMinutes ?? 120
+      return {
+        text: [
+          `This session now answers /reply. When the user types /reply in any Telegram chat, that chat is handed to you for ${minutes} minutes (or until /reply stop): you get a notice, its new messages come to you, and your replies there go out without approval. /reply <text> carries what they want said.`,
+          hub.isChannel(sid) || hub.monitorCount(sid) > 0 ? 'Notices arrive the same way as watched messages.' : this.#delivery(sid),
+        ].join('\n'),
+      }
+    },
 
     telegram_send_file: async (sid, p) => this.#send(sid, p, { text: p.caption ?? '', file: p.path, asPhoto: p.asPhoto }),
 

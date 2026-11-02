@@ -4,7 +4,7 @@ import { basename } from 'node:path'
 import { Server } from '@modelcontextprotocol/sdk/server/index.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema, type ElicitRequestFormParams } from '@modelcontextprotocol/sdk/types.js'
-import { newId } from '../daemon/sessions'
+import { formatEvent, newId } from '../daemon/sessions'
 import { parseConfig } from '../shared/config'
 import { openSecretStore, readToken } from '../shared/secrets'
 import { LAUNCHD_LABEL, getPaths, getPort } from '../shared/paths'
@@ -50,6 +50,10 @@ function channelPayload(e: TgEvent) {
   if (e.topicId !== null) meta.topic_id = String(e.topicId)
   if (e.replyToId !== null) meta.reply_to = String(e.replyToId)
   if (e.media) meta.media = e.media
+  if (e.takeover) {
+    meta.takeover = e.takeover.action
+    return { content: formatEvent(e), meta }
+  }
   return { content: e.text || (e.media ? `[${e.media}]` : '[empty message]'), meta }
 }
 
