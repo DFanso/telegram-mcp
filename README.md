@@ -199,7 +199,12 @@ This page is the menu bar's own: it goes through the daemon's local API with the
 
 ## Tray app (Windows)
 
-On Windows, `tgmcp menubar` builds `tray/build/TelegramMCPTray.exe` (C#/WPF; it needs the [.NET SDK 10](https://dotnet.microsoft.com/download)), starts it, and sets it to start at login. Settings → Apps → Startup lists it as "Telegram MCP". It is the menu bar app's counterpart:
+On Windows, `tgmcp menubar` starts the tray app and sets it to start at login. Settings → Apps → Startup lists it as "Telegram MCP".
+
+- **From a release**, it uses the prebuilt `TelegramMCPTray.exe` that the installer put next to `tgmcp.exe`. It's self-contained, so it needs no .NET. Set `TELEGRAM_MCP_TRAY_APP` to use one somewhere else.
+- **From a checkout**, it first builds `tray/build/TelegramMCPTray.exe` (C#/WPF), which needs the [.NET SDK 10](https://dotnet.microsoft.com/download).
+
+It is the menu bar app's counterpart:
 
 - **The tray icon** is a paper plane, filled while a session is listening. Its badge is the number of drafts waiting, or `!` when the daemon or Telegram is down. Hover it for a summary.
 - **Click it for the panel**: the connection, **Waiting for approval** (Approve / Deny; a new chat gets a nickname box and Deny / Ask every time / Always allow), **Listening**, and **Recently sent** (hover a chat to see its messages).
