@@ -17,7 +17,8 @@ const HELP = `tgmcp: always-on Telegram daemon + per-session MCP bridge
   tgmcp login --credentials   enter api_id/api_hash again, then log in
   tgmcp logs          follow the daemon log
   tgmcp config        print the rules file path
-  tgmcp menubar       build and start the menu bar app (approvals, listeners, recent sends) at login
+  tgmcp menubar       build and start the menu bar app (macOS) or tray app (Windows) at login:
+                      approvals, listeners, recent sends, saved chats
   tgmcp menubar uninstall
   tgmcp call <tool> [json]   call a tool as a one-off session, e.g. tgmcp call telegram_get_rules
   tgmcp mcp-add       print the command that registers the MCP server with Claude Code
@@ -34,6 +35,14 @@ async function daemonFetch(path: string, init?: RequestInit): Promise<Response> 
     headers: { ...(init?.headers ?? {}), authorization: `Bearer ${token ?? ''}` },
     signal: AbortSignal.timeout(3_000),
   })
+}
+
+/** install / uninstall / restart run the daemon under launchd. */
+function needsLaunchd(): boolean {
+  if (process.platform === 'darwin') return true
+  console.log('This runs the daemon under launchd, which is macOS-only. Here, keep `tgmcp daemon` running in a terminal.')
+  process.exitCode = 1
+  return false
 }
 
 async function status() {
@@ -80,7 +89,8 @@ async function status() {
   if (body.secrets && body.secrets.kind !== openSecretStore(paths).kind) {
     console.log(`  the daemon keeps its secrets in ${body.secrets.where}: restart it (tgmcp install) so both agree`)
   }
-  console.log(`menu bar app: ${body.menubar ? 'connected (approvals go there)' : 'not running (approvals use the Claude Code dialog)'}`)
+  const ui = process.platform === 'win32' ? 'tray app' : 'menu bar app'
+  console.log(`${ui}: ${body.menubar ? 'connected (approvals go there)' : 'not running (approvals use the Claude Code dialog)'}`)
   console.log(`sessions: ${body.sessions.length}`)
   for (const s of body.sessions) {
     console.log(
@@ -169,6 +179,7 @@ switch (cmd) {
     break
   }
   case 'install': {
+    if (!needsLaunchd()) break
     const { installAgent } = await import('./launchd')
     const paths = getPaths()
     ensureHome(paths)
@@ -177,11 +188,13 @@ switch (cmd) {
     break
   }
   case 'uninstall': {
+    if (!needsLaunchd()) break
     const { uninstallAgent } = await import('./launchd')
     console.log(uninstallAgent() ? 'Removed the launchd agent and stopped the daemon.' : 'No launchd agent was installed.')
     break
   }
   case 'restart': {
+    if (!needsLaunchd()) break
     const { restartAgent } = await import('./launchd')
     restartAgent()
     console.log('Restarted.')
@@ -235,6 +248,19 @@ switch (cmd) {
   }
   case 'menubar': {
     const sub = rest[0] ?? 'install'
+    if (process.platform === 'win32') {
+      const { buildTray, installTray, uninstallTray } = await import('./tray')
+      if (sub === 'build') console.log(buildTray())
+      else if (sub === 'install') console.log(`Tray app running and starts at login: ${installTray(getPaths())}`)
+      else if (sub === 'uninstall') console.log(uninstallTray() ? 'The tray app quit and no longer starts at login.' : 'It was not set to start at login.')
+      else console.log('usage: tgmcp menubar [install|uninstall|build]')
+      break
+    }
+    if (process.platform !== 'darwin') {
+      console.log('The menu bar app is for macOS and the tray app for Windows: there is none for this system yet.')
+      process.exitCode = 1
+      break
+    }
     const { buildMenubar, installMenubar, uninstallMenubar } = await import('./launchd')
     if (sub === 'build') console.log(buildMenubar())
     else if (sub === 'install') console.log(`Menu bar app running and starts at login: ${installMenubar(getPaths())}`)

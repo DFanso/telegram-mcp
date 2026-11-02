@@ -1,0 +1,179 @@
+using System.Net;
+using System.Net.Http.Headers;
+using System.Text;
+using System.Text.Json;
+using System.Text.Json.Nodes;
+
+namespace TelegramMCPTray.Core;
+
+/// <summary>A read of the daemon's token. <see cref="RetryAfter"/>: how long to wait before trying again.</summary>
+public sealed record TokenRead(string? Token, string? Problem, TimeSpan RetryAfter)
+{
+    public const string NoTokenYet = "No token yet. Has the daemon run once? Start it with tgmcp daemon.";
+}
+
+public interface ITokenSource
+{
+    TokenRead Read();
+}
+
+/// <summary>TELEGRAM_MCP_SECRET_STORE=file: the token is a plain file.</summary>
+public sealed class FileTokenSource(string path) : ITokenSource
+{
+    public TokenRead Read()
+    {
+        try
+        {
+            var token = File.ReadAllText(path).Trim();
+            if (token.Length > 0) return new(token, null, TimeSpan.Zero);
+        }
+        catch (FileNotFoundException) { }
+        catch (DirectoryNotFoundException) { }
+        catch (Exception e) when (e is IOException or UnauthorizedAccessException)
+        {
+            return new(null, $"Could not read the token file {path}: {e.Message}", TimeSpan.FromSeconds(10));
+        }
+        return new(null, TokenRead.NoTokenYet, TimeSpan.FromSeconds(2));
+    }
+}
+
+public sealed record PollResult(UiState? State, string? Problem)
+{
+    public bool Reachable => State is not null;
+}
+
+/// <summary>
+/// An answer to a draft. <see cref="Remember"/> (first message to a chat): "autoSend" = always allow,
+/// "requireApproval" = ask every time.
+/// </summary>
+public sealed record Decision(bool Approve, string? Remember = null, string? Nickname = null);
+
+/// <summary>A Contacts-page edit; null fields stay as they are.</summary>
+public sealed record ContactChange(string Nickname, string? SendMode = null, bool? AutoReply = null, string? Rename = null);
+
+/// <summary>The daemon's answer to an action, in words. <see cref="Nickname"/>: a contact's name after the edit.</summary>
+public sealed record ActionResult(bool Ok, string Text, string? Nickname = null);
+
+/// <summary>
+/// The daemon's local HTTP API (src/daemon/server.ts), as the menu bar app uses it: GET /ui/state
+/// every 2 s (which also tells the daemon to send approvals here instead of the Claude Code dialog),
+/// POST /ui/approvals/:id and POST /ui/contacts. Only 127.0.0.1, with the token as a bearer.
+/// Not thread-safe: the app calls it from the UI thread.
+/// </summary>
+public sealed class DaemonApi(HttpClient http, int port, ITokenSource tokens, TimeProvider? time = null)
+{
+    public const string NotRunning = "The daemon is not running. Start it with tgmcp daemon.";
+    public const string Refused = "The daemon refused the request (token mismatch?).";
+    static readonly TimeSpan Timeout = TimeSpan.FromSeconds(4);
+
+    readonly TimeProvider _time = time ?? TimeProvider.System;
+    string? _token;
+    string? _tokenProblem;
+    DateTimeOffset _retryAt = DateTimeOffset.MinValue;
+
+    /// <summary>Read once and kept; dropped when the daemon says no, so a new token is picked up.</summary>
+    string? Token()
+    {
+        if (_token is not null) return _token;
+        if (_time.GetUtcNow() < _retryAt) return null;
+        var r = tokens.Read();
+        if (!string.IsNullOrEmpty(r.Token))
+        {
+            _tokenProblem = null;
+            return _token = r.Token;
+        }
+        _tokenProblem = r.Problem ?? TokenRead.NoTokenYet;
+        _retryAt = _time.GetUtcNow() + r.RetryAfter;
+        return null;
+    }
+
+    public async Task<PollResult> PollAsync(CancellationToken ct = default)
+    {
+        if (Token() is not { } token) return new(null, _tokenProblem);
+        try
+        {
+            using var cts = WithTimeout(ct);
+            using var res = await http.SendAsync(Request(HttpMethod.Get, "/ui/state", token), cts.Token);
+            if (res.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _token = null;
+                return new(null, Refused);
+            }
+            if (!res.IsSuccessStatusCode) return new(null, $"The daemon answered {(int)res.StatusCode} {res.ReasonPhrase}.");
+            return new(Json.ParseState(await res.Content.ReadAsStringAsync(cts.Token)), null);
+        }
+        catch (Exception e) when (Unreachable(e, ct))
+        {
+            return new(null, NotRunning);
+        }
+        catch (JsonException e)
+        {
+            return new(null, $"The daemon sent something this app can't read: {e.Message}");
+        }
+    }
+
+    public Task<ActionResult> DecideAsync(string id, Decision decision, CancellationToken ct = default)
+    {
+        var body = new JsonObject { ["decision"] = decision.Approve ? "approve" : "deny" };
+        if (decision.Remember is not null) body["remember"] = decision.Remember;
+        if (!string.IsNullOrWhiteSpace(decision.Nickname)) body["nickname"] = decision.Nickname;
+        return PostAsync($"/ui/approvals/{Uri.EscapeDataString(id)}", body, _ => decision.Approve ? "Approved." : "Denied.", ct);
+    }
+
+    public Task<ActionResult> EditContactAsync(ContactChange change, CancellationToken ct = default)
+    {
+        var body = new JsonObject { ["nickname"] = change.Nickname };
+        if (change.SendMode is not null) body["sendMode"] = change.SendMode;
+        if (change.AutoReply is { } on) body["autoReply"] = on;
+        if (change.Rename is not null) body["rename"] = change.Rename;
+        return PostAsync("/ui/contacts", body, ok => ok ? "Saved." : "Not changed.", ct, notFound: Contacts.OlderDaemon);
+    }
+
+    sealed record Answer(bool? Ok, string? Text, string? Nickname);
+
+    /// <param name="fallback">The text when the daemon gave none, by whether it worked.</param>
+    /// <param name="notFound">The text for a 404: a daemon without this route.</param>
+    async Task<ActionResult> PostAsync(string path, JsonObject body, Func<bool, string> fallback, CancellationToken ct, string? notFound = null)
+    {
+        if (Token() is not { } token) return new(false, _tokenProblem ?? TokenRead.NoTokenYet);
+        try
+        {
+            using var cts = WithTimeout(ct);
+            using var res = await http.SendAsync(Request(HttpMethod.Post, path, token, body), cts.Token);
+            if (res.StatusCode == HttpStatusCode.Unauthorized)
+            {
+                _token = null;
+                return new(false, Refused);
+            }
+            if (res.StatusCode == HttpStatusCode.NotFound && notFound is not null) return new(false, notFound);
+            Answer? answer = null;
+            try { answer = JsonSerializer.Deserialize<Answer>(await res.Content.ReadAsStringAsync(cts.Token), Json.Options); }
+            catch (JsonException) { }
+            var ok = answer?.Ok ?? res.IsSuccessStatusCode;
+            return new(ok, answer?.Text ?? fallback(ok), answer?.Nickname);
+        }
+        catch (Exception e) when (Unreachable(e, ct))
+        {
+            return new(false, $"Could not reach the daemon: {e.Message}");
+        }
+    }
+
+    HttpRequestMessage Request(HttpMethod method, string path, string token, JsonObject? body = null)
+    {
+        var req = new HttpRequestMessage(method, $"http://127.0.0.1:{port}{path}");
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        if (body is not null) req.Content = new StringContent(body.ToJsonString(), Encoding.UTF8, "application/json");
+        return req;
+    }
+
+    static CancellationTokenSource WithTimeout(CancellationToken ct)
+    {
+        var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        cts.CancelAfter(Timeout);
+        return cts;
+    }
+
+    /// <summary>No daemon, or it didn't answer in time (but not: the caller gave up).</summary>
+    static bool Unreachable(Exception e, CancellationToken ct) =>
+        e is HttpRequestException || (e is OperationCanceledException && !ct.IsCancellationRequested);
+}

@@ -1,0 +1,117 @@
+{
+    "telegram": {
+        "phase": "connected",
+        "me": {
+            "id": 1,
+            "type": "user",
+            "name": "Me",
+            "username": "me_user",
+            "isSelf": true
+        },
+        "since": 0,
+        "reconnects": 0,
+        "lastError": null
+    },
+    "configError": null,
+    "footer": "\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ",
+    "approvals": [
+        {
+            "id": "a_jbmtzmjr",
+            "to": "Team QA [team-qa] · topic 42",
+            "detail": "Team QA · id -1001234567890 · group · forum",
+            "text": "Hi team, v2.3 is on staging. Please run the QA checklist for the upload flow.\n\n1. Upload a file of type PNG at 0.8 MB from Safari, refresh the page, and check that the preview, file name and size match what was uploaded.\n\n2. Upload a file of type JPEG at 1.6 MB from Chrome, refresh the page, and check that the preview, file name and size match what was uploaded.\n\n3. Upload a file of type PDF at 2.4 MB from Firefox, refresh the page, and check that the preview, file name and size match what was uploaded.\n\n4. Upload a file of type HEIC at 3.2 MB from Safari, refresh the page, and check that the preview, file name and size match what was uploaded.\n\n5. Upload a file of type PNG at 4.0 MB from Chrome, refresh the page, and check that the preview, file name and size match what was uploaded.\n\n6. Upload a file of type JPEG at 4.8 MB from Firefox, refresh the page, and check that the preview, file name and size match what was uploaded.\n\n7. Upload a file of type PDF at 5.6 MB from Safari, refresh the page, and check that the preview, file name and size match what was uploaded.\n\n8. Upload a file of type HEIC at 6.4 MB from Chrome, refresh the page, and check that the preview, file name and size match what was uploaded.\n\n9. Upload a file of type PNG at 7.2 MB from Firefox, refresh the page, and check that the preview, file name and size match what was uploaded.\n\n10. Upload a file of type JPEG at 8.0 MB from Safari, refresh the page, and check that the preview, file name and size match what was uploaded.\n\n11. Upload a file of type PDF at 8.8 MB from Chrome, refresh the page, and check that the preview, file name and size match what was uploaded.\n\n12. Upload a file of type HEIC at 9.6 MB from Firefox, refresh the page, and check that the preview, file name and size match what was uploaded.\n\nThen try a 12 MB file: it should be refused with a clear message, and nothing should be stored.\n\nReply here with anything that looks off. Thanks!\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ",
+            "reason": "this chat is on the requireApproval list",
+            "sessionId": "s_api-serv",
+            "sessionLabel": "api-server · pid 4121",
+            "createdAt": "2026-11-02T08:06:23.052Z",
+            "expiresAt": "2026-11-02T08:26:23.052Z",
+            "firstTime": false,
+            "nickname": "team-qa",
+            "suggestedNickname": "team-qa"
+        },
+        {
+            "id": "a_wc7yfv2d",
+            "to": "Leonardo Silva (@leonardo_s)",
+            "detail": "Leonardo Silva · @leonardo_s · id 11 · user",
+            "text": "Hey Leonardo, are you free for a quick call about the payments integration?\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ",
+            "reason": "this chat is in no list, so it needs approval (defaultPolicy \"approve\")",
+            "sessionId": "s_web-app ",
+            "sessionLabel": "web-app · pid 5230",
+            "createdAt": "2026-11-02T08:06:23.052Z",
+            "expiresAt": "2026-11-02T08:26:23.052Z",
+            "firstTime": true,
+            "nickname": null,
+            "suggestedNickname": "leonardo"
+        }
+    ],
+    "sessions": [
+        {
+            "id": "s_api-serv",
+            "label": "api-server · pid 4121",
+            "connected": true,
+            "channel": false,
+            "monitors": 0,
+            "pending": 0,
+            "watches": [
+                {
+                    "chatId": 12,
+                    "chatLabel": "Anna K [anna]",
+                    "note": "waiting for the staging link",
+                    "id": "w_w7j9frdt",
+                    "createdAt": 1793606783050
+                }
+            ]
+        },
+        {
+            "id": "s_web-app ",
+            "label": "web-app · pid 5230",
+            "connected": true,
+            "channel": false,
+            "monitors": 0,
+            "pending": 0,
+            "watches": [
+                {
+                    "chatId": 12,
+                    "chatLabel": "Anna K [anna]",
+                    "id": "w_bgajzscb",
+                    "createdAt": 1793606783050
+                },
+                {
+                    "chatId": 10,
+                    "chatLabel": "Leo Perera [leo]",
+                    "id": "w_63gk5pzd",
+                    "createdAt": 1793606783050
+                }
+            ]
+        }
+    ],
+    "recent": [
+        {
+            "chatId": 10,
+            "chatLabel": "Leo Perera [leo]",
+            "text": "Also the rate limiter is back on.\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ",
+            "messageId": 1002,
+            "via": "auto",
+            "sessionLabel": "api-server · pid 4121",
+            "at": "2026-11-02T08:06:23.051Z"
+        },
+        {
+            "chatId": 12,
+            "chatLabel": "Anna K [anna]",
+            "text": "The signup form now accepts uploads up to 10 MB.\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ",
+            "messageId": 1001,
+            "via": "auto",
+            "sessionLabel": "web-app · pid 5230",
+            "at": "2026-11-02T08:06:23.051Z"
+        },
+        {
+            "chatId": 10,
+            "chatLabel": "Leo Perera [leo]",
+            "text": "Deployed v2.3 to staging, can you check the login flow?\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ",
+            "messageId": 1000,
+            "via": "auto",
+            "sessionLabel": "api-server · pid 4121",
+            "at": "2026-11-02T08:06:23.051Z"
+        }
+    ]
+}
