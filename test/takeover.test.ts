@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Approvals } from '../src/daemon/approvals'
+import { visibleText } from '../src/daemon/formatting'
 import { Service, describeMessage } from '../src/daemon/service'
 import { SessionHub, formatEvent } from '../src/daemon/sessions'
 import { ConfigStore } from '../src/shared/config'
@@ -32,14 +33,15 @@ describe('parsing /reply', () => {
   })
 
   test('the send guard sees through formatting', () => {
-    for (const t of ['**/reply** hi', '_/reply_', '`/reply`', '||/reply||', '[/reply](https://x.y)']) {
-      expect(looksLikeReplyCommand(t, 'markdown')).toBe(true)
+    const guarded = (t: string, mode: 'markdown' | 'html') => looksLikeReplyCommand(visibleText(t, mode))
+    for (const t of ['**/reply** hi', '__/reply__', '`/reply`', '||/reply||', '[/reply](https://x.y)']) {
+      expect(guarded(t, 'markdown')).toBe(true)
     }
-    for (const t of ['<b>/reply</b>', '<i> /reply stop</i>', '&#47;reply', '&#x2F;reply', '&sol;reply']) {
-      expect(looksLikeReplyCommand(t, 'html')).toBe(true)
+    for (const t of ['<b>/reply</b>', '<i> /reply stop</i>', '&#47;reply', '&#x2F;reply', '&sol;reply', '&nbsp;/reply', '&emsp;/reply', '&NewLine;/reply']) {
+      expect(guarded(t, 'html')).toBe(true)
     }
-    expect(looksLikeReplyCommand('<b>use</b> /reply', 'html')).toBe(false)
-    expect(looksLikeReplyCommand('**use** /reply', 'markdown')).toBe(false)
+    expect(guarded('<b>use</b> /reply', 'html')).toBe(false)
+    expect(guarded('**use** /reply', 'markdown')).toBe(false)
   })
 })
 
