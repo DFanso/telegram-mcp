@@ -1,4 +1,5 @@
-import { Chat, FileLocation, InputMedia, TelegramClient, User, html, md, type ITelegramStorageProvider, type Message, type Peer, type tl } from '@mtcute/bun'
+import { Chat, FileLocation, InputMedia, TelegramClient, User, type ITelegramStorageProvider, type Message, type Peer, type tl } from '@mtcute/bun'
+import { formatted } from './formatting'
 import { mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
@@ -409,7 +410,7 @@ export class MtcuteTelegram implements TelegramPort {
 
   async sendText(chatId: number, text: string, opts: SendOptions = {}): Promise<MessageInfo> {
     const c = await this.#ready()
-    const body = opts.parseMode === 'markdown' ? md(text) : opts.parseMode === 'html' ? html(text) : text
+    const body = formatted(text, opts.parseMode)
     const sent = await c.sendText(chatId, body, {
       ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
       ...(opts.topicId ? { threadId: opts.topicId } : {}),
@@ -419,7 +420,7 @@ export class MtcuteTelegram implements TelegramPort {
 
   async sendFile(chatId: number, file: OutgoingFile, caption: string, opts: SendFileOptions = {}): Promise<MessageInfo> {
     const c = await this.#ready()
-    const text = opts.parseMode === 'markdown' ? md(caption) : opts.parseMode === 'html' ? html(caption) : caption
+    const text = formatted(caption, opts.parseMode)
     // mtcute reads a bare string as a Telegram file id; "file:" marks a local path.
     const local = `file:${file.path}`
     const media = opts.asPhoto

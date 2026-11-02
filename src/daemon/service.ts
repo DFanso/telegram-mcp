@@ -25,6 +25,7 @@ import { looksLikeReplyCommand, parseReplyCommand } from '../shared/takeover'
 import type { IncomingMessage, MessageInfo, PeerInfo, SendMode, SentRecord, TgEvent, ToolResult, UiContact, UiState } from '../shared/protocol'
 import { TOOLS, isToolName, type ToolInput, type ToolName } from '../shared/tools'
 import type { Approvals, DecideOptions, PendingSend } from './approvals'
+import { visibleText } from './formatting'
 import { formatEvent, type SessionHub } from './sessions'
 import type { SendFileOptions, StickerRef, TelegramPort } from './telegram'
 
@@ -470,7 +471,7 @@ export class Service {
     const t = await this.#resolve(p.to, true)
     const file = draft.file ? checkSendable(draft.file, { mcpHome: this.#mcpHome }) : undefined
     const topicId = p.topicId ?? t.entry?.topicId
-    if (looksLikeReplyCommand(draft.text, p.parseMode)) return fail('Not sent: a message starting with /reply would start a takeover. Reword it.')
+    if (looksLikeReplyCommand(visibleText(draft.text, p.parseMode))) return fail('Not sent: a message starting with /reply would start a takeover. Reword it.')
     const decision = decideSend(config, t.peer, {
       isWatching: this.d.hub.isWatching(sid, t.peer.id),
       file: file !== undefined,
