@@ -174,6 +174,13 @@ public sealed class PanelViewModel : Observable
         await PollAsync();
     }
 
+    /// <summary>Ack or snooze a page from the alarm window or its notification.</summary>
+    public async Task PageAsync(string id, bool ack, int minutes)
+    {
+        ShowFlash((await _api.PageAsync(id, ack, minutes)).Text);
+        await PollAsync();
+    }
+
     /// <summary>From a notification button, which may outlive its row.</summary>
     public async Task DecideAsync(string id, Decision decision)
     {

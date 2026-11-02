@@ -87,6 +87,15 @@ export const TOOLS = {
       'Make this session the one that answers /reply (on: false to stop). When the user types /reply in any Telegram chat from their own account, that chat is handed to this session for a while: you get a notice with any instruction ("/reply say I am on my way"), new messages there come to you, and your replies go out without approval until they type /reply stop. The command message is deleted so the chat never sees it. Blocked chats are never taken over.',
     input: z.object({ on: z.boolean().default(true) }),
   },
+  telegram_page: {
+    description:
+      'Page the user: their desktop rings until they ack, and their phone gets a push. Only for something that needs a human now (production down, a blocker someone is waiting on, "call me now"), never for ordinary messages. At most one page every few minutes; a page only notifies, it cannot do anything else.',
+    input: z.object({
+      reason: z.string().min(1).describe('One line the user reads on the alarm, e.g. "KYC prod API returning 500s, Iddhi asking".'),
+      chat: chatRef.optional().describe('The chat it is about, if any.'),
+      messageId: z.number().int().optional().describe('The message it is about, if any.'),
+    }),
+  },
   telegram_confirm_send: {
     description:
       'Send a message that is waiting for approval. Only call this after the user has explicitly said yes to that exact message and recipient in this conversation. For a first message to a chat, pass remember with what the user chose for next time.',

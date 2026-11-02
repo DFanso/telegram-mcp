@@ -3,6 +3,10 @@
 Each release's section here becomes its "What's new" on GitHub. Add the next one as
 `## <version>` before tagging (see [Releasing](README.md#releasing)).
 
+## Unreleased
+
+- **Pages**: something that needs you now rings the menu bar app (macOS) or the tray app (Windows) with a looping alarm and a window above everything, until you Ack or Snooze it. Your own pager bot pushes it to your phone with the same buttons, and an Ack anywhere stops it everywhere. It's triggered by `/page <reason>` from people on `paging.pageFrom`, by keywords in `paging.vip` chats, or by Claude through `telegram_page`. The daemon decides what pages, the sender gets fixed replies ("Paging Leo now", "Leo saw it", "hasn't seen it yet, try calling"), and there's at most one page per sender every 10 minutes. `tgmcp page setup` connects the bot, and `tgmcp page test` rings a test page.
+
 ## 1.0.0
 
 The first release, with prebuilt binaries for macOS, Linux and Windows, the menu bar app for macOS and the tray app for Windows.

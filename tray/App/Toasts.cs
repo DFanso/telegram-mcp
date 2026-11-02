@@ -76,7 +76,7 @@ sealed class Toasts(Uri? logo)
     public static void Clear() => Safely(ToastNotificationManagerCompat.History.Clear);
 
     /// <summary>Notifications are a convenience: if Windows refuses (turned off, Focus assist), the panel still works.</summary>
-    static void Safely(Action act)
+    internal static void Safely(Action act)
     {
         try
         {

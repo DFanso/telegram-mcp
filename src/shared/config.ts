@@ -38,6 +38,24 @@ const RulesSchema = z.looseObject({
   autoReply: z.array(ChatRefSchema).default([]),
 })
 
+/**
+ * Pages: an alarm on the desktop and a push to the phone for something that needs a human now.
+ * Only the daemon decides; text in a chat can never make a page do anything but notify.
+ */
+const PagingSchema = z.looseObject({
+  /** People whose "/page <reason>" pages you. Numeric user ids, since a username can change hands. */
+  pageFrom: z.array(z.number().int()).default([]),
+  /** Chats where a keyword alone pages you. Elsewhere, "urgent" pages no one. */
+  vip: z.array(ChatRefSchema).default([]),
+  keywords: z.array(z.string().min(1)).default(['urgent', 'down', 'prod', 'asap']),
+  /** Minutes between tries on the phone while nobody acks, and how many tries before the sender hears back. */
+  retryMinutes: z.number().positive().default(5),
+  tries: z.number().int().min(1).max(10).default(3),
+  /** At most one page per sender in this many minutes. */
+  perSenderMinutes: z.number().nonnegative().default(10),
+})
+export type PagingConfig = z.infer<typeof PagingSchema>
+
 export const ConfigSchema = z.looseObject({
   guides: z.array(z.string()).default([]),
   footer: z.string().default(''),
@@ -45,6 +63,7 @@ export const ConfigSchema = z.looseObject({
   defaultPolicy: z.enum(['approve', 'block']).default('approve'),
   rules: RulesSchema.prefault({}),
   chats: z.record(z.string(), ChatEntrySchema).default({}),
+  paging: PagingSchema.prefault({}),
 })
 export type Config = z.infer<typeof ConfigSchema>
 export type RuleList = 'blocked' | 'requireApproval' | 'autoSend' | 'autoReply'
@@ -205,6 +224,11 @@ export function refMatches(config: Config, ref: ChatRef, chat: ChatKey, conserva
   if (r.kind === 'unknown') return false
   const id = r.kind === 'entry' ? r.entry.id : r.id
   return id === chat.id || (conservative && rawId(id) === rawId(chat.id))
+}
+
+/** Is this chat on a list of refs that is not one of the rule lists (paging.vip, say)? */
+export function inRefs(config: Config, refs: readonly ChatRef[], chat: ChatKey): boolean {
+  return refs.some(ref => refMatches(config, ref, chat, false))
 }
 
 /** Is this chat (marked id + current username) on the given list? `blocked` matches raw ids too. */

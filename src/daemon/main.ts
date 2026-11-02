@@ -4,6 +4,8 @@ import { ensureHome, makeLogger } from '../shared/files'
 import { getPaths, getPort, type Paths } from '../shared/paths'
 import { ensureToken, loadCredentials, openSecretStore, type SecretStore } from '../shared/secrets'
 import { Approvals } from './approvals'
+import { PageBot } from './page-bot'
+import { Pager, pageTrigger } from './pager'
 import { eventsKey, startServer } from './server'
 import { openSessionStorage } from './session-store'
 import { Service, describeMessage } from './service'
@@ -19,6 +21,10 @@ export interface DaemonOptions {
   log?: (msg: string) => void
   /** Defaults to the OS keystore (or files with TELEGRAM_MCP_SECRET_STORE=file). */
   secrets?: SecretStore
+  /** Tests: a pager bot token (null for none) instead of the keystore's, and a fake Bot API. */
+  pageBotToken?: string | null
+  pageBotFetch?: (url: string, init?: RequestInit) => Promise<Response>
+  pageTickMs?: number
 }
 
 export async function createDaemon(o: DaemonOptions) {
@@ -38,6 +44,31 @@ export async function createDaemon(o: DaemonOptions) {
   const hub = new SessionHub({ log, ...o.hub })
   const approvals = new Approvals()
 
+  // Pages ring the menu bar / tray (they read them from /ui/state) and, with a pager bot, the phone.
+  const ownerId = () => tg.state().me?.id ?? null
+  const pager: Pager = new Pager({
+    paging: () => store.get().paging,
+    ownerName: () => tg.state().me?.name.split(' ')[0] || 'They',
+    channel: () => bot,
+    // The fixed replies go out from your account, so never to a chat you blocked.
+    tellSender: async (chatId, text, replyTo) => {
+      if (isListed(store.get(), 'blocked', { id: chatId })) return
+      await tg.sendText(chatId, text, replyTo ? { replyTo } : {})
+    },
+    auditPath: o.paths.pages,
+    log,
+  })
+  const botToken = o.pageBotToken !== undefined ? o.pageBotToken : await secrets.get('page-bot')
+  const bot = botToken
+    ? new PageBot({
+        token: botToken,
+        ownerId,
+        onAction: (id, action) => void pager.act(id, action, 'phone'),
+        log,
+        fetch: o.pageBotFetch,
+      })
+    : null
+
   let port = o.port
   const service = new Service({
     store,
@@ -49,6 +80,7 @@ export async function createDaemon(o: DaemonOptions) {
     recentPath: join(o.paths.home, 'recent.json'),
     downloadsDir: o.paths.downloads,
     mcpHome: o.paths.home,
+    pager,
   })
 
   // Bind first: if another daemon already owns the port, fail before touching the Telegram session.
@@ -74,6 +106,20 @@ export async function createDaemon(o: DaemonOptions) {
         .catch(e => log(`/reply in ${msg.chatId} failed: ${e instanceof Error ? e.message : String(e)}`))
       return
     }
+    const trigger = pageTrigger(store.get(), msg)
+    if (trigger) {
+      void pager
+        .page({
+          source: trigger.source,
+          senderKey: String(msg.from!.id),
+          senderName: msg.from!.name,
+          chatId: msg.chatId,
+          chatLabel: describeMessage(store, msg).chatLabel,
+          messageId: msg.id,
+          reason: trigger.reason,
+        })
+        .then(r => log(r.ok ? `page ${r.page.id} (${trigger.source}) from ${msg.from!.id} in ${msg.chatId}` : `page from ${msg.from!.id} not sent: ${r.error}`))
+    }
     // Taking a chat off autoReply ends listening to it at once, even for existing watches. A chat
     // handed over with /reply is listened to for as long as the takeover lasts.
     if (!hub.takeoverOf(msg.chatId) && !isListed(store.get(), 'autoReply', msg.chat)) return
@@ -81,6 +127,8 @@ export async function createDaemon(o: DaemonOptions) {
     if (n > 0) log(`message ${msg.chatId}:${msg.id} -> ${n} session(s)`)
   })
   tg.start()
+  bot?.start()
+  const pageTimer = setInterval(() => void pager.tick(), o.pageTickMs ?? 5_000)
 
   const timer = setInterval(() => {
     for (const sid of hub.sweep()) log(`session ${sid} expired, its watches are gone`)
@@ -93,8 +141,11 @@ export async function createDaemon(o: DaemonOptions) {
     store,
     tg,
     hub,
+    pager,
     async stop() {
       clearInterval(timer)
+      clearInterval(pageTimer)
+      bot?.stop()
       server.stop(true)
       store.close()
       await tg.stop()

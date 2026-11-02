@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
+import type { PageAction } from './pager'
 import type { ServerWebSocket } from 'bun'
 import type { ConfigStore } from '../shared/config'
 import { SEND_MODES } from '../shared/contacts'
@@ -52,6 +53,8 @@ export function eventsKey(token: string, sessionId: string): string {
  *   POST /ui/approvals/:id       {"decision": "approve" | "deny", "remember"?: "autoSend" | "requireApproval", "nickname"?: "…"}
  *   POST /ui/contacts            {"nickname": "…", "sendMode"?: "autoSend" | "requireApproval" | "blocked" | "none",
  *                                 "autoReply"?: true | false, "rename"?: "…"}  (the Contacts page: a human editing the rules)
+ *   POST /ui/pages/:id           {"action": "ack" | "snooze", "minutes"?: 15 | 60, "from"?: "menubar" | "tray"}
+ *   POST /ui/pages/test          ring a test page (tgmcp page test)
  *   WS   /bridge                 one per Claude session: the MCP proxy's tool calls and pushes
  *   WS   /events?session=ID&key=K  Monitor stream: one text frame per watched message
  */
@@ -106,6 +109,27 @@ export function startServer(o: ServerOptions) {
           } catch (e) {
             return Response.json({ ok: false, text: e instanceof Error ? e.message : String(e) }, { status: 409 })
           }
+        })()
+      }
+      if (url.pathname === '/ui/pages/test' && req.method === 'POST') {
+        return (async () => {
+          const r = await o.service.testPage()
+          return Response.json(r, { status: r.ok ? 200 : 409 })
+        })()
+      }
+      const pageAct = /^\/ui\/pages\/(pg_[a-z0-9]+)$/.exec(url.pathname)
+      if (pageAct && req.method === 'POST') {
+        return (async () => {
+          const body = (await req.json().catch(() => ({}))) as { action?: unknown; minutes?: unknown; from?: unknown }
+          if (body.action !== 'ack' && body.action !== 'snooze') {
+            return Response.json({ ok: false, text: 'action must be "ack" or "snooze"' }, { status: 400 })
+          }
+          const action: PageAction =
+            body.action === 'ack' ? { kind: 'ack' } : { kind: 'snooze', minutes: body.minutes === 60 ? 60 : 15 }
+          const by = body.from === 'tray' ? 'tray' : 'menubar'
+          const ok = await o.service.pageAction(pageAct[1]!, action, by)
+          if (ok) o.log(`page ${pageAct[1]}: ${body.action} from the ${by}`)
+          return Response.json({ ok, text: ok ? 'done' : 'no such page, or it was settled already' }, { status: ok ? 200 : 409 })
         })()
       }
       if (url.pathname === '/ui/contacts' && req.method === 'POST') {
