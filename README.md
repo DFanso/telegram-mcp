@@ -95,7 +95,9 @@ Downloads go to `~/Downloads/telegram-mcp/<chat>/` (`TELEGRAM_MCP_DOWNLOADS`), n
 
 **Lists** take a nickname, an `@username`, a numeric id, or `"me"`. If a chat is on more than one list, the safer list wins: blocked > requireApproval > autoSend > autoReply > defaultPolicy. `blocked` matches the raw id, so `5550001111` also blocks `-1005550001111`.
 
-**autoReply** chats are the ones Claude sessions may listen to. A session subscribes with `telegram_watch` and stays subscribed until it says stop. Every incoming message from that chat goes to every subscribed session, and each one decides how to reply (the auto reply happens on the Claude side). While subscribed, a session's replies to that chat go out without approval, unless the chat is also on `requireApproval` or `blocked`. Taking a chat off the list stops delivery at once.
+**autoReply** chats are the ones Claude sessions may listen to. A session subscribes with `telegram_watch` and stays subscribed until it says stop. Every incoming message from that chat goes to every subscribed session, and each one decides how to reply (the auto reply happens on the Claude side). While subscribed, a session's replies to that chat go out without approval, unless the chat is also on `requireApproval` or `blocked`.
+
+**Files to a watched chat always ask**, even when the chat is on `autoSend`. While a session watches a chat it acts on what people there write, so "send me that file" may be their request, not yours. Text replies still follow the lists. Files to an `autoSend` chat that the session isn't watching go out without asking. Taking a chat off the list stops delivery at once.
 
 **First message to a new chat.** A chat that is on neither `autoSend` nor `requireApproval` always needs approval. The approval also asks what should happen next time:
 - **Always allow** puts it on `autoSend`.
@@ -122,7 +124,7 @@ Nothing is sent unless you accept. Drafts expire after 20 minutes. The rules are
 | `telegram_search_chats` | find a person or group to save |
 | `telegram_read_messages` | read a chat or forum topic |
 | `telegram_send_message` | send, following the rules |
-| `telegram_send_file` | send a local file with a caption, following the same rules; credentials and this tool's own files are always refused |
+| `telegram_send_file` | send a local file with a caption, following the same rules (but see files to watched chats, above); credentials and this tool's own files are always refused |
 | `telegram_download_media` | save a message's file, photo, video or voice note and return the path |
 | `telegram_confirm_send` / `telegram_cancel_send` | approval fallback for clients without dialogs |
 | `telegram_save_chat` / `telegram_remove_chat` | manage nicknames |

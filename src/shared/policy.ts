@@ -8,12 +8,24 @@ export type Decision =
 /**
  * Who may send where. Order matters and the safer answer wins:
  * blocked > requireApproval > autoSend > autoReply (only while watching) > defaultPolicy.
+ *
+ * A file to a chat the session is watching always asks, even on autoSend: while watching, the
+ * session acts on what people in that chat write, so "send me that file" may be their request,
+ * not yours. This only turns a "send" into an "approve"; it never loosens anything.
  */
 export function decideSend(
   config: Config,
   chat: { id: number; username?: string | null },
-  ctx: { isWatching: boolean },
+  ctx: { isWatching: boolean; file?: boolean },
 ): Decision {
+  const d = decideText(config, chat, ctx)
+  if (d.action === 'send' && ctx.file && ctx.isWatching) {
+    return { action: 'approve', reason: 'files to a chat this session is watching always need approval (the request may have come from that chat)' }
+  }
+  return d
+}
+
+function decideText(config: Config, chat: { id: number; username?: string | null }, ctx: { isWatching: boolean }): Decision {
   if (isListed(config, 'blocked', chat)) return { action: 'block', reason: 'this chat is on the blocked list' }
   if (isListed(config, 'requireApproval', chat))
     return { action: 'approve', reason: 'this chat is on the requireApproval list' }

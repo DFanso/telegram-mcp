@@ -101,10 +101,11 @@ describe('telegram_send_file', () => {
     )
     const tg = new FakeTelegram().add(LEO, ANNA)
     const approvals = new Approvals()
-    const svc = new Service({ store: new ConfigStore(path), tg, hub: new SessionHub(), approvals, eventsUrl: () => 'ws://x', mcpHome })
+    const store = new ConfigStore(path)
+    const svc = new Service({ store, tg, hub: new SessionHub(), approvals, eventsUrl: () => 'ws://x', mcpHome })
     const report = join(dir, 'report.pdf')
     writeFileSync(report, '%PDF-1.7 hello')
-    return { tg, svc, dir, mcpHome, report }
+    return { tg, svc, dir, mcpHome, report, store }
   }
 
   test('an autoSend chat gets the file at once, with the footer as caption', async () => {
@@ -134,6 +135,26 @@ describe('telegram_send_file', () => {
     expect(ok.isError).toBeFalsy()
     expect(tg.sentFiles).toHaveLength(1)
     expect(svc.uiState().recent.at(-1)!.text).toContain('[file: report.pdf')
+  })
+
+  test('a file to a chat the session watches asks first, even on autoSend; text still goes', async () => {
+    const { tg, svc, report, store } = setup()
+    store.update(c => {
+      c.rules.autoReply = ['leo']
+    })
+    const w = await svc.call('s1', 'telegram_watch', { chat: 'leo' })
+    expect(w.isError).toBeFalsy()
+    const f = await svc.call('s1', 'telegram_send_file', { to: 'leo', path: report })
+    expect(f.approval).toBeDefined()
+    expect(f.text).toContain('chat this session is watching')
+    expect(tg.sentFiles).toHaveLength(0)
+    const t = await svc.call('s1', 'telegram_send_message', { to: 'leo', text: 'on it' })
+    expect(t.isError).toBeFalsy()
+    expect(tg.sent).toHaveLength(1)
+    // Another session that isn't watching sends the file to the same autoSend chat at once.
+    const other = await svc.call('s2', 'telegram_send_file', { to: 'leo', path: report })
+    expect(other.approval).toBeUndefined()
+    expect(tg.sentFiles).toHaveLength(1)
   })
 
   test('a file replaced while waiting for approval is not sent', async () => {

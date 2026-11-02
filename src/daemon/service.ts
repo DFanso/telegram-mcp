@@ -338,7 +338,7 @@ export class Service {
     const t = await this.#resolve(p.to, true)
     const file = draft.file ? checkSendable(draft.file, { mcpHome: this.#mcpHome }) : undefined
     const topicId = p.topicId ?? t.entry?.topicId
-    const decision = decideSend(config, t.peer, { isWatching: this.d.hub.isWatching(sid, t.peer.id) })
+    const decision = decideSend(config, t.peer, { isWatching: this.d.hub.isWatching(sid, t.peer.id), file: file !== undefined })
     if (decision.action === 'block') return fail(`Not sent to ${t.label}: ${decision.reason}.`)
     // A file with no caption still carries the footer, without the blank lines that lead into it.
     const text = withFooter(draft.text, config.footer).replace(/^\s+/, '')

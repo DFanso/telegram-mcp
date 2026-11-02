@@ -60,7 +60,7 @@ export const TOOLS = {
   },
   telegram_send_file: {
     description:
-      'Send a local file (any type) with an optional caption. Same rules as telegram_send_message: auto-send chats get it now, others ask the user first, blocked chats are refused; the footer goes on the caption. Credentials (SSH keys, .env files, cloud logins, this tool\'s own session) are always refused.',
+      'Send a local file (any type) with an optional caption. Same rules as telegram_send_message: auto-send chats get it now, others ask the user first, blocked chats are refused; the footer goes on the caption. A file to a chat this session is watching always asks the user first, even on auto-send. Credentials (SSH keys, .env files, cloud logins, this tool\'s own session) are always refused.',
     input: z.object({
       to: chatRef,
       path: z.string().min(1).describe('Absolute path of the file to send.'),
