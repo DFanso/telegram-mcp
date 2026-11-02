@@ -1,5 +1,8 @@
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
 import type { SendOptions, TelegramPort } from '../src/daemon/telegram'
-import type { DialogInfo, IncomingMessage, MessageInfo, PeerInfo, TelegramState } from '../src/shared/protocol'
+import type { DialogInfo, DownloadedFile, IncomingMessage, MessageInfo, PeerInfo, TelegramState } from '../src/shared/protocol'
+import { downloadFileName } from '../src/shared/media'
 
 /** In-memory stand-in for Telegram. Never touches the network. */
 export class FakeTelegram implements TelegramPort {
@@ -9,6 +12,8 @@ export class FakeTelegram implements TelegramPort {
   uncached = new Set<number>()
   sent: { chatId: number; text: string; opts: SendOptions }[] = []
   history = new Map<number, MessageInfo[]>()
+  /** Attachments by `${chatId}:${messageId}`. */
+  files = new Map<string, { name: string | null; type: string; mime: string | null; data: string }>()
   phase: TelegramState['phase'] = 'connected'
   #listeners: ((m: IncomingMessage) => void)[] = []
   #nextId = 1000
@@ -92,6 +97,16 @@ export class FakeTelegram implements TelegramPort {
   }
 
   async markRead() {}
+
+  async downloadMedia(chatId: number, messageId: number, dir: string, maxBytes: number): Promise<DownloadedFile> {
+    const f = this.files.get(`${chatId}:${messageId}`)
+    if (!f) throw new Error(`Message #${messageId} has no attachment, nothing to download.`)
+    if (f.data.length > maxBytes) throw new Error(`Message #${messageId} is over the limit.`)
+    const name = downloadFileName(messageId, f)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, name), f.data)
+    return { path: join(dir, name), name, size: f.data.length, mime: f.mime }
+  }
 }
 
 export const LEO: PeerInfo = { id: 10, type: 'user', name: 'Leo Perera', username: 'leo_p' }

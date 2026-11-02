@@ -1,11 +1,15 @@
-import { Chat, TelegramClient, User, html, md, type ITelegramStorageProvider, type Message, type Peer, type tl } from '@mtcute/bun'
+import { Chat, FileLocation, TelegramClient, User, html, md, type ITelegramStorageProvider, type Message, type Peer, type tl } from '@mtcute/bun'
+import { mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
+import { join } from 'node:path'
 import type {
   DialogInfo,
+  DownloadedFile,
   IncomingMessage,
   MessageInfo,
   PeerInfo,
   TelegramState,
 } from '../shared/protocol'
+import { downloadFileName, fmtBytes } from '../shared/media'
 import type { Credentials } from '../shared/secrets'
 import { SessionLockedError } from './session-store'
 
@@ -28,6 +32,8 @@ export interface TelegramPort {
   listDialogs(opts: { limit: number; unreadOnly: boolean }): Promise<DialogInfo[]>
   searchChats(query: string, limit: number): Promise<(PeerInfo & { global: boolean })[]>
   markRead(chatId: number): Promise<void>
+  /** Save the file attached to a message into `dir`. Refuses files over `maxBytes`. */
+  downloadMedia(chatId: number, messageId: number, dir: string, maxBytes: number): Promise<DownloadedFile>
 }
 
 // ---- conversions ----------------------------------------------------------------
@@ -53,6 +59,22 @@ function safeSender(m: Message): PeerInfo | null {
   }
 }
 
+/** Name and mime of a downloadable attachment; photos and voice notes have no name. */
+function fileMeta(media: FileLocation & { type: string }): { name: string | null; mime: string | null } {
+  const doc = media as FileLocation & { fileName?: unknown; mimeType?: unknown }
+  const name = typeof doc.fileName === 'string' && doc.fileName ? doc.fileName : null
+  const mime = typeof doc.mimeType === 'string' && doc.mimeType ? doc.mimeType : media.type === 'photo' ? 'image/jpeg' : null
+  return { name, mime }
+}
+
+/** "document: report.pdf, 1.2 MB", so a reader can tell what telegram_download_media would fetch. */
+function mediaLabel(media: Message['media']): string | null {
+  if (!media) return null
+  if (!(media instanceof FileLocation)) return media.type
+  const detail = [fileMeta(media).name, media.fileSize ? fmtBytes(media.fileSize) : null].filter(Boolean).join(', ')
+  return detail ? `${media.type}: ${detail}` : media.type
+}
+
 export function messageInfo(m: Message): MessageInfo {
   const reply = m.replyToMessage
   const topicId = reply?.threadId ?? null
@@ -66,7 +88,7 @@ export function messageInfo(m: Message): MessageInfo {
     from: safeSender(m),
     outgoing: m.isOutgoing,
     text: m.text,
-    media: m.media ? m.media.type : null,
+    media: mediaLabel(m.media),
     replyToId,
     topicId,
   }
@@ -385,6 +407,33 @@ export class MtcuteTelegram implements TelegramPort {
       ? await c.searchMessages({ chatId, threadId: opts.topicId, limit: opts.limit, maxId: opts.beforeId, query: '' })
       : await c.getHistory(chatId, { limit: opts.limit, maxId: opts.beforeId })
     return [...list].map(messageInfo).reverse()
+  }
+
+  async downloadMedia(chatId: number, messageId: number, dir: string, maxBytes: number): Promise<DownloadedFile> {
+    const c = await this.#ready()
+    const [m] = await c.getMessages(chatId, [messageId])
+    if (!m) throw new Error(`Message #${messageId} not found in that chat.`)
+    const media = m.media
+    if (!(media instanceof FileLocation)) {
+      throw new Error(`Message #${messageId} has ${media ? `a ${media.type}` : 'no attachment'}, nothing to download.`)
+    }
+    if (media.fileSize && media.fileSize > maxBytes) {
+      throw new Error(`Message #${messageId} is ${fmtBytes(media.fileSize)}, over the ${fmtBytes(maxBytes)} limit (raise maxMb).`)
+    }
+    const { name, mime } = fileMeta(media)
+    const fileName = downloadFileName(messageId, { name, type: media.type, mime })
+    mkdirSync(dir, { recursive: true, mode: 0o700 })
+    const path = join(dir, fileName)
+    // Write to a side file first so a half-finished download never sits under the real name.
+    const part = `${path}.part`
+    try {
+      await c.downloadToFile(part, media)
+      renameSync(part, path)
+    } catch (e) {
+      rmSync(part, { force: true })
+      throw e
+    }
+    return { path, name: fileName, size: statSync(path).size, mime }
   }
 
   async listDialogs(opts: { limit: number; unreadOnly: boolean }): Promise<DialogInfo[]> {
