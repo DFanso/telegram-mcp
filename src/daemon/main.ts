@@ -50,7 +50,11 @@ export async function createDaemon(o: DaemonOptions) {
     paging: () => store.get().paging,
     ownerName: () => tg.state().me?.name.split(' ')[0] || 'They',
     channel: () => bot,
-    tellSender: (chatId, text, replyTo) => tg.sendText(chatId, text, replyTo ? { replyTo } : {}),
+    // The fixed replies go out from your account, so never to a chat you blocked.
+    tellSender: async (chatId, text, replyTo) => {
+      if (isListed(store.get(), 'blocked', { id: chatId })) return
+      await tg.sendText(chatId, text, replyTo ? { replyTo } : {})
+    },
     auditPath: o.paths.pages,
     log,
   })

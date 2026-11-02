@@ -304,3 +304,39 @@ describe('telegram_page and the menu bar', () => {
     expect(svc.uiState().pages[0]!.source).toBe('test')
   })
 })
+
+describe('the daemon', () => {
+  async function daemonWith(rules: object) {
+    const { createDaemon } = await import('../src/daemon/main')
+    const { getPaths } = await import('../src/shared/paths')
+    const paths = getPaths(mkdtempSync(join(tmpdir(), 'tgmcp-page-')))
+    writeFileSync(paths.config, JSON.stringify({ footer: '', paging: { pageFrom: [ANNA.id] }, rules }))
+    const tg = new FakeTelegram().add(LEO, ANNA)
+    const daemon = await createDaemon({ paths, port: 0, telegram: tg, log: () => {}, pageBotToken: null })
+    return { tg, daemon, paths }
+  }
+  const settle = () => new Promise(r => setTimeout(r, 20))
+
+  test('/page from someone on pageFrom rings and answers them', async () => {
+    const { tg, daemon, paths } = await daemonWith({})
+    tg.emit(ANNA.id, '/page KYC prod down')
+    await settle()
+    expect(daemon.pager.active().map(p => p.reason)).toEqual(['KYC prod down'])
+    expect(tg.sent.map(s => [s.chatId, s.text])).toEqual([[ANNA.id, "Paging Me now. I'll tell you when they've seen it."]])
+    expect(readFileSync(paths.pages, 'utf8')).toContain('"event":"page"')
+    // Anyone else's /page does nothing.
+    tg.emit(LEO.id, '/page hello')
+    await settle()
+    expect(daemon.pager.active()).toHaveLength(1)
+    await daemon.stop()
+  })
+
+  test('a blocked chat still pages, but hears nothing back', async () => {
+    const { tg, daemon } = await daemonWith({ blocked: [ANNA.id] })
+    tg.emit(ANNA.id, '/page help')
+    await settle()
+    expect(daemon.pager.active()).toHaveLength(1)
+    expect(tg.sent).toHaveLength(0)
+    await daemon.stop()
+  })
+})
