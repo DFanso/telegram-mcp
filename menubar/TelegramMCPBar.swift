@@ -86,6 +86,13 @@ struct UiContact: Decodable, Identifiable {
     let autoReply: Bool
     let policy: String
     let sameChat: [String]
+    /// A person other than you, so paging works both ways. Missing from a daemon older than this app.
+    let pageable: Bool?
+    /// On paging.pageFrom: their "/page <reason>" rings you.
+    let pageFrom: Bool?
+
+    var canPage: Bool { pageable ?? false }
+    var pagesMe: Bool { pageFrom ?? false }
 }
 
 /// A page: something that needs you now. Rings until you ack or snooze it here, in the tray or on the phone.
@@ -362,6 +369,34 @@ final class Store: ObservableObject {
         return saved
     }
 
+    /// The Page button: the daemon sends "/page <reason>" to that person. True when it went out.
+    @discardableResult
+    func pageContact(_ nickname: String, reason: String) async -> Bool {
+        guard let req = await request("/ui/contacts/page", method: "POST", body: ["nickname": nickname, "reason": reason]) else {
+            show(tokenProblem ?? "No token for the daemon yet.")
+            return false
+        }
+        let key = "page:\(nickname)"
+        busy.insert(key)
+        defer { busy.remove(key) }
+        var sent = false
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            if code == 404 {
+                show("The daemon is older than this app. Restart it (below) to page from here.")
+            } else {
+                sent = code == 200
+                show((obj?["text"] as? String) ?? (sent ? "Paged." : "Not paged."))
+            }
+        } catch {
+            show("Could not reach the daemon: \(error.localizedDescription)")
+        }
+        await poll()
+        return sent
+    }
+
     private func show(_ text: String) {
         flash = text
         Task {
@@ -542,6 +577,7 @@ struct Tag: View {
     let color: Color
     var body: some View {
         Text(text).font(.system(size: 9, weight: .semibold)).foregroundStyle(color)
+            .lineLimit(1).fixedSize() // never wrap: the name next to it truncates instead
             .padding(.horizontal, 6).padding(.vertical, 2)
             .background(Capsule().fill(color.opacity(0.13)))
     }
@@ -922,6 +958,7 @@ struct ContactRow: View {
     let defaultPolicy: String
     @Binding var open: String?
     @State private var nick: String
+    @State private var reason = ""
 
     init(contact: UiContact, defaultPolicy: String, open: Binding<String?>) {
         self.contact = contact
@@ -932,6 +969,7 @@ struct ContactRow: View {
 
     private var isOpen: Bool { open == contact.nickname }
     private var busy: Bool { store.busy.contains("contact:\(contact.nickname)") }
+    private var paging: Bool { store.busy.contains("page:\(contact.nickname)") }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -955,6 +993,7 @@ struct ContactRow: View {
                 }
             }
             Spacer(minLength: 4)
+            if contact.pagesMe { Tag(text: "can page me", color: .pink) }
             if contact.autoReply { Tag(text: "auto-reply", color: .blue) }
             Tag(text: modeTag.text, color: modeTag.color)
             Image(systemName: "chevron.down")
@@ -997,6 +1036,35 @@ struct ContactRow: View {
                         .help("Sessions can't listen to this chat")
                 }
             }
+            if contact.canPage {
+                field("Can page me") {
+                    HStack(spacing: 6) {
+                        Button("On") { save(["pageFrom": true], unless: contact.pagesMe) }
+                            .buttonStyle(ChoiceButton(tint: .pink, selected: contact.pagesMe))
+                            .help("Their \u{201C}/page <reason>\u{201D} rings your desktop until you ack it (paging.pageFrom)")
+                        Button("Off") { save(["pageFrom": false], unless: !contact.pagesMe) }
+                            .buttonStyle(ChoiceButton(tint: .gray, selected: !contact.pagesMe))
+                            .help("Their /page is ignored")
+                    }
+                }
+                field("Page \(contact.nickname)") {
+                    HStack(spacing: 6) {
+                        Group {
+                            if isSnapshot { Text(reason.isEmpty ? "Reason (optional)" : reason).foregroundStyle(.tertiary).frame(maxWidth: .infinity, alignment: .leading) }
+                            else { TextField("Reason (optional)", text: $reason).textFieldStyle(.plain).onSubmit(page) }
+                        }
+                        .font(.system(size: 12))
+                        .padding(.horizontal, 7).padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.07)))
+                        Button(action: page) {
+                            Label(paging ? "Paging…" : "Page", systemImage: "bell.and.waves.left.and.right.fill")
+                        }
+                        .buttonStyle(PillButton(tint: .red, filled: true))
+                        .disabled(paging || contact.sendMode == "blocked")
+                        .help("Sends \u{201C}/page <reason>\u{201D} to \(contact.nickname) from your account. It rings them if you\u{2019}re on their pageFrom.")
+                    }
+                }
+            }
             Text(explanation)
                 .font(.system(size: 10)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -1025,6 +1093,12 @@ struct ContactRow: View {
     private func save(_ change: [String: Any], unless current: Bool) {
         guard !current, !busy else { return }
         Task { await store.editContact(contact.nickname, change) }
+    }
+
+    private func page() {
+        guard !paging else { return }
+        let why = reason
+        Task { if await store.pageContact(contact.nickname, reason: why) { reason = "" } }
     }
 
     private var renamed: Bool {
@@ -1080,7 +1154,9 @@ struct ContactRow: View {
         else if contact.sendMode == "requireApproval" { reply = "Sessions may listen here, but their replies still ask first." }
         else if contact.sendMode == "blocked" { reply = "Sessions may listen here, but can't reply." }
         else { reply = "Sessions may listen here and reply without asking while they do." }
-        return "\(send) \(reply)"
+        guard contact.canPage else { return "\(send) \(reply)" }
+        let page = contact.pagesMe ? "Their /page rings you." : "Their /page is ignored."
+        return "\(send) \(reply) \(page)"
     }
 
     private var details: String {
@@ -1269,7 +1345,7 @@ final class PageAlarm {
             panel?.orderOut(nil)
             return
         }
-        if player == nil, let p = try? AVAudioPlayer(data: AlarmTone.wav, fileTypeHint: AVFileType.wav.rawValue) {
+        if player == nil, let p = Self.player(home: store.home) {
             p.numberOfLoops = -1
             p.volume = 1
             p.play()
@@ -1281,6 +1357,16 @@ final class PageAlarm {
             panel.center()
             panel.orderFrontRegardless()
         }
+    }
+
+    /// Your own sound if there is one (alarm.mp3, .m4a, .wav, .aiff or .caf in the home folder),
+    /// else the built-in beep. Read on each new page, so a new file needs no restart.
+    static func player(home: URL) -> AVAudioPlayer? {
+        for ext in ["mp3", "m4a", "wav", "aiff", "caf"] {
+            let url = home.appendingPathComponent("alarm.\(ext)")
+            if FileManager.default.isReadableFile(atPath: url.path), let p = try? AVAudioPlayer(contentsOf: url) { return p }
+        }
+        return try? AVAudioPlayer(data: AlarmTone.wav, fileTypeHint: AVFileType.wav.rawValue)
     }
 
     private func makePanel(store: Store) -> NSPanel {

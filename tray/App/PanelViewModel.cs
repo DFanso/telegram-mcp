@@ -203,6 +203,17 @@ public sealed class PanelViewModel : Observable
         await PollAsync();
     }
 
+    /// <summary>The Page button: "/page &lt;reason&gt;" to that person. The reason box clears once it went out.</summary>
+    public async Task PageContactAsync(ContactVM contact)
+    {
+        contact.Paging = true;
+        var r = await _api.PageContactAsync(contact.Nickname, contact.PageReason);
+        contact.Paging = false;
+        if (r.Ok) contact.PageReason = "";
+        ShowFlash(r.Text);
+        await PollAsync();
+    }
+
     public void ShowFlash(string text)
     {
         Flash = text;

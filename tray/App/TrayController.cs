@@ -17,13 +17,14 @@ sealed class TrayController : IDisposable
     readonly PanelViewModel _vm;
     readonly PanelWindow _panel;
     readonly Toasts _toasts;
-    readonly PageAlarm _alarm = new();
+    readonly PageAlarm _alarm;
     Icon? _current;
     IconState? _shownState;
     bool _shownDark;
 
     public TrayController(Settings settings)
     {
+        _alarm = new PageAlarm(settings.Home);
         ITokenSource tokens = settings.FileSecrets ? new FileTokenSource(settings.TokenFile) : new CredentialTokenSource(settings.TokenTarget);
         _vm = new PanelViewModel(new DaemonApi(new HttpClient(), settings.Port, tokens), settings);
         _panel = new PanelWindow { DataContext = _vm };

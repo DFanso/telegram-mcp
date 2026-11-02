@@ -94,7 +94,9 @@ public sealed class ContactVM : Observable
     UiContact _c;
     string? _defaultPolicy;
     string _renameText;
+    string _pageReason = "";
     bool _busy;
+    bool _paging;
 
     public ContactVM(PanelViewModel panel, UiContact contact, string? defaultPolicy)
     {
@@ -110,6 +112,12 @@ public sealed class ContactVM : Observable
             var on = p is "on";
             if (on != _c.AutoReply) _ = Edit(new ContactChange(Nickname, AutoReply: on));
         });
+        SetPageFrom = new Command(p =>
+        {
+            var on = p is "on";
+            if (on != _c.PagesMe) _ = Edit(new ContactChange(Nickname, PageFrom: on));
+        });
+        SendPage = new Command(_ => _ = _panel.PageContactAsync(this), _ => CanSendPage);
     }
 
     System.Threading.Tasks.Task Edit(ContactChange change) => _panel.EditContactAsync(this, change);
@@ -135,6 +143,7 @@ public sealed class ContactVM : Observable
         _ => "",
     };
     public Tag? AutoReplyTag => Contacts.AutoReplyTag(_c);
+    public Tag? PageFromTag => Contacts.PageFromTag(_c);
     public Tag ModeTag => Contacts.ModeTag(_c, _defaultPolicy);
     public string Explanation => Contacts.Explanation(_c, _defaultPolicy);
     public string Details => Contacts.Details(_c);
@@ -144,6 +153,28 @@ public sealed class ContactVM : Observable
     public bool IsBlocked => _c.SendMode == "blocked";
     public bool ReplyOn => _c.AutoReply;
     public bool ReplyOff => !_c.AutoReply;
+
+    /// <summary>A person: the "Can page me" choice and the Page button show.</summary>
+    public bool CanPage => _c.CanPage;
+    public bool PageOn => _c.PagesMe;
+    public bool PageOff => !_c.PagesMe;
+    public string PageTitle => $"Page {_c.Nickname}";
+
+    public string PageReason { get => _pageReason; set => Set(ref _pageReason, value); }
+
+    public bool Paging
+    {
+        get => _paging;
+        set
+        {
+            if (!Set(ref _paging, value)) return;
+            Raise(nameof(PageButtonText));
+            CommandManager.InvalidateRequerySuggested(); // the Page button's enabled state
+        }
+    }
+
+    public string PageButtonText => _paging ? "Paging…" : "Page";
+    bool CanSendPage => !_paging && _c.SendMode != "blocked";
 
     public bool IsOpen => _panel.OpenNickname == Nickname;
     public string Chevron => IsOpen ? "" : "";
@@ -182,4 +213,6 @@ public sealed class ContactVM : Observable
     public ICommand Rename { get; }
     public ICommand SetMode { get; }
     public ICommand SetAutoReply { get; }
+    public ICommand SetPageFrom { get; }
+    public ICommand SendPage { get; }
 }

@@ -160,6 +160,10 @@ export interface UiContact {
   policy: string
   /** Other nicknames saved for the same chat. Rules are per chat, so they change together. */
   sameChat: string[]
+  /** A person other than you: they can be on paging.pageFrom, and the Page button can page them. */
+  pageable: boolean
+  /** On paging.pageFrom: their "/page <reason>" rings you. */
+  pageFrom: boolean
 }
 
 export interface UiState {

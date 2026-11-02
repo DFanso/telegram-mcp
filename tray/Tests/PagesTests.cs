@@ -49,4 +49,39 @@ public class PagesTests
         Assert.True(page.Ringing);
         Assert.Null(Fixtures.DemoState().Pages);
     }
+
+    [Fact]
+    public void A_custom_alarm_is_alarm_wav_in_the_home_folder()
+    {
+        var home = Directory.CreateTempSubdirectory("tgmcp-alarm-").FullName;
+        try
+        {
+            Assert.Null(Pages.CustomAlarm(home));
+            File.WriteAllBytes(Path.Combine(home, "alarm.mp3"), [1]);
+            Assert.Null(Pages.CustomAlarm(home)); // the sound player plays WAV only
+            var wav = Path.Combine(home, "alarm.wav");
+            File.WriteAllBytes(wav, Pages.AlarmWav());
+            Assert.Equal(wav, Pages.CustomAlarm(home));
+        }
+        finally { Directory.Delete(home, true); }
+    }
+
+    [Fact]
+    public void Parses_paging_contacts_and_older_daemons()
+    {
+        const string json = """
+        {"telegram":{"phase":"connected","me":null,"lastError":null,"reconnects":0},"configError":null,"footer":"",
+         "approvals":[],"sessions":[],"recent":[],
+         "contacts":[{"nickname":"leo","chatId":1188107983,"name":"Leo F","username":"dfansoo","type":"user","topicId":null,
+                      "aliases":[],"notes":null,"sendMode":"autoSend","autoReply":true,"policy":"auto-send","sameChat":[],
+                      "pageable":true,"pageFrom":true}]}
+        """;
+        var leo = Json.ParseState(json).Contacts![0];
+        Assert.True(leo.CanPage);
+        Assert.True(leo.PagesMe);
+        var older = Json.ParseState(json.Replace("\"pageable\":true,\"pageFrom\":true", "\"unknown\":0")).Contacts![0];
+        Assert.Null(older.Pageable); // a daemon older than paging contacts: no controls
+        Assert.False(older.CanPage);
+        Assert.False(older.PagesMe);
+    }
 }

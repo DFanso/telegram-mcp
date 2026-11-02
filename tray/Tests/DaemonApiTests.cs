@@ -185,4 +185,29 @@ public class DaemonApiTests
 
         Assert.Equal("""{"nickname":"leo","sendMode":"blocked","autoReply":false}""", _net.Requests[0].Body);
     }
+
+    [Fact]
+    public async Task Edit_contact_sends_page_from()
+    {
+        _net.Answer(HttpStatusCode.OK, """{"ok":true,"text":"done","nickname":"leo"}""");
+
+        await Api(new FakeTokens(Good)).EditContactAsync(new ContactChange("leo", PageFrom: true), Ct);
+
+        Assert.Equal("""{"nickname":"leo","pageFrom":true}""", _net.Requests[0].Body);
+    }
+
+    [Fact]
+    public async Task Page_contact_posts_the_nickname_and_reason()
+    {
+        _net.Answer(HttpStatusCode.OK, """{"ok":true,"text":"Paged leo."}""")
+            .Answer(HttpStatusCode.Conflict, """{"ok":false,"text":"Not paged: \"qa\" is a group."}""")
+            .Answer(HttpStatusCode.NotFound, "not found\n");
+        var api = Api(new FakeTokens(Good));
+
+        Assert.Equal(new ActionResult(true, "Paged leo."), await api.PageContactAsync("leo", "prod down", Ct));
+        Assert.Equal("http://127.0.0.1:47901/ui/contacts/page", _net.Requests[0].Uri.ToString());
+        Assert.Equal("""{"nickname":"leo","reason":"prod down"}""", _net.Requests[0].Body);
+        Assert.Equal(new ActionResult(false, "Not paged: \"qa\" is a group."), await api.PageContactAsync("qa", "", Ct));
+        Assert.Equal(new ActionResult(false, Contacts.OlderDaemonForPaging), await api.PageContactAsync("leo", "", Ct));
+    }
 }

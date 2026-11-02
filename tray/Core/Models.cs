@@ -25,7 +25,15 @@ public sealed record UiContact(
     string Nickname, long ChatId, string? Name, string? Username, string? Type, long? TopicId,
     IReadOnlyList<string> Aliases, string? Notes,
     /// <summary>"autoSend" | "requireApproval" | "blocked" | "none"</summary>
-    string SendMode, bool AutoReply, string Policy, IReadOnlyList<string> SameChat);
+    string SendMode, bool AutoReply, string Policy, IReadOnlyList<string> SameChat,
+    /// <summary>A person other than you, so paging works both ways. Null from a daemon older than paging contacts.</summary>
+    bool? Pageable = null,
+    /// <summary>On paging.pageFrom: their "/page &lt;reason&gt;" rings you.</summary>
+    bool? PageFrom = null)
+{
+    public bool CanPage => Pageable == true;
+    public bool PagesMe => PageFrom == true;
+}
 
 /// <summary>A page: something that needs you now. Rings until it is acked or snoozed here, in the menu bar or on the phone.</summary>
 public sealed record UiPage(

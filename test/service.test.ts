@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Approvals } from '../src/daemon/approvals'
-import { Service, describeMessage } from '../src/daemon/service'
+import { PAGE_REASON_MAX, Service, describeMessage, pageReason } from '../src/daemon/service'
 import { SessionHub } from '../src/daemon/sessions'
 import { ConfigStore } from '../src/shared/config'
 import { ANNA, FakeTelegram, TEAM_QA, ALL_HANDS, LEO, LEONARDO } from './fake-telegram'
@@ -427,5 +427,61 @@ describe('menu bar contacts', () => {
     const r = svc.editContact({ nickname: 'leo', sendMode: 'blocked' })
     expect(r.ok).toBe(false)
     expect(readFileSync(path, 'utf8')).toBe('{ "rules": ')
+  })
+})
+
+describe('paging from the Contacts page', () => {
+  beforeEach(() => setup(baseConfig))
+  const onDisk = () => JSON.parse(readFileSync(path, 'utf8'))
+
+  test('"can page me" puts the person on paging.pageFrom by id', () => {
+    const on = svc.editContact({ nickname: 'leo', pageFrom: true })
+    expect(on).toMatchObject({ ok: true, text: '"leo": can page you: their "/page <reason>" rings your desktop.' })
+    expect(onDisk().paging.pageFrom).toEqual([LEO.id])
+    expect(svc.uiState().contacts.find(c => c.nickname === 'leo')).toMatchObject({ pageable: true, pageFrom: true })
+    expect(svc.editContact({ nickname: 'leo', pageFrom: true }).text).toBe('"leo" already has that setting.')
+    expect(svc.editContact({ nickname: 'leo', pageFrom: false }).text).toBe('"leo": can\'t page you.')
+    expect(onDisk().paging.pageFrom).toEqual([])
+  })
+
+  test('a group can\'t be put on pageFrom', () => {
+    const text = readFileSync(path, 'utf8')
+    expect(svc.editContact({ nickname: 'qa', pageFrom: true })).toEqual({
+      ok: false,
+      text: 'Not changed: Only a person can page you, and "qa" is a group or channel.',
+    })
+    expect(readFileSync(path, 'utf8')).toBe(text)
+  })
+
+  test('the Page button sends "/page <reason>" as one line, without the footer, and logs it', async () => {
+    const r = await svc.pageContact('leonardo', '  prod is down\n\nplease   look ')
+    expect(r).toMatchObject({ ok: true })
+    expect(r.text).toStartWith('Paged leonardo.')
+    expect(tg.sent).toHaveLength(1)
+    expect(tg.sent[0]).toMatchObject({ chatId: LEONARDO.id, text: '/page prod is down please look' })
+    expect(svc.uiState().recent.at(-1)).toMatchObject({ chatId: LEONARDO.id, chatLabel: 'leonardo', via: 'menubar', sessionLabel: null })
+  })
+
+  test('no reason sends a bare /page', async () => {
+    expect((await svc.pageContact('leo', '   ')).ok).toBe(true)
+    expect(tg.sent[0]!.text).toBe('/page')
+  })
+
+  test('blocked chats, groups and unknown names are not paged', async () => {
+    setup({ ...baseConfig, rules: { ...baseConfig.rules, blocked: ['anna'] } })
+    expect(await svc.pageContact('anna', 'x')).toEqual({ ok: false, text: 'Not paged: "anna" is blocked (this chat is on the blocked list).' })
+    expect((await svc.pageContact('qa', 'x')).text).toBe('Not paged: Only a person can be paged, and "qa" is a group or channel.')
+    expect((await svc.pageContact('nobody', 'x')).text).toBe('Not paged: No saved chat called "nobody".')
+    setup({ ...baseConfig, defaultPolicy: 'block' })
+    expect((await svc.pageContact('leonardo', 'x')).ok).toBe(false) // on no list, and the default blocks
+    expect(tg.sent).toHaveLength(0)
+  })
+
+  test('a long reason is cut at a whole character', () => {
+    const long = '🔥'.repeat(PAGE_REASON_MAX + 50)
+    const cut = pageReason(long)
+    expect(Array.from(cut)).toHaveLength(PAGE_REASON_MAX)
+    expect(cut.endsWith('🔥…')).toBe(true)
+    expect(pageReason('a\u202eb\u200fc')).toBe('a b c')
   })
 })

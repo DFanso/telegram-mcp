@@ -49,7 +49,7 @@ public sealed record PollResult(UiState? State, string? Problem)
 public sealed record Decision(bool Approve, string? Remember = null, string? Nickname = null);
 
 /// <summary>A Contacts-page edit; null fields stay as they are.</summary>
-public sealed record ContactChange(string Nickname, string? SendMode = null, bool? AutoReply = null, string? Rename = null);
+public sealed record ContactChange(string Nickname, string? SendMode = null, bool? AutoReply = null, string? Rename = null, bool? PageFrom = null);
 
 /// <summary>The daemon's answer to an action, in words. <see cref="Nickname"/>: a contact's name after the edit.</summary>
 public sealed record ActionResult(bool Ok, string Text, string? Nickname = null);
@@ -125,9 +125,15 @@ public sealed class DaemonApi(HttpClient http, int port, ITokenSource tokens, Ti
         var body = new JsonObject { ["nickname"] = change.Nickname };
         if (change.SendMode is not null) body["sendMode"] = change.SendMode;
         if (change.AutoReply is { } on) body["autoReply"] = on;
+        if (change.PageFrom is { } pages) body["pageFrom"] = pages;
         if (change.Rename is not null) body["rename"] = change.Rename;
         return PostAsync("/ui/contacts", body, ok => ok ? "Saved." : "Not changed.", ct, notFound: Contacts.OlderDaemon);
     }
+
+    /// <summary>The Page button: the daemon sends "/page &lt;reason&gt;" to that person from your account.</summary>
+    public Task<ActionResult> PageContactAsync(string nickname, string reason, CancellationToken ct = default) =>
+        PostAsync("/ui/contacts/page", new JsonObject { ["nickname"] = nickname, ["reason"] = reason },
+            ok => ok ? "Paged." : "Not paged.", ct, notFound: Contacts.OlderDaemonForPaging);
 
     /// <summary>Ack a page, or snooze it for 15 or 60 minutes.</summary>
     public Task<ActionResult> PageAsync(string id, bool ack, int minutes = 15, CancellationToken ct = default)

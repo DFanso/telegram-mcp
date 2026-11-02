@@ -15,6 +15,16 @@ public static class Pages
         return new Uri($"tg://openmessage?chat_id={-c}&message_id={m}");
     }
 
+    /// <summary>
+    /// Your own alarm sound: alarm.wav in the home folder (the sound player plays WAV only), else
+    /// null for the built-in beep. Looked up on each new page, so a new file needs no restart.
+    /// </summary>
+    public static string? CustomAlarm(string home)
+    {
+        var path = Path.Combine(home, "alarm.wav");
+        return File.Exists(path) ? path : null;
+    }
+
     /// <summary>The pager beep as a WAV: three short high tones and a low one, then a pause, for looping.</summary>
     public static byte[] AlarmWav()
     {
