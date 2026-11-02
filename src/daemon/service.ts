@@ -341,7 +341,8 @@ export class Service {
     const decision = decideSend(config, t.peer, { isWatching: this.d.hub.isWatching(sid, t.peer.id), file: file !== undefined })
     if (decision.action === 'block') return fail(`Not sent to ${t.label}: ${decision.reason}.`)
     // A file with no caption still carries the footer, without the blank lines that lead into it.
-    const text = withFooter(draft.text, config.footer).replace(/^\s+/, '')
+    const footed = withFooter(draft.text, config.footer)
+    const text = file && draft.text.trim() === '' ? footed.trimStart() : footed
     const shown = describeOutgoing(text, file)
     if (decision.action === 'send') {
       const sent = await this.#deliver(t.peer.id, text, file, { replyTo: p.replyTo, topicId, parseMode: p.parseMode, asPhoto: draft.asPhoto })
