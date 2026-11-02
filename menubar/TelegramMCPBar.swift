@@ -6,6 +6,7 @@
 // the login Keychain (service "telegram-mcp"; a file instead with TELEGRAM_MCP_SECRET_STORE=file).
 
 import AppKit
+import AVFoundation
 import Security
 import SwiftUI
 import UserNotifications
@@ -87,6 +88,32 @@ struct UiContact: Decodable, Identifiable {
     let sameChat: [String]
 }
 
+/// A page: something that needs you now. Rings until you ack or snooze it here, in the tray or on the phone.
+struct UiPage: Decodable, Identifiable, Equatable {
+    let id: String
+    /// "command" | "keyword" | "claude" | "test"
+    let source: String
+    /// "ringing" | "unanswered" | "snoozed"
+    let state: String
+    let from: String
+    let chat: String?
+    let chatId: Int?
+    let messageId: Int?
+    let reason: String
+    let createdAt: String
+    let snoozedUntil: String?
+
+    var ringing: Bool { state != "snoozed" }
+
+    /// Opens the message in Telegram: users by id, supergroups through t.me/c, basic groups by chat id.
+    var messageURL: URL? {
+        guard let chatId, let messageId else { return nil }
+        if chatId > 0 { return URL(string: "tg://openmessage?user_id=\(chatId)&message_id=\(messageId)") }
+        if chatId <= -1_000_000_000_000 { return URL(string: "https://t.me/c/\(-chatId - 1_000_000_000_000)/\(messageId)") }
+        return URL(string: "tg://openmessage?chat_id=\(-chatId)&message_id=\(messageId)")
+    }
+}
+
 struct UiState: Decodable {
     let telegram: TelegramState
     let configError: String?
@@ -97,6 +124,8 @@ struct UiState: Decodable {
     /// Missing from a daemon older than this app; the Contacts page then asks for a restart.
     let contacts: [UiContact]?
     let defaultPolicy: String?
+    /// Missing from a daemon older than this app.
+    let pages: [UiPage]?
 }
 
 /// The chats you last sent to, newest first, each with the messages sent there.
@@ -170,6 +199,8 @@ final class Store: ObservableObject {
     @Published var problem: String?
     @Published var busy: Set<String> = []
     @Published var flash: String?
+    @Published var pages: [UiPage] = []
+    private let alarm = PageAlarm()
 
     let home: URL
     let port: Int
@@ -249,10 +280,33 @@ final class Store: ObservableObject {
             reachable = true
             problem = nil
             notifyNewApprovals(next.approvals)
+            showPages(next.pages ?? [])
         } catch {
             reachable = false
             problem = "The daemon is not running. It restarts by itself; or run tgmcp install."
         }
+    }
+
+    private func showPages(_ next: [UiPage]) {
+        if next != pages { pages = next }
+        alarm.update(ringing: next.filter(\.ringing), store: self)
+    }
+
+    /// Ack, or snooze for `minutes` (15 or 60). Stops the alarm here at once; the daemon tells the rest.
+    func page(_ id: String, ack: Bool, minutes: Int = 15) async {
+        var body: [String: Any] = ["action": ack ? "ack" : "snooze", "from": "menubar"]
+        if !ack { body["minutes"] = minutes }
+        guard let req = await request("/ui/pages/\(id)", method: "POST", body: body) else {
+            show(tokenProblem ?? "No token for the daemon yet.")
+            return
+        }
+        showPages(pages.filter { $0.id != id })
+        do {
+            _ = try await URLSession.shared.data(for: req)
+        } catch {
+            show("Could not reach the daemon: \(error.localizedDescription)")
+        }
+        await poll()
     }
 
     /// `remember` (first message to a chat): "autoSend" = always allow, "requireApproval" = ask every time.
@@ -1195,6 +1249,143 @@ enum IconPreview {
             try? png.write(to: URL(fileURLWithPath: path))
             print("wrote \(path)")
         }
+    }
+}
+
+// MARK: - Pages
+
+/// The on-call alarm: a looping tone and a window above everything, on every Space, until you
+/// ack or snooze. It plays the sound itself, since a notification sound plays once and Focus can
+/// silence it.
+@MainActor
+final class PageAlarm {
+    private var player: AVAudioPlayer?
+    private var panel: NSPanel?
+
+    func update(ringing: [UiPage], store: Store) {
+        guard !ringing.isEmpty else {
+            player?.stop()
+            player = nil
+            panel?.orderOut(nil)
+            return
+        }
+        if player == nil, let p = try? AVAudioPlayer(data: AlarmTone.wav, fileTypeHint: AVFileType.wav.rawValue) {
+            p.numberOfLoops = -1
+            p.volume = 1
+            p.play()
+            player = p
+        }
+        let panel = self.panel ?? makePanel(store: store)
+        self.panel = panel
+        if !panel.isVisible {
+            panel.center()
+            panel.orderFrontRegardless()
+        }
+    }
+
+    private func makePanel(store: Store) -> NSPanel {
+        let panel = NSPanel(
+            contentRect: NSRect(x: 0, y: 0, width: 420, height: 220),
+            styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
+            backing: .buffered, defer: false)
+        panel.titleVisibility = .hidden
+        panel.titlebarAppearsTransparent = true
+        panel.isFloatingPanel = true
+        panel.level = .screenSaver
+        panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        panel.hidesOnDeactivate = false
+        panel.isMovableByWindowBackground = true
+        let host = NSHostingView(rootView: PageAlarmView().environmentObject(store))
+        host.sizingOptions = [.preferredContentSize]
+        panel.contentView = host
+        return panel
+    }
+}
+
+/// A two-tone pager beep, made here so the app needs no sound file.
+enum AlarmTone {
+    static let wav: Data = {
+        let rate = 44_100
+        var samples: [Int16] = []
+        func tone(_ hz: Double, _ seconds: Double) {
+            let n = Int(Double(rate) * seconds)
+            for i in 0..<n {
+                let fade = min(1, Double(i) / 300, Double(n - i) / 300)
+                samples.append(Int16(sin(2 * .pi * hz * Double(i) / Double(rate)) * fade * 0.85 * 32_767))
+            }
+        }
+        func silence(_ seconds: Double) { samples += Array(repeating: 0, count: Int(Double(rate) * seconds)) }
+        for _ in 0..<3 { tone(988, 0.12); silence(0.05) }
+        tone(740, 0.3)
+        silence(0.5)
+        var data = Data()
+        func put<T: FixedWidthInteger>(_ v: T) { withUnsafeBytes(of: v.littleEndian) { data.append(contentsOf: $0) } }
+        let bytes = samples.count * 2
+        data.append(contentsOf: Array("RIFF".utf8)); put(UInt32(36 + bytes))
+        data.append(contentsOf: Array("WAVEfmt ".utf8)); put(UInt32(16)); put(UInt16(1)); put(UInt16(1))
+        put(UInt32(rate)); put(UInt32(rate * 2)); put(UInt16(2)); put(UInt16(16))
+        data.append(contentsOf: Array("data".utf8)); put(UInt32(bytes))
+        for s in samples { put(s) }
+        return data
+    }()
+}
+
+struct PageAlarmView: View {
+    @EnvironmentObject var store: Store
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "bell.and.waves.left.and.right.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(.red)
+                Text(store.pages.filter(\.ringing).count > 1 ? "\(store.pages.filter(\.ringing).count) pages" : "Page")
+                    .font(.system(size: 17, weight: .bold))
+                Spacer()
+            }
+            ForEach(store.pages.filter(\.ringing)) { page in
+                PageCard(page: page)
+            }
+        }
+        .padding(18)
+        .frame(width: 420)
+    }
+}
+
+struct PageCard: View {
+    @EnvironmentObject var store: Store
+    let page: UiPage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(page.from).font(.system(size: 13, weight: .semibold))
+            if let chat = page.chat {
+                Text(chat).font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+            Text(page.reason.isEmpty ? "No reason given" : page.reason)
+                .font(.system(size: 13))
+                .fixedSize(horizontal: false, vertical: true)
+            if page.state == "unanswered" {
+                Text("Not acked on the phone either; the sender was told to call.")
+                    .font(.system(size: 11)).foregroundStyle(.orange)
+            }
+            HStack(spacing: 8) {
+                Button("Ack") { Task { await store.page(page.id, ack: true) } }
+                    .buttonStyle(PillButton(tint: .red))
+                    .keyboardShortcut(.defaultAction)
+                Button("Snooze 15m") { Task { await store.page(page.id, ack: false, minutes: 15) } }
+                    .buttonStyle(PillButton(tint: .secondary, filled: false))
+                Button("1h") { Task { await store.page(page.id, ack: false, minutes: 60) } }
+                    .buttonStyle(PillButton(tint: .secondary, filled: false))
+                Spacer()
+                if let url = page.messageURL {
+                    Button("Open message") { NSWorkspace.shared.open(url) }
+                        .buttonStyle(IconButton())
+                }
+            }
+        }
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 10).fill(Color.red.opacity(0.08)))
     }
 }
 
