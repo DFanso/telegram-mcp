@@ -16,17 +16,23 @@ export type Decision =
 export function decideSend(
   config: Config,
   chat: { id: number; username?: string | null },
-  ctx: { isWatching: boolean; file?: boolean },
+  ctx: { isWatching: boolean; file?: boolean; takenOver?: boolean },
 ): Decision {
   const d = decideText(config, chat, ctx)
-  if (d.action === 'send' && ctx.file && ctx.isWatching) {
+  if (d.action === 'send' && ctx.file && (ctx.isWatching || ctx.takenOver)) {
     return { action: 'approve', reason: 'files to a chat this session is watching always need approval (the request may have come from that chat)' }
   }
   return d
 }
 
-function decideText(config: Config, chat: { id: number; username?: string | null }, ctx: { isWatching: boolean }): Decision {
+function decideText(
+  config: Config,
+  chat: { id: number; username?: string | null },
+  ctx: { isWatching: boolean; takenOver?: boolean },
+): Decision {
   if (isListed(config, 'blocked', chat)) return { action: 'block', reason: 'this chat is on the blocked list' }
+  // The owner typed /reply in this very chat: that is a yes for this chat, for as long as the takeover lasts.
+  if (ctx.takenOver) return { action: 'send', reason: 'the user handed this chat over with /reply' }
   if (isListed(config, 'requireApproval', chat))
     return { action: 'approve', reason: 'this chat is on the requireApproval list' }
   if (isListed(config, 'autoSend', chat)) return { action: 'send', reason: 'this chat is on the autoSend list' }

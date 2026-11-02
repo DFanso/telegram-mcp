@@ -82,6 +82,11 @@ export const TOOLS = {
       topicId: z.number().int().optional().describe('Forum topic id. Defaults to the nickname\'s saved topic.'),
     }),
   },
+  telegram_answer_reply: {
+    description:
+      'Make this session the one that answers /reply (on: false to stop). When the user types /reply in any Telegram chat from their own account, that chat is handed to this session for a while: you get a notice with any instruction ("/reply say I am on my way"), new messages there come to you, and your replies go out without approval until they type /reply stop. The command message is deleted so the chat never sees it. Blocked chats are never taken over.',
+    input: z.object({ on: z.boolean().default(true) }),
+  },
   telegram_confirm_send: {
     description:
       'Send a message that is waiting for approval. Only call this after the user has explicitly said yes to that exact message and recipient in this conversation. For a first message to a chat, pass remember with what the user chose for next time.',

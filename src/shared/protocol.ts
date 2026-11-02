@@ -80,6 +80,8 @@ export interface TgEvent {
   text: string
   media: string | null
   date: string
+  /** Set on the notices "/reply" sends: a chat was handed to this session, or taken back. */
+  takeover?: { action: 'start'; instruction: string; minutes: number } | { action: 'stop' }
 }
 
 // ---- tool results ------------------------------------------------------------------

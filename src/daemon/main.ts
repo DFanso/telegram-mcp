@@ -67,8 +67,16 @@ export async function createDaemon(o: DaemonOptions) {
   store.watch()
 
   tg.onMessage(msg => {
-    // Taking a chat off autoReply ends listening to it at once, even for existing watches.
-    if (!isListed(store.get(), 'autoReply', msg.chat)) return
+    if (msg.outgoing) {
+      service
+        .handleOwnMessage(msg)
+        .then(cmd => cmd && log(`/reply in ${msg.chatId}: ${hub.takeoverOf(msg.chatId) ?? 'no session took it (or it ended)'}`))
+        .catch(e => log(`/reply in ${msg.chatId} failed: ${e instanceof Error ? e.message : String(e)}`))
+      return
+    }
+    // Taking a chat off autoReply ends listening to it at once, even for existing watches. A chat
+    // handed over with /reply is listened to for as long as the takeover lasts.
+    if (!hub.takeoverOf(msg.chatId) && !isListed(store.get(), 'autoReply', msg.chat)) return
     const n = hub.dispatch(msg, m => describeMessage(store, m))
     if (n > 0) log(`message ${msg.chatId}:${msg.id} -> ${n} session(s)`)
   })

@@ -42,6 +42,8 @@ export interface TelegramPort {
   sendFile(chatId: number, file: OutgoingFile, caption: string, opts?: SendFileOptions): Promise<MessageInfo>
   /** Re-send the sticker attached to an existing message (by its Telegram file id, nothing is uploaded). */
   sendSticker(chatId: number, from: StickerRef, opts?: SendOptions): Promise<MessageInfo>
+  /** Delete one of your own messages for everyone. */
+  deleteMessage(chatId: number, messageId: number): Promise<void>
   getHistory(chatId: number, opts: { limit: number; beforeId?: number; topicId?: number }): Promise<MessageInfo[]>
   listDialogs(opts: { limit: number; unreadOnly: boolean }): Promise<DialogInfo[]>
   searchChats(query: string, limit: number): Promise<(PeerInfo & { global: boolean })[]>
@@ -428,6 +430,11 @@ export class MtcuteTelegram implements TelegramPort {
       ...(opts.topicId ? { threadId: opts.topicId } : {}),
     })
     return messageInfo(sent)
+  }
+
+  async deleteMessage(chatId: number, messageId: number): Promise<void> {
+    const c = await this.#ready()
+    await c.deleteMessagesById(chatId, [messageId], { revoke: true })
   }
 
   async sendSticker(chatId: number, from: StickerRef, opts: SendOptions = {}): Promise<MessageInfo> {

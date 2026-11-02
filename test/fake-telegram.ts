@@ -99,6 +99,11 @@ export class FakeTelegram implements TelegramPort {
   /** Message refs (`${chatId}:${messageId}`) that hold a sticker. */
   stickers = new Set<string>()
   sentStickers: { chatId: number; from: StickerRef; opts: SendOptions }[] = []
+  deleted: { chatId: number; messageId: number }[] = []
+
+  async deleteMessage(chatId: number, messageId: number): Promise<void> {
+    this.deleted.push({ chatId, messageId })
+  }
 
   async sendSticker(chatId: number, from: StickerRef, opts: SendOptions = {}): Promise<MessageInfo> {
     if (!this.stickers.has(`${from.chatId}:${from.messageId}`)) throw new Error(`Message #${from.messageId} has no attachment, not a sticker.`)
