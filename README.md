@@ -128,7 +128,7 @@ Approving also saves the chat under `chats`, with a suggested nickname you can e
 **Approval** happens in the first place available:
 1. The **menu bar app**, when it's running. The draft appears there and as a notification. Both offer Approve / Deny, or Deny / Ask every time / Always allow for a new chat. The Claude tool call waits for your click: Claude Code backgrounds it after 2 minutes, and the result arrives when you decide.
 2. A **Claude Code dialog** showing the exact recipient and text, plus the next-time choice and nickname for a new chat.
-3. **In chat**: the tool returns an approval id. The model must ask you before it calls `telegram_confirm_send`, passing your next-time choice as `remember`.
+3. **In chat**: the tool returns an approval id. The model must ask you before it calls `telegram_confirm_send`. Here the model's word is the only check, so this path is narrower: it can't confirm a draft that is waiting in the menu bar app (even after Claude Code backgrounds the call), and a first message approved here always saves the chat as "ask every time". Only you can make a chat "always allow", in the menu bar's Contacts page, an approval there, the dialog, or `config.json`.
 
 Nothing is sent unless you accept. Drafts expire after 20 minutes. The rules are checked again at send time.
 

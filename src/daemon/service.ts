@@ -578,6 +578,7 @@ export class Service {
     const pending = this.d.approvals.create({
       peer: t.peer,
       firstTime,
+      askedInUi: uiActive,
       nickname,
       suggestedNickname: nickname ?? suggestNickname(config, t.peer),
       sessionId: sid,
@@ -607,8 +608,8 @@ export class Service {
           ? `First message to this chat: approving also saves it${nickname ? '' : ` (as "${pending.suggestedNickname}")`} and the user picks "always allow" (autoSend) or "ask every time" (requireApproval) for next time.`
           : null,
         uiActive
-          ? 'It is waiting in the menu bar for the user to approve or deny.'
-          : `Show the user this exact message and recipient. Only if they say yes, call telegram_confirm_send with the approval id${firstTime ? ' and remember set to what they chose ("autoSend" = always allow, "requireApproval" = ask every time)' : ''}; otherwise telegram_cancel_send.`,
+          ? 'It is waiting in the menu bar for the user to approve or deny. Only the user can approve it there: do not call telegram_confirm_send for it.'
+          : `Show the user this exact message and recipient. Only if they say yes, call telegram_confirm_send with the approval id; otherwise telegram_cancel_send.${firstTime ? ' Approving here saves the chat as "ask every time"; only the user can change that to "always allow", in the menu bar / tray app\'s Contacts page or config.json.' : ''}`,
       ]
         .filter(line => line !== null)
         .join('\n'),
@@ -801,8 +802,21 @@ export class Service {
       return this.#send(sid, { ...p, parseMode: 'plain' }, { text: '', sticker: { chatId: from.peer.id, messageId: p.messageId } })
     },
 
-    telegram_confirm_send: async (sid, p) =>
-      this.decide(p.approvalId, true, 'chat', sid, { remember: p.remember, nickname: p.nickname }),
+    /**
+     * The fallback for clients with no menu bar and no dialog, where the only approval is the
+     * model's word that the user said yes. So it can't approve a draft the menu bar is showing the
+     * user, and it can never put a chat on autoSend: a session must not be able to widen its own
+     * permissions, e.g. after a message in a watched chat talks it into it.
+     */
+    telegram_confirm_send: async (sid, p) => {
+      const item = this.d.approvals.peek(p.approvalId)
+      if (item && item.sessionId === sid && (item.askedInUi || this.uiActive())) {
+        return fail(
+          `Message ${p.approvalId} is waiting for the user in the menu bar app. Only they can approve it there; the result arrives when they decide. Call telegram_cancel_send if they want to drop it.`,
+        )
+      }
+      return this.decide(p.approvalId, true, 'chat', sid, { remember: 'requireApproval', nickname: p.nickname })
+    },
 
     telegram_cancel_send: async (sid, p) => this.decide(p.approvalId, false, 'chat', sid),
 

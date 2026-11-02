@@ -98,13 +98,9 @@ export const TOOLS = {
   },
   telegram_confirm_send: {
     description:
-      'Send a message that is waiting for approval. Only call this after the user has explicitly said yes to that exact message and recipient in this conversation. For a first message to a chat, pass remember with what the user chose for next time.',
+      'Send a message that is waiting for approval in chat. Only call this after the user has explicitly said yes to that exact message and recipient in this conversation. Refused for messages waiting in the menu bar app, which only the user can approve. A first message to a chat saves it as "ask every time"; only the user can make a chat "always allow".',
     input: z.object({
       approvalId: z.string().min(1),
-      remember: z
-        .enum(['autoSend', 'requireApproval'])
-        .optional()
-        .describe('First message to a chat only, and only as the user chose: "autoSend" = always allow from now on, "requireApproval" = ask every time (the default).'),
       nickname: z.string().optional().describe('Nickname to save the chat as, if the user gave one.'),
     }),
   },

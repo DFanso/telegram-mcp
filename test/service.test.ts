@@ -324,6 +324,52 @@ describe('first message to a new chat', () => {
     expect(saved().rules.requireApproval).toContain('kasun')
   })
 
+  test('a session can never whitelist a chat by confirming in chat', async () => {
+    tg.add(NEW)
+    const r = await svc.call('s1', 'telegram_send_message', { to: '@kasun_p', text: 'y' })
+    // An old client (or a talked-into-it model) still passing remember: it is ignored.
+    const ok = await svc.call('s1', 'telegram_confirm_send', { approvalId: r.approval!.id, remember: 'autoSend' })
+    expect(ok.isError).toBeFalsy()
+    expect(tg.sent).toHaveLength(1)
+    expect(saved().rules.autoSend).not.toContain('kasun')
+    expect(saved().rules.requireApproval).toContain('kasun')
+  })
+
+  // The model cannot approve what the menu bar is asking the user.
+  test('confirm_send is refused while the draft waits in the menu bar; the menu bar still decides', async () => {
+    svc.touchUi()
+    const r = await svc.call('s1', 'telegram_send_message', { to: 'qa', text: 'QA please' })
+    expect(r.approval?.uiActive).toBe(true)
+    expect(r.text).toContain('do not call telegram_confirm_send')
+
+    const self = await svc.call('s1', 'telegram_confirm_send', { approvalId: r.approval!.id })
+    expect(self.isError).toBe(true)
+    expect(self.text).toContain('Only they can approve it')
+    expect(tg.sent).toHaveLength(0)
+    expect(svc.uiState().approvals).toHaveLength(1) // still waiting for the human
+
+    await svc.decide(r.approval!.id, true, 'menubar', null)
+    expect(tg.sent).toHaveLength(1)
+  })
+
+  test('a draft asked in chat cannot be confirmed once the menu bar comes up', async () => {
+    const r = await svc.call('s1', 'telegram_send_message', { to: 'qa', text: 'x' })
+    expect(r.approval?.uiActive).toBe(false)
+    svc.touchUi()
+    const self = await svc.call('s1', 'telegram_confirm_send', { approvalId: r.approval!.id })
+    expect(self.isError).toBe(true)
+    expect(tg.sent).toHaveLength(0)
+  })
+
+  test('the model may still cancel a draft the menu bar is showing', async () => {
+    svc.touchUi()
+    const r = await svc.call('s1', 'telegram_send_message', { to: 'qa', text: 'x' })
+    const cancel = await svc.call('s1', 'telegram_cancel_send', { approvalId: r.approval!.id })
+    expect(cancel.isError).toBeFalsy()
+    expect(tg.sent).toHaveLength(0)
+    expect(svc.uiState().approvals).toHaveLength(0)
+  })
+
   test('a taken nickname falls back to a free one', async () => {
     tg.add({ id: 61, type: 'user', name: 'Leo Fernando', username: 'leo_f' })
     const r = await svc.call('s1', 'telegram_send_message', { to: '@leo_f', text: 'x' })

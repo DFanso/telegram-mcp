@@ -32,6 +32,12 @@ export interface PendingSend {
   nickname: string | null
   /** What it will be saved as otherwise (the approver can change it). */
   suggestedNickname: string
+  /**
+   * The menu bar / tray app was running when this was asked, so the human decides there. The
+   * session must not confirm it itself (telegram_confirm_send), even after Claude Code backgrounds
+   * the waiting tool call.
+   */
+  askedInUi: boolean
 }
 
 export type Remember = 'autoSend' | 'requireApproval'
@@ -65,6 +71,12 @@ export class Approvals {
     const item = { ...p, id: newId('a_'), createdAt: this.now() }
     this.#items.set(item.id, item)
     return item
+  }
+
+  /** The draft, if it is still waiting, without taking it. */
+  peek(id: string): PendingSend | undefined {
+    const item = this.#items.get(id)
+    return item && this.now() - item.createdAt <= this.ttlMs ? item : undefined
   }
 
   list(): PendingSend[] {
