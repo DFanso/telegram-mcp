@@ -136,6 +136,24 @@ describe('telegram_send_file', () => {
     expect(svc.uiState().recent.at(-1)!.text).toContain('[file: report.pdf')
   })
 
+  test('a file replaced while waiting for approval is not sent', async () => {
+    const { tg, svc, report } = setup()
+    const r = await svc.call('s1', 'telegram_send_file', { to: 'anna', path: report })
+    writeFileSync(report, 'something else entirely, not what the user approved')
+    const res = await svc.call('s1', 'telegram_confirm_send', { approvalId: r.approval!.id })
+    expect(res.isError).toBe(true)
+    expect(res.text).toContain('changed after approval was asked')
+    expect(tg.sentFiles).toHaveLength(0)
+  })
+
+  test('the approver sees the full path, not just the file name', async () => {
+    const { svc, report } = setup()
+    const r = await svc.call('s1', 'telegram_send_file', { to: 'anna', path: report, caption: 'hi' })
+    expect(r.approval!.text).toContain(`Path: ${realpathSync(report)}`)
+    expect(r.text).toContain(`Path: ${realpathSync(report)}`)
+    expect(svc.uiState().approvals[0]!.text).toContain(`Path: ${realpathSync(report)}`)
+  })
+
   test('a file deleted while waiting for approval is not sent', async () => {
     const { tg, svc, report } = setup()
     const r = await svc.call('s1', 'telegram_send_file', { to: 'anna', path: report })

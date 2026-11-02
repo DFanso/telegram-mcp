@@ -14,6 +14,8 @@ export interface PendingSend {
   /** The message, or the caption when a file goes out. */
   text: string
   file?: OutgoingFile
+  /** SHA-256 of the file when approval was asked; it must still match when it is sent. */
+  fileDigest?: string
   asPhoto?: boolean
   replyTo?: number
   topicId?: number

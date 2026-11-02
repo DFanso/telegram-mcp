@@ -19,7 +19,7 @@ import { decideSend, policyLabel, withFooter } from '../shared/policy'
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { checkSendable, describeOutgoing, fmtBytes, safeFileName, type OutgoingFile } from '../shared/media'
+import { checkSendable, describeOutgoing, fileDigest, fmtBytes, safeFileName, type OutgoingFile } from '../shared/media'
 import type { IncomingMessage, MessageInfo, PeerInfo, SentRecord, TgEvent, ToolResult, UiState } from '../shared/protocol'
 import { TOOLS, isToolName, type ToolInput, type ToolName } from '../shared/tools'
 import type { Approvals, DecideOptions, PendingSend } from './approvals'
@@ -275,6 +275,9 @@ export class Service {
         try {
           // The file may have changed or moved while it waited.
           const file = item.file ? checkSendable(item.file.path, { mcpHome: this.#mcpHome }) : undefined
+          if (file && item.fileDigest && (await fileDigest(file.path)) !== item.fileDigest) {
+            throw new Error(`${file.path} changed after approval was asked, so it was not sent. Ask again to send the current version.`)
+          }
           const sent = await this.#deliver(item.chatId, item.text, file, {
             replyTo: item.replyTo,
             topicId: item.topicId,
@@ -310,7 +313,7 @@ export class Service {
         id: a.id,
         to: a.chatLabel,
         detail: a.chatDetail,
-        text: describeOutgoing(a.text, a.file),
+        text: describeOutgoing(a.text, a.file, true),
         reason: a.reason,
         sessionId: a.sessionId,
         sessionLabel: a.sessionLabel,
@@ -348,6 +351,7 @@ export class Service {
     const uiActive = this.uiActive()
     const firstTime = !isListed(config, 'autoSend', t.peer) && !isListed(config, 'requireApproval', t.peer)
     const nickname = t.nickname ?? nicknameFor(config, t.peer.id) ?? null
+    const asked = describeOutgoing(text, file, true)
     const pending = this.d.approvals.create({
       peer: t.peer,
       firstTime,
@@ -361,6 +365,7 @@ export class Service {
       username: t.peer.username,
       text,
       file,
+      ...(file ? { fileDigest: await fileDigest(file.path) } : {}),
       asPhoto: draft.asPhoto,
       replyTo: p.replyTo,
       topicId,
@@ -372,7 +377,7 @@ export class Service {
         `Not sent yet: needs the user's approval (${decision.reason}). Approval id: ${pending.id}`,
         `To: ${pending.chatLabel} (${pending.chatDetail})`,
         'Message:',
-        shown,
+        asked,
         '',
         firstTime
           ? `First message to this chat: approving also saves it${nickname ? '' : ` (as "${pending.suggestedNickname}")`} and the user picks "always allow" (autoSend) or "ask every time" (requireApproval) for next time.`
@@ -386,7 +391,7 @@ export class Service {
       approval: {
         id: pending.id,
         to: pending.chatLabel,
-        text: shown,
+        text: asked,
         reason: decision.reason,
         uiActive,
         firstTime,

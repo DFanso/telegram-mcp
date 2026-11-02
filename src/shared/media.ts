@@ -94,8 +94,24 @@ export function checkSendable(path: string, o: { mcpHome: string; home?: string 
   return { path: real, name: basename(real), size: st.size }
 }
 
-/** How a send reads in approvals, results and the recent list. */
-export function describeOutgoing(text: string, file?: OutgoingFile): string {
+/**
+ * How a send reads in results and the recent list. `withPath` is for approvals: the person
+ * deciding sees which folder the file comes from, not just its name.
+ */
+export function describeOutgoing(text: string, file?: OutgoingFile, withPath = false): string {
   if (!file) return text
-  return `[file: ${file.name}, ${fmtBytes(file.size)}]${text ? `\n${text}` : ''}`
+  const lines = [`[file: ${file.name}, ${fmtBytes(file.size)}]`]
+  if (withPath) lines.push(`Path: ${file.path}`)
+  if (text) lines.push(text)
+  return lines.join('\n')
+}
+
+/**
+ * SHA-256 of a file, streamed. Taken when approval is asked and checked again before sending,
+ * so the bytes that go out are the bytes the person approved, not whatever is at that path now.
+ */
+export async function fileDigest(path: string): Promise<string> {
+  const h = new Bun.CryptoHasher('sha256')
+  for await (const chunk of Bun.file(path).stream()) h.update(chunk)
+  return h.digest('hex')
 }
