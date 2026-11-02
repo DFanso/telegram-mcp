@@ -1,6 +1,7 @@
 // Menu bar companion for the telegram-mcp daemon.
 // Shows approvals (approve / deny), which Claude sessions are listening to which chats,
-// and the chats you last sent to (hover a chat to see what was sent).
+// and the chats you last sent to (hover a chat to see what was sent). The Contacts page lists the
+// saved chats and edits their nickname, sending rule and auto-reply in config.json.
 // Talks only to the local daemon on 127.0.0.1, authenticated with the token the daemon keeps in
 // the login Keychain (service "telegram-mcp"; a file instead with TELEGRAM_MCP_SECRET_STORE=file).
 
@@ -68,6 +69,24 @@ struct SentRecord: Decodable, Identifiable {
     let sessionLabel: String?
 }
 
+/// A saved chat and the rules that apply to it (the Contacts page).
+struct UiContact: Decodable, Identifiable {
+    var id: String { nickname }
+    let nickname: String
+    let chatId: Int
+    let name: String?
+    let username: String?
+    let type: String?
+    let topicId: Int?
+    let aliases: [String]
+    let notes: String?
+    /// "autoSend" | "requireApproval" | "blocked" | "none"
+    let sendMode: String
+    let autoReply: Bool
+    let policy: String
+    let sameChat: [String]
+}
+
 struct UiState: Decodable {
     let telegram: TelegramState
     let configError: String?
@@ -75,6 +94,9 @@ struct UiState: Decodable {
     let approvals: [UiApproval]
     let sessions: [UiSession]
     let recent: [SentRecord]
+    /// Missing from a daemon older than this app; the Contacts page then asks for a restart.
+    let contacts: [UiContact]?
+    let defaultPolicy: String?
 }
 
 /// The chats you last sent to, newest first, each with the messages sent there.
@@ -195,7 +217,7 @@ final class Store: ObservableObject {
         return nil
     }
 
-    private func request(_ path: String, method: String = "GET", body: [String: String]? = nil) async -> URLRequest? {
+    private func request(_ path: String, method: String = "GET", body: [String: Any]? = nil) async -> URLRequest? {
         guard let token = await currentToken(), let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return nil }
         var req = URLRequest(url: url, timeoutInterval: 4)
         req.httpMethod = method
@@ -253,6 +275,37 @@ final class Store: ObservableObject {
         }
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
         await poll()
+    }
+
+    /// A Contacts-page edit: "sendMode", "autoReply" and/or "rename". Returns the chat's nickname
+    /// afterwards (a rename changes it), or nil when it wasn't saved.
+    @discardableResult
+    func editContact(_ nickname: String, _ change: [String: Any]) async -> String? {
+        var body = change
+        body["nickname"] = nickname
+        guard let req = await request("/ui/contacts", method: "POST", body: body) else {
+            show(tokenProblem ?? "No token for the daemon yet.")
+            return nil
+        }
+        let key = "contact:\(nickname)"
+        busy.insert(key)
+        defer { busy.remove(key) }
+        var saved: String?
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            if code == 404 {
+                show("The daemon is older than this app. Restart it (below) to edit contacts.")
+            } else {
+                show((obj?["text"] as? String) ?? (code == 200 ? "Saved." : "Not changed."))
+                if code == 200 { saved = (obj?["nickname"] as? String) ?? nickname }
+            }
+        } catch {
+            show("Could not reach the daemon: \(error.localizedDescription)")
+        }
+        await poll()
+        return saved
     }
 
     private func show(_ text: String) {
@@ -363,6 +416,9 @@ let isSnapshot = CommandLine.arguments.contains("--snapshot")
 let snapshotHoverMode = ProcessInfo.processInfo.environment["SNAPSHOT_HOVER"] ?? ""
 let snapshotHoverApprovals = ["1", "approvals"].contains(snapshotHoverMode)
 let snapshotHoverRecent = ["1", "recent"].contains(snapshotHoverMode)
+/// `SNAPSHOT_PAGE=contacts` renders the Contacts page; `SNAPSHOT_OPEN=<nickname>` opens that contact.
+let snapshotContacts = ProcessInfo.processInfo.environment["SNAPSHOT_PAGE"] == "contacts"
+let snapshotOpenContact = ProcessInfo.processInfo.environment["SNAPSHOT_OPEN"]
 
 private let isoWithFraction: ISO8601DateFormatter = {
     let f = ISO8601DateFormatter()
@@ -427,10 +483,39 @@ struct Placeholder: View {
     }
 }
 
+struct Tag: View {
+    let text: String
+    let color: Color
+    var body: some View {
+        Text(text).font(.system(size: 9, weight: .semibold)).foregroundStyle(color)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(Capsule().fill(color.opacity(0.13)))
+    }
+}
+
+/// One option in a row of choices: filled when it's the current one.
+struct ChoiceButton: ButtonStyle {
+    let tint: Color
+    let selected: Bool
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .font(.system(size: 11, weight: .semibold))
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
+            .foregroundStyle(selected ? Color.white : Color.primary.opacity(0.75))
+            .background(Capsule().fill(selected ? tint : Color.primary.opacity(0.07)))
+            .opacity(configuration.isPressed ? 0.75 : 1)
+    }
+}
+
 // MARK: - Panel
+
+enum PanelPage { case home, contacts }
 
 struct PanelView: View {
     @EnvironmentObject var store: Store
+    @State private var page: PanelPage = snapshotContacts ? .contacts : .home
+    @State private var query = ""
 
     /// macOS doesn't keep a menu bar panel on screen: a long draft (expanded on hover), or many of
     /// them, pushed the buttons below the bottom of the screen. So the panel is at most as tall as
@@ -485,9 +570,14 @@ struct PanelView: View {
                     Label(err, systemImage: "exclamationmark.triangle.fill")
                         .font(.system(size: 11)).foregroundStyle(.orange)
                 }
-                approvals(state.approvals)
-                listening
-                recent
+                if page == .contacts {
+                    ContactsList(contacts: state.contacts, query: query, defaultPolicy: state.defaultPolicy ?? "approve",
+                                 waiting: state.approvals.count) { page = .home }
+                } else {
+                    approvals(state.approvals)
+                    listening
+                    recent
+                }
             } else if let problem = store.problem {
                 Text(problem).font(.system(size: 12)).foregroundStyle(.secondary)
             }
@@ -496,7 +586,41 @@ struct PanelView: View {
         .padding([.horizontal, .bottom], 14)
     }
 
-    private var header: some View {
+    @ViewBuilder private var header: some View {
+        if page == .contacts { contactsHeader } else { homeHeader }
+    }
+
+    private var contactsHeader: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                Button { page = .home } label: { Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold)) }
+                    .buttonStyle(IconButton()).help("Back")
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Contacts").font(.system(size: 13, weight: .semibold))
+                    let n = store.state?.contacts?.count ?? 0
+                    Text("\(n) saved chat\(n == 1 ? "" : "s") · changes save to config.json at once")
+                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                }
+                Spacer()
+            }
+            HStack(spacing: 6) {
+                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.secondary)
+                // The offscreen snapshot renderer can't draw text fields; show the placeholder instead.
+                if isSnapshot { Text("Search nickname, name, @username or id").foregroundStyle(.tertiary) }
+                else { TextField("Search nickname, name, @username or id", text: $query).textFieldStyle(.plain) }
+                Spacer(minLength: 0)
+                if !query.isEmpty {
+                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
+                        .buttonStyle(.plain).foregroundStyle(.tertiary)
+                }
+            }
+            .font(.system(size: 12))
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.06)))
+        }
+    }
+
+    private var homeHeader: some View {
         let phase = store.reachable ? (store.state?.telegram.phase ?? "") : "unreachable"
         let (color, text): (Color, String) = {
             switch phase {
@@ -519,6 +643,9 @@ struct PanelView: View {
                 }
             }
             Spacer()
+            Button { page = .contacts } label: { Label("Contacts", systemImage: "person.2") }
+                .buttonStyle(IconButton())
+                .help("Saved chats: nicknames, sending rules and auto-reply")
         }
     }
 
@@ -683,10 +810,234 @@ struct SessionRow: View {
         }
     }
 
-    private func tag(_ text: String, _ color: Color) -> some View {
-        Text(text).font(.system(size: 9, weight: .semibold)).foregroundStyle(color)
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.13)))
+    private func tag(_ text: String, _ color: Color) -> some View { Tag(text: text, color: color) }
+}
+
+// MARK: - Contacts page
+
+/// Every saved chat (`chats` in config.json). Click one to change its nickname, which list decides
+/// sending there, and whether sessions may listen and auto-reply. Each click saves at once.
+struct ContactsList: View {
+    @EnvironmentObject var store: Store
+    let contacts: [UiContact]?
+    let query: String
+    let defaultPolicy: String
+    let waiting: Int
+    let showApprovals: () -> Void
+    @State private var open: String? = snapshotOpenContact
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if waiting > 0 {
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.up.right.circle.fill").foregroundStyle(.orange)
+                    Text("\(waiting) waiting for approval").font(.system(size: 11, weight: .medium))
+                    Spacer()
+                    Button("Show", action: showApprovals).buttonStyle(PillButton(tint: .orange, filled: false))
+                }
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.08)))
+            }
+            if let contacts {
+                let shown = filtered(contacts)
+                if contacts.isEmpty {
+                    Placeholder(text: "No saved chats yet. Approving the first message to a chat saves it.")
+                } else if shown.isEmpty {
+                    Placeholder(text: "No saved chat matches \u{201C}\(query)\u{201D}")
+                }
+                ForEach(shown) { ContactRow(contact: $0, defaultPolicy: defaultPolicy, open: $open) }
+            } else {
+                Placeholder(text: "The daemon is older than this app. Restart it (below) to edit contacts.")
+            }
+        }
+    }
+
+    private func filtered(_ list: [UiContact]) -> [UiContact] {
+        let q = query.trimmingCharacters(in: .whitespaces).lowercased()
+        guard !q.isEmpty else { return list }
+        return list.filter { c in
+            ([c.nickname, c.name ?? "", c.username.map { "@\($0)" } ?? "", String(c.chatId)] + c.aliases)
+                .contains { $0.lowercased().contains(q) }
+        }
+    }
+}
+
+struct ContactRow: View {
+    @EnvironmentObject var store: Store
+    let contact: UiContact
+    let defaultPolicy: String
+    @Binding var open: String?
+    @State private var nick: String
+
+    init(contact: UiContact, defaultPolicy: String, open: Binding<String?>) {
+        self.contact = contact
+        self.defaultPolicy = defaultPolicy
+        _open = open
+        _nick = State(initialValue: contact.nickname)
+    }
+
+    private var isOpen: Bool { open == contact.nickname }
+    private var busy: Bool { store.busy.contains("contact:\(contact.nickname)") }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Button {
+                withAnimation(.easeOut(duration: 0.12)) { open = isOpen ? nil : contact.nickname }
+            } label: { summary }
+                .buttonStyle(.plain)
+            if isOpen { editor.transition(.opacity) }
+        }
+        .padding(8)
+        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(isOpen ? 0.06 : 0.035)))
+    }
+
+    private var summary: some View {
+        HStack(spacing: 7) {
+            Image(systemName: typeIcon).font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 15)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(contact.nickname).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                if !subtitle.isEmpty {
+                    Text(subtitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                }
+            }
+            Spacer(minLength: 4)
+            if contact.autoReply { Tag(text: "auto-reply", color: .blue) }
+            Tag(text: modeTag.text, color: modeTag.color)
+            Image(systemName: "chevron.down")
+                .font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+                .rotationEffect(.degrees(isOpen ? 180 : 0))
+        }
+        .contentShape(Rectangle())
+    }
+
+    private var editor: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            field("Nickname") {
+                HStack(spacing: 6) {
+                    Group {
+                        if isSnapshot { Text(nick).frame(maxWidth: .infinity, alignment: .leading) }
+                        else { TextField("nickname", text: $nick).textFieldStyle(.plain).onSubmit(rename) }
+                    }
+                    .font(.system(size: 12, weight: .medium))
+                    .padding(.horizontal, 7).padding(.vertical, 4)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.07)))
+                    Button("Rename", action: rename)
+                        .buttonStyle(ChoiceButton(tint: .accentColor, selected: renamed))
+                        .disabled(!renamed || busy)
+                }
+            }
+            field("When Claude sends a message here") {
+                HStack(spacing: 6) {
+                    choice("Always allow", mode: "autoSend", tint: .green, help: "Send without asking (autoSend)")
+                    choice("Ask every time", mode: "requireApproval", tint: .orange, help: "Every message waits for your approval (requireApproval)")
+                    choice("Blocked", mode: "blocked", tint: .red, help: "Never send here (blocked)")
+                }
+            }
+            field("Auto-reply") {
+                HStack(spacing: 6) {
+                    Button("On") { save(["autoReply": true], unless: contact.autoReply) }
+                        .buttonStyle(ChoiceButton(tint: .blue, selected: contact.autoReply))
+                        .help("Sessions may listen to this chat and reply without asking while they do (autoReply)")
+                    Button("Off") { save(["autoReply": false], unless: !contact.autoReply) }
+                        .buttonStyle(ChoiceButton(tint: .gray, selected: !contact.autoReply))
+                        .help("Sessions can't listen to this chat")
+                }
+            }
+            Text(explanation)
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            Text(details)
+                .font(.system(size: 9)).foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+        }
+        .padding(.leading, 22)
+        .disabled(busy)
+    }
+
+    private func field<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
+            content()
+        }
+    }
+
+    private func choice(_ title: String, mode: String, tint: Color, help: String) -> some View {
+        Button(title) { save(["sendMode": mode], unless: contact.sendMode == mode) }
+            .buttonStyle(ChoiceButton(tint: tint, selected: contact.sendMode == mode))
+            .help(help)
+    }
+
+    private func save(_ change: [String: Any], unless current: Bool) {
+        guard !current, !busy else { return }
+        Task { await store.editContact(contact.nickname, change) }
+    }
+
+    private var renamed: Bool {
+        let t = nick.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !t.isEmpty && t != contact.nickname
+    }
+
+    private func rename() {
+        guard renamed, !busy else { return }
+        let wanted = nick
+        Task {
+            // The row is keyed by nickname, so keep the renamed one open.
+            if let now = await store.editContact(contact.nickname, ["rename": wanted]) { open = now }
+        }
+    }
+
+    private var typeIcon: String {
+        switch contact.type {
+        case "user": return "person.fill"
+        case "bot": return "cpu"
+        case "group": return "person.3.fill"
+        case "channel": return "megaphone.fill"
+        default: return "bubble.left.fill"
+        }
+    }
+
+    private var subtitle: String {
+        [contact.name, contact.username.map { "@\($0)" }].compactMap { $0 }.joined(separator: " · ")
+    }
+
+    private var modeTag: (text: String, color: Color) {
+        switch contact.sendMode {
+        case "autoSend": return ("always allow", .green)
+        case "requireApproval": return ("ask every time", .orange)
+        case "blocked": return ("blocked", .red)
+        default: return defaultPolicy == "block" ? ("blocked by default", .red) : ("not set", .gray)
+        }
+    }
+
+    private var explanation: String {
+        let send: String
+        switch contact.sendMode {
+        case "autoSend": send = "Messages go out without asking."
+        case "requireApproval": send = "Every message waits for your approval."
+        case "blocked": send = "Nothing is ever sent here."
+        default:
+            send = defaultPolicy == "block"
+                ? "On no list, so the default rule blocks it."
+                : "On no list yet: the next message asks you, and you pick what happens after."
+        }
+        let reply: String
+        if !contact.autoReply { reply = "Sessions can't listen to this chat." }
+        else if contact.sendMode == "requireApproval" { reply = "Sessions may listen here, but their replies still ask first." }
+        else if contact.sendMode == "blocked" { reply = "Sessions may listen here, but can't reply." }
+        else { reply = "Sessions may listen here and reply without asking while they do." }
+        return "\(send) \(reply)"
+    }
+
+    private var details: String {
+        var bits = ["id \(contact.chatId)"]
+        if let t = contact.topicId { bits.append("topic \(t)") }
+        if !contact.aliases.isEmpty { bits.append("aliases: \(contact.aliases.joined(separator: ", "))") }
+        if !contact.sameChat.isEmpty {
+            bits.append("same chat as \(contact.sameChat.joined(separator: ", ")), so these rules apply to it too")
+        }
+        if let n = contact.notes, !n.isEmpty { bits.append(n) }
+        return bits.joined(separator: " · ")
     }
 }
 

@@ -273,6 +273,39 @@ describe('proxy <-> daemon', () => {
     await client.close()
   })
 
+  test('menu bar contacts: edits over http change what a session may do', async () => {
+    const ui = (path: string, init?: RequestInit) =>
+      fetch(`http://127.0.0.1:${port}${path}`, { ...init, headers: { authorization: `Bearer ${daemon.token}`, 'content-type': 'application/json' } })
+    const edit = (body: object) => ui('/ui/contacts', { method: 'POST', body: JSON.stringify(body) })
+    const contact = async (nick: string) =>
+      ((await (await ui('/ui/state')).json()) as { contacts: { nickname: string; sendMode: string; autoReply: boolean }[] }).contacts.find(
+        c => c.nickname === nick,
+      )
+
+    expect(await contact('anna')).toMatchObject({ sendMode: 'none', autoReply: true })
+    expect((await fetch(`http://127.0.0.1:${port}/ui/contacts`, { method: 'POST', body: '{}' })).status).toBe(401)
+    expect((await edit({ nickname: 'anna', sendMode: 'sometimes' })).status).toBe(400)
+    expect((await edit({ nickname: 'anna' })).status).toBe(400)
+    expect((await edit({ nickname: 'anna', rename: 'leo' })).status).toBe(409)
+
+    const client = await spawnProxy()
+    const before = tg.sent.length
+    const res = await edit({ nickname: 'anna', sendMode: 'autoSend' })
+    expect(res.status).toBe(200)
+    expect(((await res.json()) as { text: string }).text).toContain('always allow')
+    expect((await call(client, 'telegram_send_message', { to: 'anna', text: 'hi' })).text).toContain('Sent to')
+    expect(tg.sent.length).toBe(before + 1)
+
+    expect(((await (await edit({ nickname: 'anna', rename: 'annie' })).json()) as { nickname: string }).nickname).toBe('annie')
+    expect(await contact('annie')).toMatchObject({ sendMode: 'autoSend', autoReply: true })
+    expect(await contact('anna')).toBeUndefined()
+
+    // Put it back for the tests below.
+    expect((await edit({ nickname: 'annie', sendMode: 'none', rename: 'anna' })).status).toBe(200)
+    expect(await contact('anna')).toMatchObject({ sendMode: 'none', autoReply: true })
+    await client.close()
+  })
+
   test('a Monitor can connect before its proxy (right after a daemon restart)', async () => {
     const url = `ws://127.0.0.1:${port}/events?session=s_early123&token=${daemon.token}`
     const ws = await openWs(url)

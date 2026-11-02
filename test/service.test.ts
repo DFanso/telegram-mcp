@@ -347,3 +347,85 @@ describe('first message to a new chat', () => {
     expect(r.approval!.firstTime).toBe(false)
   })
 })
+
+describe('menu bar contacts', () => {
+  beforeEach(() => setup(baseConfig))
+  const onDisk = () => JSON.parse(readFileSync(path, 'utf8'))
+
+  test('the state lists every saved chat with the rule that decides it', () => {
+    const state = svc.uiState()
+    expect(state.defaultPolicy).toBe('approve')
+    const by = Object.fromEntries(state.contacts.map(c => [c.nickname, c]))
+    expect(state.contacts.map(c => c.nickname)).toEqual(['allhands', 'anna', 'leo', 'leonardo', 'qa'])
+    expect(by.leo).toMatchObject({ chatId: LEO.id, sendMode: 'autoSend', autoReply: true })
+    expect(by.allhands).toMatchObject({ sendMode: 'blocked', autoReply: false })
+    expect(by.qa).toMatchObject({ sendMode: 'requireApproval', autoReply: true, topicId: 42 })
+    expect(by.leonardo).toMatchObject({ sendMode: 'none', policy: 'needs approval (default)' })
+  })
+
+  test('a sending rule change is saved and applies to the next send', async () => {
+    const r = svc.editContact({ nickname: 'leo', sendMode: 'requireApproval' })
+    expect(r).toMatchObject({ ok: true, nickname: 'leo' })
+    expect(r.text).toContain('ask every time')
+    expect(onDisk().rules.autoSend).toEqual(['allhands'])
+    expect(onDisk().rules.requireApproval).toEqual(['qa', 'leo'])
+    const send = await svc.call('s1', 'telegram_send_message', { to: 'leo', text: 'x' })
+    expect(send.approval).toBeDefined()
+    expect(tg.sent).toHaveLength(0)
+  })
+
+  test('auto-reply on and off decides who can be watched', async () => {
+    expect(svc.editContact({ nickname: 'leonardo', autoReply: true }).ok).toBe(true)
+    expect((await svc.call('s1', 'telegram_watch', { chat: 'leonardo' })).isError).toBeFalsy()
+    expect(svc.editContact({ nickname: 'anna', autoReply: false }).text).toContain('auto-reply off')
+    expect((await svc.call('s1', 'telegram_watch', { chat: 'anna' })).isError).toBe(true)
+  })
+
+  test('the reply text follows the sending rule that wins', () => {
+    setup({ ...baseConfig, rules: { ...baseConfig.rules, autoReply: [] } })
+    expect(svc.editContact({ nickname: 'qa', autoReply: true }).text).toBe(
+      '"qa": auto-reply on: sessions may listen there, but their replies ask first (Ask every time wins).',
+    )
+    expect(svc.editContact({ nickname: 'qa', sendMode: 'blocked' }).text).toBe(
+      `"qa": blocked: nothing is sent there; auto-reply on: sessions may listen there, but can't reply (blocked wins).`,
+    )
+    expect(svc.editContact({ nickname: 'qa', sendMode: 'autoSend' }).text).toBe('"qa": always allow: messages there send without asking.')
+    expect(svc.editContact({ nickname: 'leonardo', rename: 'leo s' }).text).toBe('"leo s": renamed from "leonardo".')
+  })
+
+  test('renaming keeps the chat on its lists and frees the old name', async () => {
+    const r = svc.editContact({ nickname: 'qa', rename: 'team-qa' })
+    expect(r).toMatchObject({ ok: true, nickname: 'team-qa' })
+    expect(r.text).toContain('renamed from "qa"')
+    expect(onDisk().rules.requireApproval).toEqual(['team-qa'])
+    expect(onDisk().rules.autoReply).toEqual(['anna', 'leo', 'team-qa'])
+    expect((await svc.call('s1', 'telegram_send_message', { to: 'team-qa', text: 'x' })).approval).toBeDefined()
+    expect((await svc.call('s1', 'telegram_send_message', { to: 'qa', text: 'x' })).isError).toBe(true)
+  })
+
+  test('no change writes nothing', () => {
+    const text = readFileSync(path, 'utf8')
+    expect(svc.editContact({ nickname: 'leo', sendMode: 'autoSend', autoReply: true, rename: 'leo' })).toMatchObject({
+      ok: true,
+      text: '"leo" already has that setting.',
+    })
+    expect(readFileSync(path, 'utf8')).toBe(text)
+  })
+
+  test('refusals leave the file alone', () => {
+    const text = readFileSync(path, 'utf8')
+    expect(svc.editContact({ nickname: 'nobody', sendMode: 'autoSend' })).toMatchObject({ ok: false, text: 'Not changed: No saved chat called "nobody".' })
+    // Several changes are all-or-nothing: the bad rename also drops the sending change.
+    const clash = svc.editContact({ nickname: 'anna', sendMode: 'blocked', rename: 'leo' })
+    expect(clash.ok).toBe(false)
+    expect(clash.text).toContain('already means leo')
+    expect(readFileSync(path, 'utf8')).toBe(text)
+  })
+
+  test('a broken config.json is reported, not overwritten', () => {
+    writeFileSync(path, '{ "rules": ')
+    const r = svc.editContact({ nickname: 'leo', sendMode: 'blocked' })
+    expect(r.ok).toBe(false)
+    expect(readFileSync(path, 'utf8')).toBe('{ "rules": ')
+  })
+})

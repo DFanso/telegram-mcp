@@ -28,7 +28,7 @@ bun link                          # puts `tgmcp` on your PATH (or use `bun run s
 tgmcp install                     # launchd agent: starts the daemon now and at every login
 tgmcp login                       # in a terminal: api_id/api_hash (if not saved yet), phone, code, 2FA
                                   # (tgmcp login --credentials to enter api_id/api_hash again)
-tgmcp menubar                     # menu bar app: approvals, listening sessions, recent sends (starts at login)
+tgmcp menubar                     # menu bar app: approvals, listening sessions, recent sends, contacts (starts at login)
 tgmcp mcp-add                     # prints the `claude mcp add` command for your paths
 tgmcp status
 ```
@@ -103,7 +103,7 @@ Downloads go to `~/Downloads/telegram-mcp/<chat>/` (`TELEGRAM_MCP_DOWNLOADS`), n
 - **Always allow** puts it on `autoSend`.
 - **Ask every time** puts it on `requireApproval`.
 
-Approving also saves the chat under `chats`, with a suggested nickname you can edit: the first name, else the username, else the full name. From then on the chat follows that list. Only your choice in an approval adds chats to the lists; sessions can't.
+Approving also saves the chat under `chats`, with a suggested nickname you can edit: the first name, else the username, else the full name. From then on the chat follows that list. Only you put chats on the lists, through an approval or the menu bar's [Contacts page](#contacts); sessions can't.
 
 **Approval** happens in the first place available:
 1. The **menu bar app**, when it's running. The draft appears there and as a notification. Both offer Approve / Deny, or Deny / Ask every time / Always allow for a new chat. The Claude tool call waits for your click: Claude Code backgrounds it after 2 minutes, and the result arrives when you decide.
@@ -112,7 +112,7 @@ Approving also saves the chat under `chats`, with a suggested nickname you can e
 
 Nothing is sent unless you accept. Drafts expire after 20 minutes. The rules are checked again at send time.
 
-**Nicknames** (`chats`) let "send to leo" mean exactly one person. Only exact matches resolve: a nickname, an alias, a saved full name, a username or an id. A near match like "leon" is refused with suggestions, never picked. Before every send the daemon checks that the saved id still has the saved username. If either has changed, it refuses until the entry is re-saved. Sessions can add, update and remove nicknames (`telegram_save_chat`, `telegram_remove_chat`). They cannot change `rules`, `footer` or `guides`, and they cannot repoint, create or remove a name that the rules use: only you can, by editing the file.
+**Nicknames** (`chats`) let "send to leo" mean exactly one person. Only exact matches resolve: a nickname, an alias, a saved full name, a username or an id. A near match like "leon" is refused with suggestions, never picked. Before every send the daemon checks that the saved id still has the saved username. If either has changed, it refuses until the entry is re-saved. Sessions can add, update and remove nicknames (`telegram_save_chat`, `telegram_remove_chat`). They cannot change `rules`, `footer` or `guides`, and they cannot repoint, create or remove a name that the rules use: only you can, by editing the file or renaming it on the [Contacts page](#contacts).
 
 ## Tools
 
@@ -150,6 +150,7 @@ A session's watches outlive a daemon restart, because the proxy re-sends them. T
 - **Waiting for approval**: the exact text, recipient, reason and asking session, with Approve / Deny. A new chat gets an editable nickname and Deny / Ask every time / Always allow instead.
 - **Listening**: each session that is watching chats, and whether its Monitor is connected
 - **Recently sent**: the last 5 chats you sent to. Hover a chat to see its messages, when they went, how they were approved, and from which session.
+- **Contacts** (the button at the top right): every saved chat, to change its rules without editing `config.json`. See [Contacts](#contacts).
 
 <p>
   <img src="docs/menubar-approvals.png" width="370" alt="The menu bar panel: two drafts waiting for approval (one to a saved group, one to a new chat with Deny, Ask every time and Always allow), two listening sessions, and the recently sent chats">
@@ -163,6 +164,20 @@ Each new draft also posts a notification, so you can decide without opening the 
 Hover a draft to see all of it. The panel never runs past the bottom of the screen: when a long draft (or many of them) would, the middle scrolls and the header and footer stay put.
 
 The menu bar icon shows the number of drafts waiting. `tgmcp menubar uninstall` removes it.
+
+### Contacts
+
+**Contacts** at the top of the panel lists every saved chat (`chats` in the rules file) with tags for how it's set up. Search by nickname, name, @username or id. Click a chat to change it:
+
+- **Nickname**: type a new one and press Rename. Rules that used the old name are rewritten to the new one, so the chat keeps its lists. A name that already means another chat is refused, and so is a name the rules mention that matches no chat yet (taking it would quietly put this chat on those lists). One of the chat's own aliases can become its nickname.
+- **When Claude sends a message here**: **Always allow** (`autoSend`), **Ask every time** (`requireApproval`) or **Blocked** (`blocked`). The chat ends up on exactly that list: every other entry that means the same chat is taken out of the other two, whether it's a nickname, an alias, an id, an @username or `"me"`. A chat on none of them shows as *not set*.
+- **Auto-reply**: **On** puts it on `autoReply`, so sessions may watch it and reply without asking. **Off** takes out every entry that means the chat, and sessions watching it stop getting its messages at once. The text under the buttons says when the sending rule overrides this (Ask every time still asks; Blocked still refuses).
+
+Each click saves to `config.json` at once, the same way an approval does: the file is read fresh first, so a hand edit made a moment ago is kept, and a broken file is reported, never overwritten. A click that changes nothing writes nothing. Each change is noted in `daemon.log`. Rules are per chat, so if two nicknames point to the same chat, changing one changes both; the details line under the buttons names the other.
+
+<img src="docs/menubar-contacts.png" width="370" alt="The Contacts page: four saved chats with their tags, and Team QA opened with its nickname, the sending choices (Ask every time selected) and auto-reply (Off)">
+
+This page is the menu bar's own: it goes through the daemon's local API with the token (`POST /ui/contacts`, like approvals). No MCP tool offers the same, so sessions still can't change the rules through the server.
 
 ## Development
 
@@ -179,6 +194,7 @@ APP="menubar/build/Telegram MCP.app/Contents/MacOS/TelegramMCPBar"
 export TELEGRAM_MCP_HOME=/tmp/tgmcp-demo TELEGRAM_MCP_PORT=47901 TELEGRAM_MCP_SECRET_STORE=file SNAPSHOT_DARK=1
 "$APP" --snapshot docs/menubar-approvals.png
 SNAPSHOT_HOVER=recent SNAPSHOT_SCREEN_HEIGHT=4000 "$APP" --snapshot /tmp/history-full.png   # SNAPSHOT_HOVER: 1, approvals or recent
+SNAPSHOT_PAGE=contacts SNAPSHOT_OPEN=team-qa "$APP" --snapshot docs/menubar-contacts.png    # SNAPSHOT_OPEN: a nickname to open
 ```
 
 ## License

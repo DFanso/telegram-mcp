@@ -191,30 +191,25 @@ export function nicknameFor(config: Config, chatId: number): string | undefined 
   return undefined
 }
 
+export interface ChatKey {
+  id: number
+  username?: string | null
+  isSelf?: boolean
+}
+
+/** Does this one rules entry mean this chat? `conservative` (the blocked list) also matches raw ids. */
+export function refMatches(config: Config, ref: ChatRef, chat: ChatKey, conservative: boolean): boolean {
+  const r = resolveRef(config, ref)
+  if (r.kind === 'self') return chat.isSelf === true
+  if (r.kind === 'username') return !!chat.username && normalizeUsername(chat.username) === r.username
+  if (r.kind === 'unknown') return false
+  const id = r.kind === 'entry' ? r.entry.id : r.id
+  return id === chat.id || (conservative && rawId(id) === rawId(chat.id))
+}
+
 /** Is this chat (marked id + current username) on the given list? `blocked` matches raw ids too. */
-export function isListed(
-  config: Config,
-  list: RuleList,
-  chat: { id: number; username?: string | null; isSelf?: boolean },
-): boolean {
-  const conservative = list === 'blocked'
-  for (const ref of config.rules[list]) {
-    const r = resolveRef(config, ref)
-    let id: number | undefined
-    if (r.kind === 'self') {
-      if (chat.isSelf) return true
-      continue
-    }
-    if (r.kind === 'entry') id = r.entry.id
-    else if (r.kind === 'id') id = r.id
-    else if (r.kind === 'username') {
-      if (chat.username && normalizeUsername(chat.username) === r.username) return true
-      continue
-    } else continue
-    if (id === chat.id) return true
-    if (conservative && rawId(id) === rawId(chat.id)) return true
-  }
-  return false
+export function isListed(config: Config, list: RuleList, chat: ChatKey): boolean {
+  return config.rules[list].some(ref => refMatches(config, ref, chat, list === 'blocked'))
 }
 
 // ---- the store -----------------------------------------------------------------

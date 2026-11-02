@@ -1,7 +1,8 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { ServerWebSocket } from 'bun'
 import type { ConfigStore } from '../shared/config'
-import type { ClientMessage, ServerMessage } from '../shared/protocol'
+import { SEND_MODES } from '../shared/contacts'
+import type { ClientMessage, SendMode, ServerMessage } from '../shared/protocol'
 import type { Service } from './service'
 import type { SessionHub } from './sessions'
 import type { TelegramPort } from './telegram'
@@ -49,6 +50,8 @@ export function eventsKey(token: string, sessionId: string): string {
  *   POST /admin/reconnect        rebuild the Telegram client (used after `tgmcp login`)
  *   GET  /ui/state               what the menu bar app shows
  *   POST /ui/approvals/:id       {"decision": "approve" | "deny", "remember"?: "autoSend" | "requireApproval", "nickname"?: "…"}
+ *   POST /ui/contacts            {"nickname": "…", "sendMode"?: "autoSend" | "requireApproval" | "blocked" | "none",
+ *                                 "autoReply"?: true | false, "rename"?: "…"}  (the Contacts page: a human editing the rules)
  *   WS   /bridge                 one per Claude session: the MCP proxy's tool calls and pushes
  *   WS   /events?session=ID&key=K  Monitor stream: one text frame per watched message
  */
@@ -103,6 +106,29 @@ export function startServer(o: ServerOptions) {
           } catch (e) {
             return Response.json({ ok: false, text: e instanceof Error ? e.message : String(e) }, { status: 409 })
           }
+        })()
+      }
+      if (url.pathname === '/ui/contacts' && req.method === 'POST') {
+        return (async () => {
+          const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
+          const bad = (text: string) => Response.json({ ok: false, text }, { status: 400 })
+          if (typeof body.nickname !== 'string' || body.nickname.trim() === '') return bad('nickname is required')
+          if (body.sendMode !== undefined && !SEND_MODES.includes(body.sendMode as SendMode)) {
+            return bad(`sendMode must be one of ${SEND_MODES.join(', ')}`)
+          }
+          if (body.autoReply !== undefined && typeof body.autoReply !== 'boolean') return bad('autoReply must be true or false')
+          if (body.rename !== undefined && typeof body.rename !== 'string') return bad('rename must be a string')
+          if (body.sendMode === undefined && body.autoReply === undefined && body.rename === undefined) {
+            return bad('nothing to change: send sendMode, autoReply or rename')
+          }
+          const r = o.service.editContact({
+            nickname: body.nickname,
+            sendMode: body.sendMode as SendMode | undefined,
+            autoReply: body.autoReply as boolean | undefined,
+            rename: body.rename as string | undefined,
+          })
+          if (r.ok) o.log(`menu bar contacts: ${r.text}`)
+          return Response.json(r, { status: r.ok ? 200 : 409 })
         })()
       }
       if (url.pathname === '/status' && req.method === 'GET') {
