@@ -159,6 +159,15 @@ jobs:
           }
           if (-not $ok) { throw 'the daemon did not answer /health' }
           & $exe status
+          # `tgmcp menubar` from a release starts the prebuilt tray next to tgmcp.exe (never dotnet),
+          # sets it to start at login and starts it. The runner is thrown away afterwards.
+          $menubar = & $exe menubar | Out-String
+          $menubar
+          if ($LASTEXITCODE -ne 0 -or $menubar -notmatch 'TelegramMCPTray\.exe' -or $menubar -match 'tray\\build') { throw "tgmcp menubar did not start the installed tray app" }
+          Start-Sleep 3
+          if (-not (Get-Process -Name 'TelegramMCPTray' -ErrorAction SilentlyContinue)) { throw 'the tray app is not running after tgmcp menubar' }
+          & $exe menubar uninstall
+          if ($LASTEXITCODE -ne 0) { throw 'tgmcp menubar uninstall failed' }
           Stop-Process $daemon -ErrorAction SilentlyContinue
           Stop-Process $server -ErrorAction SilentlyContinue
 
