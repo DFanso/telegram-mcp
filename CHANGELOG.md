@@ -14,6 +14,7 @@ The first release, with prebuilt binaries for macOS, Linux and Windows, the menu
 - **Windows tray app**, the menu bar app's counterpart, with the same panel, Contacts page and notifications (#4). The Windows release includes it as one self-contained exe next to `tgmcp.exe`, so it needs no .NET; `tgmcp menubar` starts it.
 - **Watching**: `telegram_watch` pushes a chat's new messages into one or more sessions (Monitor, channel push or a queue) so they can reply while they listen.
 - **Files**: `telegram_send_file` sends a local file under the same rules, and files to a chat a session is watching always ask (#1). `telegram_download_media` saves a message's attachment.
+- **`/reply`**: type `/reply` in any chat from your own account, on your phone or desktop, to hand that chat to a Claude session for 2 hours. `/reply <what to say>` says what you want, and `/reply stop` takes it back. The session gets the chat's new messages and replies without approval. Blocked chats are never taken over, files still ask, and only a `/reply` you type counts, never one the daemon sent (#8).
 - **Stickers**: `telegram_send_sticker` re-sends a sticker someone posted, by its Telegram file id, under the same rules as messages. Stickers can't carry a caption, so they go out without the footer (#6).
 - **Secrets in the OS keystore**: the API token and api_hash live in the Keychain (Credential Manager, Secret Service), and the Telegram auth key in `session.db` is sealed with a key kept there.
 - **Text keeps its leading spaces**, so indented messages arrive as written (#2).
