@@ -28,7 +28,7 @@ bun link                          # puts `tgmcp` on your PATH (or use `bun run s
 tgmcp install                     # launchd agent: starts the daemon now and at every login
 tgmcp login                       # in a terminal: api_id/api_hash (if not saved yet), phone, code, 2FA
                                   # (tgmcp login --credentials to enter api_id/api_hash again)
-tgmcp menubar                     # menu bar app: approvals, listening sessions, recent sends, contacts (starts at login)
+tgmcp menubar                     # menu bar app (macOS) or tray app (Windows): approvals, listening sessions, recent sends, contacts (starts at login)
 tgmcp mcp-add                     # prints the `claude mcp add` command for your paths
 tgmcp status
 ```
@@ -179,12 +179,28 @@ Each click saves to `config.json` at once, the same way an approval does: the fi
 
 This page is the menu bar's own: it goes through the daemon's local API with the token (`POST /ui/contacts`, like approvals). No MCP tool offers the same, so sessions still can't change the rules through the server.
 
+## Tray app (Windows)
+
+On Windows, `tgmcp menubar` builds `tray/build/TelegramMCPTray.exe` (C#/WPF; it needs the [.NET SDK 10](https://dotnet.microsoft.com/download)), starts it, and sets it to start at login. Settings → Apps → Startup lists it as "Telegram MCP". It is the menu bar app's counterpart:
+
+- **The tray icon** is a paper plane, filled while a session is listening. Its badge is the number of drafts waiting, or `!` when the daemon or Telegram is down. Hover it for a summary.
+- **Click it for the panel**: the connection, **Waiting for approval** (Approve / Deny; a new chat gets a nickname box and Deny / Ask every time / Always allow), **Listening**, and **Recently sent** (hover a chat to see its messages).
+- **Contacts** (top right of the panel) is the same page as the menu bar's (see [Contacts](#contacts) above): rename a saved chat, choose what happens when Claude sends there, and turn auto-reply on or off.
+- **A Windows notification** for each draft has the same choices as buttons. Click the notification itself to open the panel.
+
+Right-click the icon for Open, Contacts, Rules, Log and Quit. Quit keeps it closed until your next login. `tgmcp menubar uninstall` quits it and stops it starting at login.
+
+It reads the daemon's token from Windows Credential Manager (the `telegram-mcp/token` entry the daemon keeps there), or from the `token` file with `TELEGRAM_MCP_SECRET_STORE=file`. It talks only to 127.0.0.1. Problems it can't show in the panel go to `%LOCALAPPDATA%\TelegramMCPTray\tray.log`.
+
+Nothing supervises the daemon on Windows yet (`tgmcp install` is launchd-only), so keep `tgmcp daemon` running in a terminal. For the same reason the panel has no Restart button.
+
 ## Development
 
 ```sh
 bun test          # unit tests + an end-to-end test that spawns the real proxy against a daemon with a fake Telegram
 bun run typecheck
 bun scripts/demo-daemon.ts      # daemon with a fake Telegram and sample state, for working on the menu bar app
+dotnet run --project tray/Tests # the tray app's logic, and its client against a demo daemon (.NET SDK 10; runs on any OS)
 ```
 
 The screenshots above come from the demo daemon, rendered offscreen by the app itself:

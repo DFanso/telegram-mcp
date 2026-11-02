@@ -8,3 +8,7 @@ session.db*
 token
 session.key
 menubar/build/
+tray/build/
+tray/**/bin/
+tray/**/obj/
+tray/TestResults/

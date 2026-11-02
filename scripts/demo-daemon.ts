@@ -2,6 +2,7 @@
 //   bun scripts/demo-daemon.ts            then, in another shell:
 //   TELEGRAM_MCP_HOME=/tmp/tgmcp-demo TELEGRAM_MCP_PORT=47901 TELEGRAM_MCP_SECRET_STORE=file "menubar/build/Telegram MCP.app/Contents/MacOS/TelegramMCPBar"
 // The demo keeps its token in a file, so it never adds entries to your Keychain.
+// DEMO_PORT and DEMO_HOME run a second one next to it (the tray app's tests do), e.g. on Windows.
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createDaemon } from '../src/daemon/main'
 import { DaemonClient } from '../src/mcp/daemon-client'
@@ -9,7 +10,8 @@ import { getPaths } from '../src/shared/paths'
 import { ALL_HANDS, ANNA, FakeTelegram, TEAM_QA, LEO, LEONARDO } from '../test/fake-telegram'
 
 process.env.TELEGRAM_MCP_SECRET_STORE = 'file'
-const home = '/tmp/tgmcp-demo'
+const home = process.env.DEMO_HOME || '/tmp/tgmcp-demo'
+const port = Number(process.env.DEMO_PORT) || 47901
 rmSync(home, { recursive: true, force: true })
 mkdirSync(home, { recursive: true })
 const paths = getPaths(home)
@@ -27,11 +29,11 @@ writeFileSync(
   }),
 )
 const tg = new FakeTelegram().add(LEO, ANNA, TEAM_QA, LEONARDO, ALL_HANDS)
-const daemon = await createDaemon({ paths, port: 47901, telegram: tg, log: () => {} })
+const daemon = await createDaemon({ paths, port, telegram: tg, log: () => {} })
 
 function session(label: string) {
   const c = new DaemonClient({
-    url: () => `ws://127.0.0.1:47901/bridge?token=${daemon.token}`,
+    url: () => `ws://127.0.0.1:${port}/bridge?token=${daemon.token}`,
     sessionId: `s_${label.padEnd(8, 'x').slice(0, 8)}`,
     label,
     channel: false,
@@ -59,4 +61,4 @@ await api.call('telegram_send_message', {
   ].join('\n\n'),
 })
 await web.call('telegram_send_message', { to: '@leonardo_s', text: 'Hey Leonardo, are you free for a quick call about the payments integration?' })
-console.log(`demo daemon on 47901, home ${home}`)
+console.log(`demo daemon on ${port}, home ${home}`)
