@@ -74,7 +74,18 @@ static class Native
     [DllImport("user32.dll")]
     public static extern bool GetWindowRect(IntPtr hwnd, out Rect rect);
 
-    public const uint SwpNoSize = 0x0001, SwpNoZOrder = 0x0004, SwpNoActivate = 0x0010;
+    public const uint SwpNoSize = 0x0001, SwpNoMove = 0x0002, SwpNoZOrder = 0x0004, SwpNoActivate = 0x0010;
+
+    public const int WmWindowPosChanging = 0x0046;
+
+    /// <summary>WM_WINDOWPOSCHANGING's lParam: where the window is about to go, and how big it is about to be.</summary>
+    [StructLayout(LayoutKind.Sequential)]
+    public struct WindowPos
+    {
+        public IntPtr Hwnd, InsertAfter;
+        public int X, Y, Cx, Cy;
+        public uint Flags;
+    }
 
     [DllImport("user32.dll")]
     public static extern bool SetWindowPos(IntPtr hwnd, IntPtr after, int x, int y, int cx, int cy, uint flags);
