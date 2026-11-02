@@ -25,6 +25,8 @@ public sealed class PanelViewModel : Observable
     readonly Dictionary<string, ApprovalVM> _approvals = [];
     readonly Dictionary<string, ContactVM> _contacts = [];
     string _sessionsKey = "", _recentKey = "";
+    /// <summary>Recently sent chats the user clicked open, by chat id: kept when the rows are rebuilt.</summary>
+    readonly HashSet<long> _openRecent = [];
     bool _polling;
 
     UiState? _state;
@@ -214,6 +216,13 @@ public sealed class PanelViewModel : Observable
         await PollAsync();
     }
 
+    void ToggleRecent(RecentChatVM row)
+    {
+        row.IsOpen = !row.IsOpen;
+        if (row.IsOpen) _openRecent.Add(row.ChatId);
+        else _openRecent.Remove(row.ChatId);
+    }
+
     public void ShowFlash(string text)
     {
         Flash = text;
@@ -243,7 +252,8 @@ public sealed class PanelViewModel : Observable
         IReadOnlyList<RecentChat> recent = s is null ? [] : Presenter.RecentChats(s.Recent);
         if (Changed(ref _recentKey, JsonSerializer.Serialize(recent) + now.ToString("yyyyMMddHHmm", System.Globalization.CultureInfo.InvariantCulture)))
         {
-            ListSync.Apply(Recent, recent.Select(c => RecentChatVM.From(c, s!.Footer, now)).ToList());
+            _openRecent.IntersectWith(recent.Select(c => c.ChatId));
+            ListSync.Apply(Recent, recent.Select(c => RecentChatVM.From(c, s!.Footer, now, _openRecent.Contains(c.ChatId), ToggleRecent)).ToList());
         }
 
         IReadOnlyList<UiContact> contacts = s?.Contacts ?? [];

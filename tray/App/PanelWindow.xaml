@@ -29,7 +29,7 @@
             <Setter Property="Margin" Value="0,10,0,4" />
         </Style>
 
-        <!-- A draft waiting for approval. Hover shows all of it. -->
+        <!-- A draft waiting for approval. A long one opens on click (or Show all), never on hover. -->
         <DataTemplate x:Key="ApprovalTemplate" DataType="{x:Type local:ApprovalVM}">
             <Grid x:Name="Card" Margin="0,0,0,8" Background="Transparent">
                 <Border CornerRadius="10" Background="{DynamicResource Orange}" Opacity="0.08" />
@@ -40,10 +40,17 @@
                         <TextBlock DockPanel.Dock="Right" Text="{Binding Ago}" FontSize="10" Foreground="{DynamicResource Fg3}" VerticalAlignment="Center" Margin="6,0,0,0" />
                         <TextBlock Text="{Binding To}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                     </DockPanel>
-                    <Border Margin="0,7,0,0" CornerRadius="7" Background="{DynamicResource Subtle}" Padding="8">
-                        <TextBlock x:Name="Body" Text="{Binding Text}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
-                                   LineHeight="17" LineStackingStrategy="BlockLineHeight" MaxHeight="68" />
-                    </Border>
+                    <Button x:Name="BodyButton" Margin="0,7,0,0" Style="{StaticResource Flat}" Command="{Binding ToggleText}" Focusable="False">
+                        <StackPanel>
+                            <Border CornerRadius="7" Background="{DynamicResource Subtle}" Padding="8">
+                                <TextBlock x:Name="Body" Text="{Binding Text}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
+                                           LineHeight="17" LineStackingStrategy="BlockLineHeight" MaxHeight="68" />
+                            </Border>
+                            <TextBlock Text="{Binding ExpandLabel}" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource Accent}"
+                                       HorizontalAlignment="Right" Margin="0,3,0,0"
+                                       Visibility="{Binding IsLong, Converter={StaticResource Visible}}" />
+                        </StackPanel>
+                    </Button>
                     <TextBlock Margin="0,7,0,0" Text="{Binding Detail}" FontSize="10" Foreground="{DynamicResource Fg2}" TextTrimming="CharacterEllipsis" />
                     <TextBlock Text="{Binding ReasonLine}" FontSize="10" Foreground="{DynamicResource Fg2}" TextWrapping="Wrap"
                                TextTrimming="CharacterEllipsis" MaxHeight="30" />
@@ -74,9 +81,12 @@
                 </StackPanel>
             </Grid>
             <DataTemplate.Triggers>
-                <Trigger SourceName="Card" Property="IsMouseOver" Value="True">
+                <DataTrigger Binding="{Binding Expanded}" Value="True">
                     <Setter TargetName="Body" Property="MaxHeight" Value="{x:Static sys:Double.PositiveInfinity}" />
-                </Trigger>
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsLong}" Value="False">
+                    <Setter TargetName="BodyButton" Property="Cursor" Value="Arrow" />
+                </DataTrigger>
                 <DataTrigger Binding="{Binding Busy}" Value="True">
                     <Setter TargetName="Always" Property="Content" Value="Sending…" />
                     <Setter TargetName="Approve" Property="Content" Value="Sending…" />
@@ -111,24 +121,29 @@
             </Border>
         </DataTemplate>
 
-        <!-- A chat sent to lately. Hover shows what was sent. -->
+        <!-- A chat sent to lately. Click it to show (or hide) what was sent; nothing opens on hover. -->
         <DataTemplate x:Key="RecentTemplate" DataType="{x:Type local:RecentChatVM}">
             <Border x:Name="Row" CornerRadius="7" Padding="7,5" Background="Transparent">
                 <StackPanel>
-                    <Grid>
-                        <Grid.ColumnDefinitions>
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="*" />
-                            <ColumnDefinition Width="Auto" />
-                            <ColumnDefinition Width="Auto" />
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE8BD;" FontSize="10" Foreground="{DynamicResource Accent}" Margin="0,0,6,0" />
-                        <TextBlock Grid.Column="1" Text="{Binding Label}" TextTrimming="CharacterEllipsis" />
-                        <TextBlock Grid.Column="2" Text="{Binding Count}" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource Fg2}"
-                                   Margin="6,0,0,0" VerticalAlignment="Center" Visibility="{Binding Count, Converter={StaticResource IfSet}}" />
-                        <TextBlock Grid.Column="3" Text="{Binding Ago}" FontSize="10" Foreground="{DynamicResource Fg3}" Margin="8,0,0,0" VerticalAlignment="Center" />
-                    </Grid>
-                    <ItemsControl x:Name="Messages" ItemsSource="{Binding Messages}" Margin="16,5,0,0" Visibility="Collapsed" Focusable="False">
+                    <Button Style="{StaticResource Flat}" Command="{Binding Toggle}" Focusable="False">
+                        <Grid>
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE8BD;" FontSize="10" Foreground="{DynamicResource Accent}" Margin="0,0,6,0" />
+                            <TextBlock Grid.Column="1" Text="{Binding Label}" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Grid.Column="2" Text="{Binding Count}" FontSize="9" FontWeight="SemiBold" Foreground="{DynamicResource Fg2}"
+                                       Margin="6,0,0,0" VerticalAlignment="Center" Visibility="{Binding Count, Converter={StaticResource IfSet}}" />
+                            <TextBlock Grid.Column="3" Text="{Binding Ago}" FontSize="10" Foreground="{DynamicResource Fg3}" Margin="8,0,0,0" VerticalAlignment="Center" />
+                            <TextBlock Grid.Column="4" Style="{StaticResource Glyph}" Text="{Binding Chevron}" FontSize="9" Foreground="{DynamicResource Fg3}" Margin="8,0,0,0" />
+                        </Grid>
+                    </Button>
+                    <ItemsControl x:Name="Messages" ItemsSource="{Binding Messages}" Margin="16,5,0,0" Focusable="False"
+                                  Visibility="{Binding IsOpen, Converter={StaticResource Visible}}">
                         <ItemsControl.ItemTemplate>
                             <DataTemplate DataType="{x:Type local:RecentMessageVM}">
                                 <Grid Margin="0,0,0,6">
@@ -144,10 +159,9 @@
                 </StackPanel>
             </Border>
             <DataTemplate.Triggers>
-                <Trigger SourceName="Row" Property="IsMouseOver" Value="True">
-                    <Setter TargetName="Messages" Property="Visibility" Value="Visible" />
+                <DataTrigger Binding="{Binding IsOpen}" Value="True">
                     <Setter TargetName="Row" Property="Background" Value="{DynamicResource Subtle}" />
-                </Trigger>
+                </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>
 

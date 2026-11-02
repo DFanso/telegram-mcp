@@ -206,7 +206,7 @@ The bot only messages the account you're logged in as, and ignores button presse
 - the connection, with a warning icon when the daemon or Telegram is down
 - **Waiting for approval**: the exact text, recipient, reason and asking session, with Approve / Deny. A new chat gets an editable nickname and Deny / Ask every time / Always allow instead.
 - **Listening**: each session that is watching chats, and whether its Monitor is connected
-- **Recently sent**: the last 5 chats you sent to. Hover a chat to see its messages, when they went, how they were approved, and from which session.
+- **Recently sent**: the last 5 chats you sent to. Click a chat to see its messages, when they went, how they were approved, and from which session; click again to close it.
 - **Contacts** (the button at the top right): every saved chat, to change its rules without editing `config.json`. See [Contacts](#contacts).
 
 <p>
@@ -218,7 +218,7 @@ Each new draft also posts a notification, so you can decide without opening the 
 
 <img src="docs/notification-options.png" width="384" alt="Two draft notifications; the Options menu of a first message to a new chat shows Approve, ask next time; Approve, always allow; and Deny">
 
-Hover a draft to see all of it. The panel never runs past the bottom of the screen: when a long draft (or many of them) would, the middle scrolls and the header and footer stay put.
+A long draft shows its first 4 lines: click it (or **Show all**) to see all of it. Nothing in the panel opens on hover. The panel never runs past the bottom of the screen: when a long draft (or many of them) would, the middle scrolls and the header and footer stay put.
 
 The menu bar icon shows the number of drafts waiting. `tgmcp menubar uninstall` removes it.
 
@@ -248,7 +248,7 @@ On Windows, `tgmcp menubar` starts the tray app and sets it to start at login. S
 It is the menu bar app's counterpart:
 
 - **The tray icon** is a paper plane, filled while a session is listening. Its badge is the number of drafts waiting, or `!` when the daemon or Telegram is down. Hover it for a summary.
-- **Click it for the panel**: the connection, **Waiting for approval** (Approve / Deny; a new chat gets a nickname box and Deny / Ask every time / Always allow), **Listening**, and **Recently sent** (hover a chat to see its messages).
+- **Click it for the panel**: the connection, **Waiting for approval** (Approve / Deny; a new chat gets a nickname box and Deny / Ask every time / Always allow), **Listening**, and **Recently sent** (click a chat to see its messages). As in the menu bar app, a long draft and a recent chat open on click, never on hover.
 - **Contacts** (top right of the panel) is the same page as the menu bar's (see [Contacts](#contacts) above): rename a saved chat, choose what happens when Claude sends there, turn auto-reply on or off, choose who can page you, and page someone.
 - **A Windows notification** for each draft has the same choices as buttons. Click the notification itself to open the panel.
 
@@ -273,7 +273,7 @@ The screenshots above come from the demo daemon, rendered offscreen by the app i
 APP="menubar/build/Telegram MCP.app/Contents/MacOS/TelegramMCPBar"
 export TELEGRAM_MCP_HOME=/tmp/tgmcp-demo TELEGRAM_MCP_PORT=47901 TELEGRAM_MCP_SECRET_STORE=file SNAPSHOT_DARK=1
 "$APP" --snapshot docs/menubar-approvals.png
-SNAPSHOT_HOVER=recent SNAPSHOT_SCREEN_HEIGHT=4000 "$APP" --snapshot /tmp/history-full.png   # SNAPSHOT_HOVER: 1, approvals or recent
+SNAPSHOT_EXPAND=recent SNAPSHOT_SCREEN_HEIGHT=4000 "$APP" --snapshot /tmp/history-full.png   # SNAPSHOT_EXPAND: 1, approvals or recent
 SNAPSHOT_PAGE=contacts SNAPSHOT_OPEN=team-qa "$APP" --snapshot docs/menubar-contacts.png    # SNAPSHOT_OPEN: a nickname to open
 ```
 
