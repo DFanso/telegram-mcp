@@ -19,12 +19,12 @@ import { decideSend, policyLabel, withFooter } from '../shared/policy'
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
-import { fmtBytes, safeFileName } from '../shared/media'
+import { checkSendable, describeOutgoing, fmtBytes, safeFileName, type OutgoingFile } from '../shared/media'
 import type { IncomingMessage, MessageInfo, PeerInfo, SentRecord, TgEvent, ToolResult, UiState } from '../shared/protocol'
 import { TOOLS, isToolName, type ToolInput, type ToolName } from '../shared/tools'
 import type { Approvals, DecideOptions, PendingSend } from './approvals'
 import { formatEvent, type SessionHub } from './sessions'
-import type { TelegramPort } from './telegram'
+import type { SendFileOptions, TelegramPort } from './telegram'
 
 export interface ServiceDeps {
   store: ConfigStore
@@ -37,6 +37,8 @@ export interface ServiceDeps {
   recentPath?: string
   /** Where downloads go, one folder per chat. */
   downloadsDir?: string
+  /** This tool's own folder (login session, token): never sent as a file. */
+  mcpHome?: string
 }
 
 const VIA_TEXT: Record<SentRecord['via'], string> = {
@@ -98,6 +100,10 @@ type Handlers = { [N in ToolName]: (sessionId: string, p: ToolInput<N>) => Promi
 export class Service {
   #recent: SentRecord[] = []
   #uiSeen = 0
+
+  get #mcpHome(): string {
+    return this.d.mcpHome ?? join(homedir(), '.config', 'telegram-mcp')
+  }
 
   constructor(private readonly d: ServiceDeps) {
     if (d.recentPath) {
@@ -200,6 +206,10 @@ export class Service {
     return Date.now() - this.#uiSeen < 10_000
   }
 
+  #deliver(chatId: number, text: string, file: OutgoingFile | undefined, opts: SendFileOptions): Promise<MessageInfo> {
+    return file ? this.d.tg.sendFile(chatId, file, text, opts) : this.d.tg.sendText(chatId, text, opts)
+  }
+
   #record(r: Omit<SentRecord, 'at'>) {
     this.#recent = [...this.#recent, { ...r, at: new Date().toISOString() }].slice(-20)
     if (!this.d.recentPath) return
@@ -263,12 +273,15 @@ export class Service {
         result = fail(`Not sent to ${item.chatLabel}: ${decision.reason}.`)
       } else {
         try {
-          const sent = await this.d.tg.sendText(item.chatId, item.text, {
+          // The file may have changed or moved while it waited.
+          const file = item.file ? checkSendable(item.file.path, { mcpHome: this.#mcpHome }) : undefined
+          const sent = await this.#deliver(item.chatId, item.text, file, {
             replyTo: item.replyTo,
             topicId: item.topicId,
             parseMode: item.parseMode,
+            asPhoto: item.asPhoto,
           })
-          this.#record({ chatId: item.chatId, chatLabel: item.chatLabel, text: item.text, messageId: sent.id, via, sessionLabel: item.sessionLabel })
+          this.#record({ chatId: item.chatId, chatLabel: item.chatLabel, text: describeOutgoing(item.text, file), messageId: sent.id, via, sessionLabel: item.sessionLabel })
           let saved = ''
           if (item.firstTime) {
             try {
@@ -297,7 +310,7 @@ export class Service {
         id: a.id,
         to: a.chatLabel,
         detail: a.chatDetail,
-        text: a.text,
+        text: describeOutgoing(a.text, a.file),
         reason: a.reason,
         sessionId: a.sessionId,
         sessionLabel: a.sessionLabel,
@@ -309,6 +322,77 @@ export class Service {
       })),
       sessions: this.d.hub.snapshot().filter(s => s.watches.length > 0 || s.connected),
       recent: [...this.#recent].reverse(),
+    }
+  }
+
+  /** Shared by text and file sends: the rules decide whether it goes now, waits for approval, or is refused. */
+  async #send(
+    sid: string,
+    p: { to: ChatRef; replyTo?: number; topicId?: number; parseMode: 'plain' | 'markdown' | 'html' },
+    draft: { text: string; file?: string; asPhoto?: boolean },
+  ): Promise<ToolResult> {
+    const config = this.d.store.get()
+    const t = await this.#resolve(p.to, true)
+    const file = draft.file ? checkSendable(draft.file, { mcpHome: this.#mcpHome }) : undefined
+    const topicId = p.topicId ?? t.entry?.topicId
+    const decision = decideSend(config, t.peer, { isWatching: this.d.hub.isWatching(sid, t.peer.id) })
+    if (decision.action === 'block') return fail(`Not sent to ${t.label}: ${decision.reason}.`)
+    // A file with no caption still carries the footer, without the blank lines that lead into it.
+    const text = withFooter(draft.text, config.footer).replace(/^\s+/, '')
+    const shown = describeOutgoing(text, file)
+    if (decision.action === 'send') {
+      const sent = await this.#deliver(t.peer.id, text, file, { replyTo: p.replyTo, topicId, parseMode: p.parseMode, asPhoto: draft.asPhoto })
+      this.#record({ chatId: t.peer.id, chatLabel: t.label, text: shown, messageId: sent.id, via: 'auto', sessionLabel: this.d.hub.label(sid) })
+      return { text: `Sent to ${t.label} (message #${sent.id}${topicId ? `, topic ${topicId}` : ''}). Allowed because ${decision.reason}.` }
+    }
+    const uiActive = this.uiActive()
+    const firstTime = !isListed(config, 'autoSend', t.peer) && !isListed(config, 'requireApproval', t.peer)
+    const nickname = t.nickname ?? nicknameFor(config, t.peer.id) ?? null
+    const pending = this.d.approvals.create({
+      peer: t.peer,
+      firstTime,
+      nickname,
+      suggestedNickname: nickname ?? suggestNickname(config, t.peer),
+      sessionId: sid,
+      sessionLabel: this.d.hub.label(sid),
+      chatId: t.peer.id,
+      chatLabel: `${t.label}${topicId ? ` · topic ${topicId}` : ''}`,
+      chatDetail: fmtPeer(t.peer),
+      username: t.peer.username,
+      text,
+      file,
+      asPhoto: draft.asPhoto,
+      replyTo: p.replyTo,
+      topicId,
+      parseMode: p.parseMode,
+      reason: decision.reason,
+    })
+    return {
+      text: [
+        `Not sent yet: needs the user's approval (${decision.reason}). Approval id: ${pending.id}`,
+        `To: ${pending.chatLabel} (${pending.chatDetail})`,
+        'Message:',
+        shown,
+        '',
+        firstTime
+          ? `First message to this chat: approving also saves it${nickname ? '' : ` (as "${pending.suggestedNickname}")`} and the user picks "always allow" (autoSend) or "ask every time" (requireApproval) for next time.`
+          : null,
+        uiActive
+          ? 'It is waiting in the menu bar for the user to approve or deny.'
+          : `Show the user this exact message and recipient. Only if they say yes, call telegram_confirm_send with the approval id${firstTime ? ' and remember set to what they chose ("autoSend" = always allow, "requireApproval" = ask every time)' : ''}; otherwise telegram_cancel_send.`,
+      ]
+        .filter(line => line !== null)
+        .join('\n'),
+      approval: {
+        id: pending.id,
+        to: pending.chatLabel,
+        text: shown,
+        reason: decision.reason,
+        uiActive,
+        firstTime,
+        nickname,
+        suggestedNickname: pending.suggestedNickname,
+      },
     }
   }
 
@@ -442,66 +526,9 @@ export class Service {
       }
     },
 
-    telegram_send_message: async (sid, p) => {
-      const config = this.d.store.get()
-      const t = await this.#resolve(p.to, true)
-      const topicId = p.topicId ?? t.entry?.topicId
-      const decision = decideSend(config, t.peer, { isWatching: this.d.hub.isWatching(sid, t.peer.id) })
-      if (decision.action === 'block') return fail(`Not sent to ${t.label}: ${decision.reason}.`)
-      const text = withFooter(p.text, config.footer)
-      if (decision.action === 'send') {
-        const sent = await this.d.tg.sendText(t.peer.id, text, { replyTo: p.replyTo, topicId, parseMode: p.parseMode })
-        this.#record({ chatId: t.peer.id, chatLabel: t.label, text, messageId: sent.id, via: 'auto', sessionLabel: this.d.hub.label(sid) })
-        return { text: `Sent to ${t.label} (message #${sent.id}${topicId ? `, topic ${topicId}` : ''}). Allowed because ${decision.reason}.` }
-      }
-      const uiActive = this.uiActive()
-      const firstTime = !isListed(config, 'autoSend', t.peer) && !isListed(config, 'requireApproval', t.peer)
-      const nickname = t.nickname ?? nicknameFor(config, t.peer.id) ?? null
-      const pending = this.d.approvals.create({
-        peer: t.peer,
-        firstTime,
-        nickname,
-        suggestedNickname: nickname ?? suggestNickname(config, t.peer),
-        sessionId: sid,
-        sessionLabel: this.d.hub.label(sid),
-        chatId: t.peer.id,
-        chatLabel: `${t.label}${topicId ? ` · topic ${topicId}` : ''}`,
-        chatDetail: fmtPeer(t.peer),
-        username: t.peer.username,
-        text,
-        replyTo: p.replyTo,
-        topicId,
-        parseMode: p.parseMode,
-        reason: decision.reason,
-      })
-      return {
-        text: [
-          `Not sent yet: needs the user's approval (${decision.reason}). Approval id: ${pending.id}`,
-          `To: ${pending.chatLabel} (${pending.chatDetail})`,
-          'Message:',
-          text,
-          '',
-          firstTime
-            ? `First message to this chat: approving also saves it${nickname ? '' : ` (as "${pending.suggestedNickname}")`} and the user picks "always allow" (autoSend) or "ask every time" (requireApproval) for next time.`
-            : null,
-          uiActive
-            ? 'It is waiting in the menu bar for the user to approve or deny.'
-            : `Show the user this exact message and recipient. Only if they say yes, call telegram_confirm_send with the approval id${firstTime ? ' and remember set to what they chose ("autoSend" = always allow, "requireApproval" = ask every time)' : ''}; otherwise telegram_cancel_send.`,
-        ]
-          .filter(line => line !== null)
-          .join('\n'),
-        approval: {
-          id: pending.id,
-          to: pending.chatLabel,
-          text,
-          reason: decision.reason,
-          uiActive,
-          firstTime,
-          nickname,
-          suggestedNickname: pending.suggestedNickname,
-        },
-      }
-    },
+    telegram_send_message: async (sid, p) => this.#send(sid, p, { text: p.text }),
+
+    telegram_send_file: async (sid, p) => this.#send(sid, p, { text: p.caption ?? '', file: p.path, asPhoto: p.asPhoto }),
 
     telegram_confirm_send: async (sid, p) =>
       this.decide(p.approvalId, true, 'chat', sid, { remember: p.remember, nickname: p.nickname }),

@@ -1,8 +1,8 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
-import type { SendOptions, TelegramPort } from '../src/daemon/telegram'
+import type { SendFileOptions, SendOptions, TelegramPort } from '../src/daemon/telegram'
 import type { DialogInfo, DownloadedFile, IncomingMessage, MessageInfo, PeerInfo, TelegramState } from '../src/shared/protocol'
-import { downloadFileName } from '../src/shared/media'
+import { downloadFileName, type OutgoingFile } from '../src/shared/media'
 
 /** In-memory stand-in for Telegram. Never touches the network. */
 export class FakeTelegram implements TelegramPort {
@@ -11,6 +11,7 @@ export class FakeTelegram implements TelegramPort {
   /** Ids that getPeer(id) pretends not to know yet (no access hash), like a fresh session. */
   uncached = new Set<number>()
   sent: { chatId: number; text: string; opts: SendOptions }[] = []
+  sentFiles: { chatId: number; file: OutgoingFile; caption: string; opts: SendFileOptions }[] = []
   history = new Map<number, MessageInfo[]>()
   /** Attachments by `${chatId}:${messageId}`. */
   files = new Map<string, { name: string | null; type: string; mime: string | null; data: string }>()
@@ -75,6 +76,21 @@ export class FakeTelegram implements TelegramPort {
       outgoing: true,
       text,
       media: null,
+      replyToId: opts.replyTo ?? null,
+      topicId: opts.topicId ?? null,
+    }
+  }
+
+  async sendFile(chatId: number, file: OutgoingFile, caption: string, opts: SendFileOptions = {}): Promise<MessageInfo> {
+    this.sentFiles.push({ chatId, file, caption, opts })
+    return {
+      id: this.#nextId++,
+      chatId,
+      date: new Date().toISOString(),
+      from: this.me,
+      outgoing: true,
+      text: caption,
+      media: opts.asPhoto ? 'photo' : `document: ${file.name}`,
       replyToId: opts.replyTo ?? null,
       topicId: opts.topicId ?? null,
     }

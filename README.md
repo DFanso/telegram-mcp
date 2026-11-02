@@ -71,6 +71,8 @@ All in `~/.config/telegram-mcp/` (folder mode 0700; override with `TELEGRAM_MCP_
 
 The daemon listens on `127.0.0.1:47823` (`TELEGRAM_MCP_PORT`).
 
+Downloads go to `~/Downloads/telegram-mcp/<chat>/` (`TELEGRAM_MCP_DOWNLOADS`), named `<message id>-<file name>`.
+
 ## The rules file
 
 ```jsonc
@@ -120,6 +122,8 @@ Nothing is sent unless you accept. Drafts expire after 20 minutes. The rules are
 | `telegram_search_chats` | find a person or group to save |
 | `telegram_read_messages` | read a chat or forum topic |
 | `telegram_send_message` | send, following the rules |
+| `telegram_send_file` | send a local file with a caption, following the same rules; credentials and this tool's own files are always refused |
+| `telegram_download_media` | save a message's file, photo, video or voice note and return the path |
 | `telegram_confirm_send` / `telegram_cancel_send` | approval fallback for clients without dialogs |
 | `telegram_save_chat` / `telegram_remove_chat` | manage nicknames |
 | `telegram_watch` / `telegram_unwatch` | subscribe to an autoReply chat (optionally one sender, one topic) |

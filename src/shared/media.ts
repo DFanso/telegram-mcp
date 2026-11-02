@@ -1,3 +1,7 @@
+import { realpathSync, statSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { basename, isAbsolute, join, sep } from 'node:path'
+
 /** Naming and sizes for files moving between Telegram and disk. */
 
 const EXT_BY_MIME: Record<string, string> = {
@@ -41,4 +45,57 @@ export function downloadFileName(messageId: number, file: { name: string | null;
   const given = file.name ? safeFileName(file.name) : ''
   const name = given || `${file.type}${(file.mime && EXT_BY_MIME[file.mime]) ?? (file.type === 'photo' ? '.jpg' : '')}`
   return `${messageId}-${name}`
+}
+
+/** A local file waiting to go out, checked when the send is requested and again when it is approved. */
+export interface OutgoingFile {
+  path: string
+  name: string
+  size: number
+}
+
+const MAX_UPLOAD = 2000 * 1024 * 1024
+
+/** Folders under the home directory that hold credentials. */
+const SECRET_DIRS = ['.ssh', '.gnupg', '.aws', '.azure', '.kube', '.docker', '.config/gcloud', '.config/gh', 'Library/Keychains']
+/** Base names that are credentials wherever they sit. */
+const SECRET_NAMES = /^(\.env(\..*)?|\.netrc|\.npmrc|\.pypirc|id_(rsa|dsa|ecdsa|ed25519)(_[\w-]+)?(\.pub)?|.*\.(pem|key|p12|pfx|kdbx))$/i
+
+/**
+ * Whether a local file may be sent at all, whatever the chat rules say: an absolute path to a
+ * regular, non-empty file under Telegram's size limit, and not a credential. `mcpHome` is this
+ * tool's own folder (login session, API token), which is never sent.
+ */
+export function checkSendable(path: string, o: { mcpHome: string; home?: string }): OutgoingFile {
+  if (!isAbsolute(path)) throw new Error(`Give an absolute path, not "${path}".`)
+  let real: string
+  try {
+    real = realpathSync(path)
+  } catch {
+    throw new Error(`No such file: ${path}`)
+  }
+  const st = statSync(real)
+  if (!st.isFile()) throw new Error(`Not a regular file: ${path}`)
+  if (st.size === 0) throw new Error(`The file is empty: ${path}`)
+  if (st.size > MAX_UPLOAD) throw new Error(`The file is ${fmtBytes(st.size)}; Telegram takes at most ${fmtBytes(MAX_UPLOAD)}.`)
+  const home = o.home ?? homedir()
+  const realOr = (p: string) => {
+    try {
+      return realpathSync(p)
+    } catch {
+      return p
+    }
+  }
+  const inside = (dir: string) => real === dir || real.startsWith(dir.endsWith(sep) ? dir : dir + sep)
+  const guarded = [realOr(o.mcpHome), ...SECRET_DIRS.map(d => realOr(join(home, d)))]
+  if (guarded.some(inside) || SECRET_NAMES.test(basename(real))) {
+    throw new Error(`Refusing to send ${path}: it looks like a credential or this tool's own login files.`)
+  }
+  return { path: real, name: basename(real), size: st.size }
+}
+
+/** How a send reads in approvals, results and the recent list. */
+export function describeOutgoing(text: string, file?: OutgoingFile): string {
+  if (!file) return text
+  return `[file: ${file.name}, ${fmtBytes(file.size)}]${text ? `\n${text}` : ''}`
 }

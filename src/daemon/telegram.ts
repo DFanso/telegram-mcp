@@ -1,4 +1,4 @@
-import { Chat, FileLocation, TelegramClient, User, html, md, type ITelegramStorageProvider, type Message, type Peer, type tl } from '@mtcute/bun'
+import { Chat, FileLocation, InputMedia, TelegramClient, User, html, md, type ITelegramStorageProvider, type Message, type Peer, type tl } from '@mtcute/bun'
 import { mkdirSync, renameSync, rmSync, statSync } from 'node:fs'
 import { join } from 'node:path'
 import type {
@@ -9,7 +9,7 @@ import type {
   PeerInfo,
   TelegramState,
 } from '../shared/protocol'
-import { downloadFileName, fmtBytes } from '../shared/media'
+import { downloadFileName, fmtBytes, type OutgoingFile } from '../shared/media'
 import type { Credentials } from '../shared/secrets'
 import { SessionLockedError } from './session-store'
 
@@ -17,6 +17,11 @@ export interface SendOptions {
   replyTo?: number
   topicId?: number
   parseMode?: 'plain' | 'markdown' | 'html'
+}
+
+export interface SendFileOptions extends SendOptions {
+  /** Send an image as a compressed photo instead of a file. */
+  asPhoto?: boolean
 }
 
 /** Everything the daemon needs from Telegram. Tests swap in a fake. */
@@ -28,6 +33,7 @@ export interface TelegramPort {
   onMessage(cb: (msg: IncomingMessage) => void): void
   getPeer(ref: number | string): Promise<PeerInfo>
   sendText(chatId: number, text: string, opts?: SendOptions): Promise<MessageInfo>
+  sendFile(chatId: number, file: OutgoingFile, caption: string, opts?: SendFileOptions): Promise<MessageInfo>
   getHistory(chatId: number, opts: { limit: number; beforeId?: number; topicId?: number }): Promise<MessageInfo[]>
   listDialogs(opts: { limit: number; unreadOnly: boolean }): Promise<DialogInfo[]>
   searchChats(query: string, limit: number): Promise<(PeerInfo & { global: boolean })[]>
@@ -395,6 +401,21 @@ export class MtcuteTelegram implements TelegramPort {
     const c = await this.#ready()
     const body = opts.parseMode === 'markdown' ? md(text) : opts.parseMode === 'html' ? html(text) : text
     const sent = await c.sendText(chatId, body, {
+      ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
+      ...(opts.topicId ? { threadId: opts.topicId } : {}),
+    })
+    return messageInfo(sent)
+  }
+
+  async sendFile(chatId: number, file: OutgoingFile, caption: string, opts: SendFileOptions = {}): Promise<MessageInfo> {
+    const c = await this.#ready()
+    const text = opts.parseMode === 'markdown' ? md(caption) : opts.parseMode === 'html' ? html(caption) : caption
+    // mtcute reads a bare string as a Telegram file id; "file:" marks a local path.
+    const local = `file:${file.path}`
+    const media = opts.asPhoto
+      ? InputMedia.photo(local, { caption: text })
+      : InputMedia.document(local, { caption: text, fileName: file.name, fileSize: file.size })
+    const sent = await c.sendMedia(chatId, media, {
       ...(opts.replyTo ? { replyTo: opts.replyTo } : {}),
       ...(opts.topicId ? { threadId: opts.topicId } : {}),
     })

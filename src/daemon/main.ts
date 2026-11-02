@@ -48,6 +48,7 @@ export async function createDaemon(o: DaemonOptions) {
     eventsUrl: sid => `ws://127.0.0.1:${port}/events?session=${sid}&key=${eventsKey(token, sid)}`,
     recentPath: join(o.paths.home, 'recent.json'),
     downloadsDir: o.paths.downloads,
+    mcpHome: o.paths.home,
   })
 
   // Bind first: if another daemon already owns the port, fail before touching the Telegram session.

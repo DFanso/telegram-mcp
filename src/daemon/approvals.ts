@@ -1,3 +1,4 @@
+import type { OutgoingFile } from '../shared/media'
 import type { PeerInfo, ToolResult } from '../shared/protocol'
 import { newId } from './sessions'
 
@@ -10,7 +11,10 @@ export interface PendingSend {
   /** Name · @username · id · type, so the person approving sees exactly who it goes to. */
   chatDetail: string
   username: string | null
+  /** The message, or the caption when a file goes out. */
   text: string
+  file?: OutgoingFile
+  asPhoto?: boolean
   replyTo?: number
   topicId?: number
   parseMode: 'plain' | 'markdown' | 'html'
