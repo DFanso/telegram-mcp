@@ -125,6 +125,8 @@ A session's watches outlive a daemon restart, because the proxy re-sends them. T
 - **Listening**: each session that is watching chats, and whether its Monitor is connected
 - **Recently sent**: the last 5 chats you sent to. Hover a chat to see its messages, when they went, how they were approved, and from which session.
 
+Hover a draft to see all of it. The panel never runs past the bottom of the screen: when a long draft (or many of them) would, the middle scrolls and the header and footer stay put.
+
 The menu bar icon shows the number of drafts waiting. `tgmcp menubar uninstall` removes it.
 
 ## Development

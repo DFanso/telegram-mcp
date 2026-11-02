@@ -277,6 +277,8 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate {
 // MARK: - Helpers
 
 let isSnapshot = CommandLine.arguments.contains("--snapshot")
+/// `SNAPSHOT_HOVER=1` starts approval cards and recent chats expanded, as if hovered.
+let snapshotHover = ProcessInfo.processInfo.environment["SNAPSHOT_HOVER"] == "1"
 
 private let isoWithFraction: ISO8601DateFormatter = {
     let f = ISO8601DateFormatter()
@@ -346,14 +348,54 @@ struct Placeholder: View {
 struct PanelView: View {
     @EnvironmentObject var store: Store
 
+    /// macOS doesn't keep a menu bar panel on screen: a long draft (expanded on hover), or many of
+    /// them, pushed the buttons below the bottom of the screen. So the panel is at most as tall as
+    /// the screen, and the middle (approvals, listening, recent) scrolls; header and footer stay put.
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            header
-            if let flash = store.flash {
-                Text(flash).font(.system(size: 11)).foregroundStyle(.secondary)
-                    .padding(8).frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.10)))
+        VStack(alignment: .leading, spacing: 0) {
+            VStack(alignment: .leading, spacing: 14) {
+                header
+                if let flash = store.flash {
+                    Text(flash).font(.system(size: 11)).foregroundStyle(.secondary)
+                        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
+                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.10)))
+                }
             }
+            .padding(14)
+            middle
+            VStack(alignment: .leading, spacing: 14) {
+                Divider()
+                footer
+            }
+            .padding([.horizontal, .bottom], 14)
+        }
+        .frame(width: 370)
+        .frame(maxHeight: maxPanelHeight)
+        // MenuBarExtra sizes its window to the content's minimum height, and a ScrollView's is 0;
+        // pin it to the ideal height instead (the content's, capped by the frame above).
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
+    /// A ScrollView is as tall as its content until the panel's height cap squeezes it.
+    @ViewBuilder private var middle: some View {
+        if isSnapshot {
+            // The offscreen snapshot renderer draws a ScrollView blank; this sizes the same, and clips.
+            sections.fixedSize(horizontal: false, vertical: true)
+                .frame(minHeight: 0, maxHeight: .infinity, alignment: .top).clipped()
+        } else {
+            ScrollView(.vertical) { sections }.scrollBounceBehavior(.basedOnSize)
+        }
+    }
+
+    /// The screen the panel is on, below the menu bar and above the Dock, less a small gap.
+    private var maxPanelHeight: CGFloat {
+        let forced = ProcessInfo.processInfo.environment["SNAPSHOT_SCREEN_HEIGHT"].flatMap(Double.init) // for snapshots
+        let visible = forced.map { CGFloat($0) } ?? (NSScreen.main ?? NSScreen.screens.first)?.visibleFrame.height ?? 800
+        return max(300, visible - 16)
+    }
+
+    private var sections: some View {
+        VStack(alignment: .leading, spacing: 14) {
             if let state = store.state, store.reachable {
                 if let err = state.configError {
                     Label(err, systemImage: "exclamationmark.triangle.fill")
@@ -365,11 +407,9 @@ struct PanelView: View {
             } else if let problem = store.problem {
                 Text(problem).font(.system(size: 12)).foregroundStyle(.secondary)
             }
-            Divider()
-            footer
         }
-        .padding(14)
-        .frame(width: 370)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding([.horizontal, .bottom], 14)
     }
 
     private var header: some View {
@@ -440,7 +480,7 @@ struct PanelView: View {
 struct ApprovalCard: View {
     @EnvironmentObject var store: Store
     let item: UiApproval
-    @State private var hover = false
+    @State private var hover = snapshotHover
     @State private var nick: String
 
     init(item: UiApproval) {
@@ -569,7 +609,7 @@ struct SessionRow: View {
 struct RecentChatRow: View {
     @EnvironmentObject var store: Store
     let chat: RecentChat
-    @State private var hover = ProcessInfo.processInfo.environment["SNAPSHOT_HOVER"] == "1"
+    @State private var hover = snapshotHover
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {

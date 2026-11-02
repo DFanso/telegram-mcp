@@ -45,6 +45,15 @@ await web.call('telegram_watch', { chat: 'leo' })
 await api.call('telegram_send_message', { to: 'leo', text: 'Deployed v2.3 to staging, can you check the login flow?' })
 await web.call('telegram_send_message', { to: 'anna', text: 'The signup form now accepts uploads up to 10 MB.' })
 await api.call('telegram_send_message', { to: 'leo', text: 'Also the rate limiter is back on.' })
-await api.call('telegram_send_message', { to: 'team-qa', text: 'Hi team, v2.3 is on staging. Please run the QA checklist for the upload flow.' })
+await api.call('telegram_send_message', {
+  to: 'team-qa',
+  // Long on purpose: hovering the card expands it past the bottom of the screen, so the panel has to scroll.
+  text: [
+    'Hi team, v2.3 is on staging. Please run the QA checklist for the upload flow.',
+    ...Array.from({ length: 12 }, (_, i) => `${i + 1}. Upload a file of type ${['PNG', 'JPEG', 'PDF', 'HEIC'][i % 4]} at ${((i + 1) * 0.8).toFixed(1)} MB from ${['Safari', 'Chrome', 'Firefox'][i % 3]}, refresh the page, and check that the preview, file name and size match what was uploaded.`),
+    'Then try a 12 MB file: it should be refused with a clear message, and nothing should be stored.',
+    'Reply here with anything that looks off. Thanks!',
+  ].join('\n\n'),
+})
 await web.call('telegram_send_message', { to: '@leonardo_s', text: 'Hey Leonardo, are you free for a quick call about the payments integration?' })
 console.log(`demo daemon on 47901, home ${home}`)
