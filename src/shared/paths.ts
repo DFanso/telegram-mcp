@@ -11,8 +11,11 @@ export interface Paths {
   credentials: string
   token: string
   sessionKey: string
+  pageBot: string
   session: string
   log: string
+  /** One line per page, ack, snooze and retry. */
+  pages: string
   /** Where telegram_download_media saves files, one folder per chat. */
   downloads: string
 }
@@ -27,8 +30,10 @@ export function getPaths(home = process.env.TELEGRAM_MCP_HOME || defaultHome()):
     credentials: join(home, 'credentials.json'),
     token: join(home, 'token'),
     sessionKey: join(home, 'session.key'),
+    pageBot: join(home, 'page-bot'),
     session: join(home, 'session.db'),
     log: join(home, 'daemon.log'),
+    pages: join(home, 'pages.jsonl'),
     downloads: process.env.TELEGRAM_MCP_DOWNLOADS ?? join(homedir(), 'Downloads', 'telegram-mcp'),
   }
 }

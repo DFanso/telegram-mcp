@@ -22,10 +22,11 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { checkSendable, describeOutgoing, fileDigest, fmtBytes, safeFileName, type OutgoingFile } from '../shared/media'
 import { looksLikeReplyCommand, parseReplyCommand } from '../shared/takeover'
-import type { IncomingMessage, MessageInfo, PeerInfo, SendMode, SentRecord, TgEvent, ToolResult, UiContact, UiState } from '../shared/protocol'
+import type { IncomingMessage, MessageInfo, PeerInfo, SendMode, SentRecord, TgEvent, ToolResult, UiContact, UiPage, UiState } from '../shared/protocol'
 import { TOOLS, isToolName, type ToolInput, type ToolName } from '../shared/tools'
 import type { Approvals, DecideOptions, PendingSend } from './approvals'
 import { visibleText } from './formatting'
+import type { Page, PageAction, PageActor, Pager } from './pager'
 import { formatEvent, type SessionHub } from './sessions'
 import type { SendFileOptions, StickerRef, TelegramPort } from './telegram'
 
@@ -44,6 +45,8 @@ export interface ServiceDeps {
   takeoverMinutes?: number
   /** This tool's own folder (login session, token): never sent as a file. */
   mcpHome?: string
+  /** Pages (telegram_page, the menu bar's Ack). Absent in tests that do not need them. */
+  pager?: Pager
 }
 
 const VIA_TEXT: Record<SentRecord['via'], string> = {
@@ -433,6 +436,29 @@ export class Service {
     }
   }
 
+  /** `tgmcp page test`: rings everything, ignoring the rate limit, so you can check the volume. */
+  async testPage(): Promise<{ ok: boolean; text: string }> {
+    const { pager } = this.d
+    if (!pager) return { ok: false, text: 'Paging is not available in this daemon.' }
+    const r = await pager.page({
+      source: 'test',
+      senderKey: 'test',
+      senderName: 'tgmcp page test',
+      chatId: null,
+      chatLabel: null,
+      messageId: null,
+      reason: 'Test page: ack it in the menu bar, the tray or on your phone.',
+    })
+    if (!r.ok) return { ok: false, text: r.error }
+    const phone = r.page.botMessages.length ? 'and your phone got a push' : 'but no pager bot reached your phone (tgmcp page setup)'
+    return { ok: true, text: `Ringing (${r.page.id}): the menu bar or tray should sound within a few seconds, ${phone}.` }
+  }
+
+  /** Ack or snooze from the menu bar or the tray. */
+  async pageAction(id: string, action: PageAction, by: PageActor): Promise<boolean> {
+    return (await this.d.pager?.act(id, action, by)) ?? false
+  }
+
   uiState(): UiState {
     const ttl = this.d.approvals.ttlMs
     const config = this.d.store.get()
@@ -442,6 +468,7 @@ export class Service {
       footer: config.footer,
       defaultPolicy: config.defaultPolicy,
       contacts: listContacts(config, this.d.tg.state().me?.id),
+      pages: (this.d.pager?.active() ?? []).map(uiPage),
       approvals: this.d.approvals.list().map(a => ({
         id: a.id,
         to: a.chatLabel,
@@ -685,6 +712,25 @@ export class Service {
 
     telegram_send_message: async (sid, p) => this.#send(sid, p, { text: p.text }),
 
+    telegram_page: async (sid, p) => {
+      const { pager, hub } = this.d
+      if (!pager) return fail('Paging is not available in this daemon.')
+      const t = p.chat === undefined ? null : await this.#resolve(p.chat, false)
+      const r = await pager.page({
+        source: 'claude',
+        senderKey: 'claude',
+        senderName: hub.label(sid),
+        chatId: t?.peer.id ?? null,
+        chatLabel: t?.label ?? null,
+        messageId: p.messageId ?? null,
+        reason: p.reason,
+      })
+      if (!r.ok) return fail(`Not paged: ${r.error}`)
+      return {
+        text: `Paged the user (${r.page.id}). Their desktop rings until they ack${r.page.botMessages.length ? ', and their phone got a push' : '; no pager bot is set up, so the phone was not reached (tgmcp page setup)'}.`,
+      }
+    },
+
     telegram_answer_reply: async (sid, p) => {
       const { hub } = this.d
       hub.setReplyHandler(sid, p.on)
@@ -833,5 +879,20 @@ export class Service {
       await this.d.tg.markRead(t.peer.id)
       return { text: `Marked ${t.label} as read.` }
     },
+  }
+}
+
+function uiPage(p: Page): UiPage {
+  return {
+    id: p.id,
+    source: p.source,
+    state: p.state === 'acked' ? 'ringing' : p.state,
+    from: p.source === 'claude' ? `Claude (${p.senderName})` : p.senderName,
+    chat: p.chatLabel,
+    chatId: p.chatId,
+    messageId: p.messageId,
+    reason: p.reason,
+    createdAt: new Date(p.createdAt).toISOString(),
+    snoozedUntil: p.state === 'snoozed' ? new Date(p.nextAt).toISOString() : null,
   }
 }

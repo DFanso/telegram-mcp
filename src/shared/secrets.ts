@@ -4,18 +4,19 @@ import { resolve } from 'node:path'
 import { defaultHome, type Paths } from './paths'
 
 /**
- * The three secrets, and where they live.
+ * The secrets, and where they live.
  *
  *   token        the local API secret: proxies, the CLI and the menu bar app show it to the daemon
  *   credentials  api_id / api_hash from my.telegram.org, as JSON
  *   session-key  seals the Telegram auth keys inside session.db (see daemon/session-store.ts)
+ *   page-bot     the Bot API token of your own pager bot (`tgmcp page setup`), if you set one up
  *
  * By default they go to the OS keystore through Bun.secrets: the login Keychain on macOS,
  * Credential Manager on Windows, libsecret (GNOME Keyring, KWallet) on Linux. Plain files are
  * only used when you ask for them with TELEGRAM_MCP_SECRET_STORE=file, for a machine without a
  * keystore (a headless Linux box, say). There is no silent fallback to files.
  */
-export const SECRET_NAMES = ['token', 'credentials', 'session-key'] as const
+export const SECRET_NAMES = ['token', 'credentials', 'session-key', 'page-bot'] as const
 export type SecretName = (typeof SECRET_NAMES)[number]
 
 /** The Keychain "service" (Windows: target prefix, libsecret: the service attribute). */
@@ -56,6 +57,7 @@ export function keychainAccount(name: SecretName, home: string): string {
 function fileFor(paths: Paths, name: SecretName): string {
   if (name === 'token') return paths.token
   if (name === 'credentials') return paths.credentials
+  if (name === 'page-bot') return paths.pageBot
   return paths.sessionKey
 }
 

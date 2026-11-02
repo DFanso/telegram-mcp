@@ -171,6 +171,22 @@ export interface UiState {
   sessions: UiSession[]
   recent: SentRecord[]
   contacts: UiContact[]
+  /** Pages still waiting for someone: the menu bar and tray ring while any is ringing or unanswered. */
+  pages: UiPage[]
+}
+
+export interface UiPage {
+  id: string
+  source: 'command' | 'keyword' | 'claude' | 'test'
+  /** ringing: alarm on. unanswered: the phone tries ran out, the alarm keeps going. snoozed: quiet until snoozedUntil. */
+  state: 'ringing' | 'unanswered' | 'snoozed'
+  from: string
+  chat: string | null
+  chatId: number | null
+  messageId: number | null
+  reason: string
+  createdAt: string
+  snoozedUntil: string | null
 }
 
 export interface ToolResult {

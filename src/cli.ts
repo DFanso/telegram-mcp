@@ -20,6 +20,8 @@ const HELP = `tgmcp ${VERSION}: always-on Telegram daemon + per-session MCP brid
   tgmcp menubar       build and start the menu bar app (macOS) or tray app (Windows) at login:
                       approvals, listeners, recent sends, saved chats
   tgmcp menubar uninstall
+  tgmcp page setup    connect your own pager bot (from @BotFather) so pages reach your phone
+  tgmcp page test     ring a test page: hear the alarm, check the volume, try Ack
   tgmcp call <tool> [json]   call a tool as a one-off session, e.g. tgmcp call telegram_get_rules
   tgmcp mcp-add       print the command that registers the MCP server with Claude Code
   tgmcp daemon        run the daemon in the foreground
@@ -156,6 +158,31 @@ async function login(askCredentials: boolean) {
   }
 }
 
+async function pageSetup() {
+  const paths = getPaths()
+  ensureHome(paths)
+  const secrets = openSecretStore(paths)
+  console.log('Make a bot with @BotFather in Telegram (/newbot) and paste its token here.')
+  console.log('It only ever messages you, so pages reach your phone as real notifications.\n')
+  const rl = createInterface({ input: process.stdin, output: process.stdout })
+  const token = (await rl.question('Bot token: ')).trim()
+  rl.close()
+  if (!/^\d+:[\w-]{30,}$/.test(token)) throw new Error('That does not look like a bot token (123456:ABC…).')
+  const { PageBot } = await import('./daemon/page-bot')
+  const me = await new PageBot({ token, ownerId: () => null, onAction: () => {} }).me()
+  await secrets.set('page-bot', token)
+  console.log(`\nSaved @${me.username}'s token to ${secrets.where}.`)
+  console.log(`Now open https://t.me/${me.username}, press Start, and keep that chat unmuted, or the phone won't buzz.`)
+  console.log('Then run `tgmcp restart` and `tgmcp page test`.')
+}
+
+async function pageTest() {
+  const res = await daemonFetch('/ui/pages/test', { method: 'POST' })
+  const body = (await res.json()) as { ok: boolean; text: string }
+  console.log(body.text)
+  if (!body.ok) process.exitCode = 1
+}
+
 function mcpAdd() {
   const self = shellJoin(selfCommand())
   console.log('Register for every project (user scope):\n')
@@ -267,6 +294,16 @@ switch (cmd) {
     else if (sub === 'install') console.log(`Menu bar app running and starts at login: ${installMenubar(getPaths())}`)
     else if (sub === 'uninstall') console.log(uninstallMenubar() ? 'Removed the menu bar app agent.' : 'It was not installed.')
     else console.log('usage: tgmcp menubar [install|uninstall|build]')
+    break
+  }
+  case 'page': {
+    const sub = rest[0]
+    if (sub === 'setup') await pageSetup()
+    else if (sub === 'test') await pageTest()
+    else {
+      console.log('usage: tgmcp page setup | tgmcp page test')
+      process.exitCode = 1
+    }
     break
   }
   case 'mcp-add':
