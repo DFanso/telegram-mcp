@@ -71,6 +71,17 @@ export const TOOLS = {
       parseMode: z.enum(['plain', 'markdown', 'html']).default('plain'),
     }),
   },
+  telegram_send_sticker: {
+    description:
+      'Send a sticker that someone already posted: give the chat and message id where it appears (telegram_read_messages shows them as [sticker: …]). Same rules as telegram_send_message. Stickers take no caption, so no footer is added.',
+    input: z.object({
+      to: chatRef,
+      fromChat: chatRef.describe('Chat where the sticker was posted.'),
+      messageId: z.number().int().describe('Message id of the sticker in fromChat.'),
+      replyTo: z.number().int().optional().describe('Message id to reply to.'),
+      topicId: z.number().int().optional().describe('Forum topic id. Defaults to the nickname\'s saved topic.'),
+    }),
+  },
   telegram_confirm_send: {
     description:
       'Send a message that is waiting for approval. Only call this after the user has explicitly said yes to that exact message and recipient in this conversation. For a first message to a chat, pass remember with what the user chose for next time.',

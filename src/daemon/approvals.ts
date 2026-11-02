@@ -1,5 +1,6 @@
 import type { OutgoingFile } from '../shared/media'
 import type { PeerInfo, ToolResult } from '../shared/protocol'
+import type { StickerRef } from './telegram'
 import { newId } from './sessions'
 
 export interface PendingSend {
@@ -17,6 +18,8 @@ export interface PendingSend {
   /** SHA-256 of the file when approval was asked; it must still match when it is sent. */
   fileDigest?: string
   asPhoto?: boolean
+  /** A sticker re-sent from an existing message; text is empty then (stickers take no caption). */
+  sticker?: StickerRef
   replyTo?: number
   topicId?: number
   parseMode: 'plain' | 'markdown' | 'html'
