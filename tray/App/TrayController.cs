@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Linq;
 using System.Net.Http;
 using System.Windows.Forms;
 using System.Windows.Media;
@@ -16,6 +17,7 @@ sealed class TrayController : IDisposable
     readonly PanelViewModel _vm;
     readonly PanelWindow _panel;
     readonly Toasts _toasts;
+    readonly PageAlarm _alarm = new();
     Icon? _current;
     IconState? _shownState;
     bool _shownDark;
@@ -31,6 +33,12 @@ sealed class TrayController : IDisposable
         _vm.Polled += OnPolled;
         _vm.QuitRequested += () => Exit?.Invoke();
         _toasts.Activated += OnNotification;
+        _alarm.Act += (id, ack, minutes) =>
+        {
+            // Quiet at once; the next poll brings back anything still ringing.
+            _alarm.Update(Pages.Ringing(_vm.State?.Pages).Where(p => p.Id != id).ToList());
+            _ = _vm.PageAsync(id, ack, minutes);
+        };
 
         _icon.Text = "Telegram MCP";
         _icon.MouseClick += (_, e) =>
@@ -49,6 +57,7 @@ sealed class TrayController : IDisposable
     public void Start()
     {
         _toasts.Listen();
+        _alarm.Listen();
         _vm.Start();
     }
 
@@ -100,7 +109,11 @@ sealed class TrayController : IDisposable
     {
         UpdateIcon();
         _icon.Text = Presenter.Tooltip(_vm.State, _vm.Reachable, _vm.Problem);
-        if (_vm.Reachable && _vm.State is { } s) _toasts.Update(s.Approvals);
+        if (_vm.Reachable && _vm.State is { } s)
+        {
+            _toasts.Update(s.Approvals);
+            _alarm.Update(Pages.Ringing(s.Pages));
+        }
     }
 
     void UpdateIcon()
@@ -135,6 +148,7 @@ sealed class TrayController : IDisposable
     {
         SystemEvents.UserPreferenceChanged -= OnPreferences;
         Toasts.Clear();
+        _alarm.Stop();
         _icon.Visible = false;
         _icon.Dispose();
         if (_current is not null) Native.DestroyIcon(_current.Handle);

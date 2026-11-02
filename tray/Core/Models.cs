@@ -27,11 +27,26 @@ public sealed record UiContact(
     /// <summary>"autoSend" | "requireApproval" | "blocked" | "none"</summary>
     string SendMode, bool AutoReply, string Policy, IReadOnlyList<string> SameChat);
 
+/// <summary>A page: something that needs you now. Rings until it is acked or snoozed here, in the menu bar or on the phone.</summary>
+public sealed record UiPage(
+    string Id,
+    /// <summary>"command" | "keyword" | "claude" | "test"</summary>
+    string Source,
+    /// <summary>"ringing" | "unanswered" | "snoozed"</summary>
+    string State,
+    string From, string? Chat, long? ChatId, long? MessageId, string Reason,
+    DateTimeOffset CreatedAt, DateTimeOffset? SnoozedUntil)
+{
+    public bool Ringing => State != "snoozed";
+}
+
 public sealed record UiState(
     TelegramState Telegram, string? ConfigError, string Footer,
     IReadOnlyList<UiApproval> Approvals, IReadOnlyList<UiSession> Sessions, IReadOnlyList<SentRecord> Recent,
     /// <summary>Null from a daemon older than the Contacts page.</summary>
-    IReadOnlyList<UiContact>? Contacts = null, string? DefaultPolicy = null);
+    IReadOnlyList<UiContact>? Contacts = null, string? DefaultPolicy = null,
+    /// <summary>Null from a daemon older than pages.</summary>
+    IReadOnlyList<UiPage>? Pages = null);
 
 public static class Json
 {

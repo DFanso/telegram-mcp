@@ -129,6 +129,14 @@ public sealed class DaemonApi(HttpClient http, int port, ITokenSource tokens, Ti
         return PostAsync("/ui/contacts", body, ok => ok ? "Saved." : "Not changed.", ct, notFound: Contacts.OlderDaemon);
     }
 
+    /// <summary>Ack a page, or snooze it for 15 or 60 minutes.</summary>
+    public Task<ActionResult> PageAsync(string id, bool ack, int minutes = 15, CancellationToken ct = default)
+    {
+        var body = new JsonObject { ["action"] = ack ? "ack" : "snooze", ["from"] = "tray" };
+        if (!ack) body["minutes"] = minutes == 60 ? 60 : 15;
+        return PostAsync($"/ui/pages/{Uri.EscapeDataString(id)}", body, ok => ok ? (ack ? "Acked." : "Snoozed.") : "That page is gone.", ct);
+    }
+
     sealed record Answer(bool? Ok, string? Text, string? Nickname);
 
     /// <param name="fallback">The text when the daemon gave none, by whether it worked.</param>
