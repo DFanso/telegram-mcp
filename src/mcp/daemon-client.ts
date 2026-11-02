@@ -1,8 +1,8 @@
 import type { ClientMessage, ServerMessage, TelegramState, TgEvent, ToolResult, WatchSpec } from '../shared/protocol'
 
 export interface DaemonClientOptions {
-  /** Built fresh on every attempt (the token file may appear after we start). Null = not ready yet. */
-  url: () => string | null
+  /** Built fresh on every attempt (the token may appear after we start). Null = not ready yet. */
+  url: () => string | null | Promise<string | null>
   sessionId: string
   label: string
   channel: boolean
@@ -32,6 +32,7 @@ export class DaemonClient {
   #waiters = new Set<() => void>()
   #watches: WatchSpec[] = []
   #pokedLaunchd = false
+  #lastUrlError: string | null = null
   telegram: TelegramState | null = null
   onEvent: (e: TgEvent) => void = () => {}
 
@@ -46,7 +47,7 @@ export class DaemonClient {
   }
 
   start(): void {
-    this.#connect()
+    void this.#connect()
   }
 
   close(): void {
@@ -54,9 +55,20 @@ export class DaemonClient {
     this.#ws?.close()
   }
 
-  #connect() {
+  async #connect() {
     if (this.#closed) return
-    const url = this.o.url()
+    let url: string | null
+    try {
+      url = await this.o.url()
+      this.#lastUrlError = null
+    } catch (e) {
+      // Usually the keystore saying no. Say it once, not on every retry.
+      const why = e instanceof Error ? e.message : String(e)
+      if (why !== this.#lastUrlError) this.o.log(why)
+      this.#lastUrlError = why
+      url = null
+    }
+    if (this.#closed) return
     if (!url) {
       this.#retry()
       return
@@ -111,7 +123,7 @@ export class DaemonClient {
       this.#pokedLaunchd = true
       this.o.onUnreachable?.()
     }
-    setTimeout(() => this.#connect(), this.#backoff)
+    setTimeout(() => void this.#connect(), this.#backoff)
     this.#backoff = Math.min(this.#backoff * 2, 5_000)
   }
 

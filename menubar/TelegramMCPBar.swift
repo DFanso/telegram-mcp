@@ -1,9 +1,11 @@
 // Menu bar companion for the telegram-mcp daemon.
 // Shows approvals (approve / deny), which Claude sessions are listening to which chats,
 // and the chats you last sent to (hover a chat to see what was sent).
-// Talks only to the local daemon on 127.0.0.1, authenticated with ~/.config/telegram-mcp/token.
+// Talks only to the local daemon on 127.0.0.1, authenticated with the token the daemon keeps in
+// the login Keychain (service "telegram-mcp"; a file instead with TELEGRAM_MCP_SECRET_STORE=file).
 
 import AppKit
+import Security
 import SwiftUI
 import UserNotifications
 
@@ -84,6 +86,61 @@ struct RecentChat: Identifiable {
 
 // MARK: - Talking to the daemon
 
+/// Reads the daemon's token. Mirrors src/shared/secrets.ts: service "telegram-mcp", account
+/// "token" for the default home and "token@<home>" for any other TELEGRAM_MCP_HOME.
+enum TokenSource {
+    struct Result: Sendable {
+        let token: String?
+        let status: OSStatus
+    }
+
+    static var usesFile: Bool {
+        ProcessInfo.processInfo.environment["TELEGRAM_MCP_SECRET_STORE"]?.lowercased() == "file"
+    }
+
+    static func account(home: URL) -> String {
+        let defaultHome = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/telegram-mcp")
+        return home.path == defaultHome.path ? "token" : "token@\(home.path)"
+    }
+
+    /// Blocks while macOS asks "allow access?" the first time, so call it off the main thread.
+    static func read(home: URL) -> Result {
+        if usesFile {
+            let t = (try? String(contentsOf: home.appendingPathComponent("token"), encoding: .utf8))?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            return Result(token: t?.isEmpty == false ? t : nil, status: t == nil ? errSecItemNotFound : errSecSuccess)
+        }
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: "telegram-mcp",
+            kSecAttrAccount as String: account(home: home),
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne,
+        ]
+        var out: CFTypeRef?
+        let status = SecItemCopyMatching(query as CFDictionary, &out)
+        guard status == errSecSuccess, let data = out as? Data, let t = String(data: data, encoding: .utf8) else {
+            return Result(token: nil, status: status == errSecSuccess ? errSecDecode : status)
+        }
+        let token = t.trimmingCharacters(in: .whitespacesAndNewlines)
+        return Result(token: token.isEmpty ? nil : token, status: status)
+    }
+
+    static func problem(_ status: OSStatus) -> String {
+        switch status {
+        case errSecItemNotFound:
+            return "No token yet. Is the daemon installed? (tgmcp install)"
+        case errSecUserCanceled, errSecAuthFailed:
+            return "Keychain access was denied. Quit and reopen the app, then choose Always Allow."
+        case errSecInteractionNotAllowed:
+            return "The Keychain is locked. Unlock it (log in) and this retries by itself."
+        default:
+            let why = SecCopyErrorMessageString(status, nil) as String? ?? "OSStatus \(status)"
+            return "Could not read the token from the Keychain: \(why)"
+        }
+    }
+}
+
 @MainActor
 final class Store: ObservableObject {
     @Published var state: UiState?
@@ -114,13 +171,32 @@ final class Store: ObservableObject {
         Task { await poll() }
     }
 
-    private var token: String? {
-        (try? String(contentsOf: home.appendingPathComponent("token"), encoding: .utf8))?
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+    /// Read once and kept in memory. Cleared when the daemon says no, so a new token is picked up.
+    private var token: String?
+    private var tokenProblem: String?
+    private var readingToken = false
+    private var tokenRetryAt = Date.distantPast
+
+    private func currentToken() async -> String? {
+        if let token { return token }
+        // One read at a time, and after a "Deny" wait a minute: a prompt every 2 s would be awful.
+        guard !readingToken, Date() >= tokenRetryAt else { return nil }
+        readingToken = true
+        defer { readingToken = false }
+        let home = self.home
+        let result = await Task.detached { TokenSource.read(home: home) }.value
+        if let t = result.token {
+            token = t
+            tokenProblem = nil
+            return t
+        }
+        tokenProblem = TokenSource.problem(result.status)
+        tokenRetryAt = Date().addingTimeInterval(result.status == errSecItemNotFound ? 2 : 60)
+        return nil
     }
 
-    private func request(_ path: String, method: String = "GET", body: [String: String]? = nil) -> URLRequest? {
-        guard let token, let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return nil }
+    private func request(_ path: String, method: String = "GET", body: [String: String]? = nil) async -> URLRequest? {
+        guard let token = await currentToken(), let url = URL(string: "http://127.0.0.1:\(port)\(path)") else { return nil }
         var req = URLRequest(url: url, timeoutInterval: 4)
         req.httpMethod = method
         req.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
@@ -132,14 +208,16 @@ final class Store: ObservableObject {
     }
 
     func poll() async {
-        guard let req = request("/ui/state") else {
+        guard let req = await request("/ui/state") else {
             reachable = false
-            problem = "No token yet. Is the daemon installed? (tgmcp install)"
+            problem = tokenProblem ?? "Reading the token from the Keychain…"
             return
         }
         do {
             let (data, resp) = try await URLSession.shared.data(for: req)
-            guard (resp as? HTTPURLResponse)?.statusCode == 200 else {
+            let code = (resp as? HTTPURLResponse)?.statusCode
+            guard code == 200 else {
+                if code == 401 { token = nil } // the token changed: read it again next time
                 reachable = false
                 problem = "The daemon refused the request (token mismatch?)."
                 return
@@ -160,7 +238,10 @@ final class Store: ObservableObject {
         var body = ["decision": approve ? "approve" : "deny"]
         if let remember { body["remember"] = remember }
         if let nickname, !nickname.trimmingCharacters(in: .whitespaces).isEmpty { body["nickname"] = nickname }
-        guard let req = request("/ui/approvals/\(id)", method: "POST", body: body) else { return }
+        guard let req = await request("/ui/approvals/\(id)", method: "POST", body: body) else {
+            show(tokenProblem ?? "No token for the daemon yet.")
+            return
+        }
         busy.insert(id)
         defer { busy.remove(id) }
         do {
@@ -277,8 +358,11 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate {
 // MARK: - Helpers
 
 let isSnapshot = CommandLine.arguments.contains("--snapshot")
-/// `SNAPSHOT_HOVER=1` starts approval cards and recent chats expanded, as if hovered.
-let snapshotHover = ProcessInfo.processInfo.environment["SNAPSHOT_HOVER"] == "1"
+/// `SNAPSHOT_HOVER=1` starts approval cards and recent chats expanded, as if hovered;
+/// `approvals` or `recent` expands only that section.
+let snapshotHoverMode = ProcessInfo.processInfo.environment["SNAPSHOT_HOVER"] ?? ""
+let snapshotHoverApprovals = ["1", "approvals"].contains(snapshotHoverMode)
+let snapshotHoverRecent = ["1", "recent"].contains(snapshotHoverMode)
 
 private let isoWithFraction: ISO8601DateFormatter = {
     let f = ISO8601DateFormatter()
@@ -480,7 +564,7 @@ struct PanelView: View {
 struct ApprovalCard: View {
     @EnvironmentObject var store: Store
     let item: UiApproval
-    @State private var hover = snapshotHover
+    @State private var hover = snapshotHoverApprovals
     @State private var nick: String
 
     init(item: UiApproval) {
@@ -609,7 +693,7 @@ struct SessionRow: View {
 struct RecentChatRow: View {
     @EnvironmentObject var store: Store
     let chat: RecentChat
-    @State private var hover = snapshotHover
+    @State private var hover = snapshotHoverRecent
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {

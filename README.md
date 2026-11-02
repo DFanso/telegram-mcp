@@ -27,6 +27,7 @@ bun install
 bun link                          # puts `tgmcp` on your PATH (or use `bun run src/cli.ts …`)
 tgmcp install                     # launchd agent: starts the daemon now and at every login
 tgmcp login                       # in a terminal: api_id/api_hash (if not saved yet), phone, code, 2FA
+                                  # (tgmcp login --credentials to enter api_id/api_hash again)
 tgmcp menubar                     # menu bar app: approvals, listening sessions, recent sends (starts at login)
 tgmcp mcp-add                     # prints the `claude mcp add` command for your paths
 tgmcp status
@@ -34,7 +35,27 @@ tgmcp status
 
 `tgmcp call <tool> '<json>'` runs any tool as a one-off session, e.g. `tgmcp call telegram_get_rules`.
 
-API credentials come from `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` if set, otherwise `credentials.json` (created by `tgmcp login`). Get them at https://my.telegram.org → API development tools.
+API credentials come from `TELEGRAM_API_ID` / `TELEGRAM_API_HASH` if set, otherwise the OS keystore (`tgmcp login` saves them there). Get them at https://my.telegram.org → API development tools.
+
+## Secrets
+
+Nothing secret is kept in a plain file. Three secrets go to the operating system's keystore through `Bun.secrets`, under the service `telegram-mcp`: the login Keychain on macOS, Credential Manager on Windows, and the Secret Service (GNOME Keyring, KWallet, via libsecret) on Linux.
+
+| Secret | What it is |
+| --- | --- |
+| `session-key` | Encrypts the Telegram auth key inside `session.db` (AES-256-GCM) |
+| `token` | Shared secret for the local API, so web pages and other users can't talk to the daemon |
+| `credentials` | api_id / api_hash |
+
+**Why the session key matters.** A Telegram auth key *is* your login: whoever copies it is you, with no code and no 2FA asked. `session.db` still holds the peer cache and update state, but its auth key rows are sealed with `session-key`. A copy of the folder alone (a backup, a synced dotfiles repo, a stolen disk image, or an infostealer that grabs `~/.config`) doesn't give anyone your account.
+
+**What it doesn't stop.** Code that runs as you and asks the keystore can still get the secrets. On macOS the Keychain only hands them silently to the app that created them, which is the `bun` binary, so any script you run with `bun` could read them. On Linux and Windows any process in your session can. The keystore protects the secrets at rest. It doesn't sandbox your own account.
+
+**Upgrading from an older version.** On its first start the daemon moves `token` and `credentials.json` into the keystore, checks they read back, and deletes the files. It seals the auth key in `session.db` and scrubs the old copy (secure delete, `VACUUM`, WAL truncated). The token value stays the same, so the Monitor URLs of running sessions keep working. Proxies and the menu bar app started before the upgrade still look for the file: run `/mcp` → reconnect in open Claude sessions and `tgmcp menubar` once. The unsealed key may still sit in older backups. To retire it, end the session in Telegram (Settings → Devices) and run `tgmcp login` again.
+
+**The menu bar app** reads the token from the Keychain itself. The first time, and again after each rebuild (`tgmcp menubar`), macOS asks whether "TelegramMCPBar" may use the "telegram-mcp" item: choose **Always Allow**.
+
+**No keystore?** On a machine without one (a headless Linux box, say), set `TELEGRAM_MCP_SECRET_STORE=file` for the daemon, the proxies and the CLI. The secrets then go to `token`, `credentials.json` and `session.key` in the home folder, mode 0600. There is no automatic fallback: if the keystore fails, the error says so instead of quietly writing files. `tgmcp status` shows where the secrets are and warns about leftover plain files.
 
 ## Files
 
@@ -43,11 +64,10 @@ All in `~/.config/telegram-mcp/` (folder mode 0700; override with `TELEGRAM_MCP_
 | File | What |
 | --- | --- |
 | `config.json` | The rules file (below). Edits apply as soon as you save. A broken edit keeps the last good version and shows up in `tgmcp status`. |
-| `credentials.json` | api_id / api_hash |
-| `session.db` | The Telegram login. Treat it like a password. |
-| `token` | Secret for the local API, so web pages and other users can't talk to the daemon |
+| `session.db` | mtcute's session: peer cache, update state, and the auth key sealed with `session-key` |
 | `daemon.log` | The daemon log (`tgmcp logs`) |
 | `recent.json` | The last 20 sent messages (shown in the menu bar) |
+| `token`, `credentials.json`, `session.key` | Only with `TELEGRAM_MCP_SECRET_STORE=file` |
 
 The daemon listens on `127.0.0.1:47823` (`TELEGRAM_MCP_PORT`).
 
@@ -110,7 +130,7 @@ Nothing is sent unless you accept. Drafts expire after 20 minutes. The rules are
 
 `telegram_watch` subscribes the session to a chat on the autoReply list until it calls `telegram_unwatch` or ends. Each new incoming message reaches every subscribed session once, by the first of these that is available to that session:
 
-1. **Monitor** (the default): `telegram_watch` returns a `ws://127.0.0.1…/events?session=…` URL, and Claude opens its Monitor tool on it. Each message becomes a notification in the session. A Monitor stops after 30 minutes, or when the daemon restarts. Claude is told to restart it straight away with the same URL whenever it ends while watches are active (`telegram_status` shows the URL again). Nothing is lost in between, because messages queue up and are flushed when the Monitor reconnects.
+1. **Monitor** (the default): `telegram_watch` returns a `ws://127.0.0.1…/events?session=…&key=…` URL, and Claude opens its Monitor tool on it. The key opens that one session's stream and nothing else, so the URL (which Claude Code keeps in its transcripts) never carries the token. Each message becomes a notification in the session. A Monitor stops after 30 minutes, or when the daemon restarts. Claude is told to restart it straight away with the same URL whenever it ends while watches are active (`telegram_status` shows the URL again). Nothing is lost in between, because messages queue up and are flushed when the Monitor reconnects.
 2. **Channel push** (optional: `tgmcp mcp --channel`, plus `claude --dangerously-load-development-channels server:<name>`): messages appear in the session by themselves as `<channel>` events, with no Monitor needed. This uses Claude Code's channels research preview.
 3. **Queue**: `telegram_get_events` drains it. Every other tool result also mentions when messages are waiting.
 
@@ -121,9 +141,18 @@ A session's watches outlive a daemon restart, because the proxy re-sends them. T
 `tgmcp menubar` builds `menubar/build/Telegram MCP.app` (SwiftUI, no Dock icon) and starts it at login. Choosing Quit keeps it closed until your next login. It shows:
 
 - the connection, with a warning icon when the daemon or Telegram is down
-- **Waiting for approval**: the exact text, recipient, reason and asking session, with Approve / Deny. A new chat gets an editable nickname and Deny / Ask every time / Always allow instead. Each new draft also posts a notification with the same buttons.
+- **Waiting for approval**: the exact text, recipient, reason and asking session, with Approve / Deny. A new chat gets an editable nickname and Deny / Ask every time / Always allow instead.
 - **Listening**: each session that is watching chats, and whether its Monitor is connected
 - **Recently sent**: the last 5 chats you sent to. Hover a chat to see its messages, when they went, how they were approved, and from which session.
+
+<p>
+  <img src="docs/menubar-approvals.png" width="370" alt="The menu bar panel: two drafts waiting for approval (one to a saved group, one to a new chat with Deny, Ask every time and Always allow), two listening sessions, and the recently sent chats">
+  <img src="docs/menubar-history.png" width="370" alt="Recently sent, expanded: each chat lists the messages sent there, when, how they were approved and from which session">
+</p>
+
+Each new draft also posts a notification, so you can decide without opening the panel. Its **Options** menu has the same choices as the panel: **Approve** / **Deny** for a chat that is already on a list, and **Approve, ask next time** / **Approve, always allow** / **Deny** for the first message to a new chat.
+
+<img src="docs/notification-options.png" width="384" alt="Two draft notifications; the Options menu of a first message to a new chat shows Approve, ask next time; Approve, always allow; and Deny">
 
 Hover a draft to see all of it. The panel never runs past the bottom of the screen: when a long draft (or many of them) would, the middle scrolls and the header and footer stay put.
 
@@ -135,6 +164,15 @@ The menu bar icon shows the number of drafts waiting. `tgmcp menubar uninstall` 
 bun test          # unit tests + an end-to-end test that spawns the real proxy against a daemon with a fake Telegram
 bun run typecheck
 bun scripts/demo-daemon.ts      # daemon with a fake Telegram and sample state, for working on the menu bar app
+```
+
+The screenshots above come from the demo daemon, rendered offscreen by the app itself:
+
+```sh
+APP="menubar/build/Telegram MCP.app/Contents/MacOS/TelegramMCPBar"
+export TELEGRAM_MCP_HOME=/tmp/tgmcp-demo TELEGRAM_MCP_PORT=47901 TELEGRAM_MCP_SECRET_STORE=file SNAPSHOT_DARK=1
+"$APP" --snapshot docs/menubar-approvals.png
+SNAPSHOT_HOVER=recent SNAPSHOT_SCREEN_HEIGHT=4000 "$APP" --snapshot /tmp/history-full.png   # SNAPSHOT_HOVER: 1, approvals or recent
 ```
 
 ## License

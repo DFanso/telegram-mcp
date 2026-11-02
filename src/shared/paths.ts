@@ -7,20 +7,25 @@ export const DEFAULT_PORT = 47823
 export interface Paths {
   home: string
   config: string
+  /** The next three are only used with TELEGRAM_MCP_SECRET_STORE=file (or found from an older version). */
   credentials: string
-  session: string
   token: string
+  sessionKey: string
+  session: string
   log: string
 }
 
+export const defaultHome = () => join(homedir(), '.config', 'telegram-mcp')
+
 /** Everything lives in one folder, `~/.config/telegram-mcp` unless TELEGRAM_MCP_HOME says otherwise. */
-export function getPaths(home = process.env.TELEGRAM_MCP_HOME ?? join(homedir(), '.config', 'telegram-mcp')): Paths {
+export function getPaths(home = process.env.TELEGRAM_MCP_HOME || defaultHome()): Paths {
   return {
     home,
     config: join(home, 'config.json'),
     credentials: join(home, 'credentials.json'),
-    session: join(home, 'session.db'),
     token: join(home, 'token'),
+    sessionKey: join(home, 'session.key'),
+    session: join(home, 'session.db'),
     log: join(home, 'daemon.log'),
   }
 }

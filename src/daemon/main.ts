@@ -1,9 +1,11 @@
 import { join } from 'node:path'
 import { ConfigStore, isListed } from '../shared/config'
-import { ensureHome, ensureToken, loadCredentials, makeLogger } from '../shared/files'
+import { ensureHome, makeLogger } from '../shared/files'
 import { getPaths, getPort, type Paths } from '../shared/paths'
+import { ensureToken, loadCredentials, openSecretStore, type SecretStore } from '../shared/secrets'
 import { Approvals } from './approvals'
-import { startServer } from './server'
+import { eventsKey, startServer } from './server'
+import { openSessionStorage } from './session-store'
 import { Service, describeMessage } from './service'
 import { SessionHub, type HubOptions } from './sessions'
 import { MtcuteTelegram, type TelegramPort } from './telegram'
@@ -15,17 +17,24 @@ export interface DaemonOptions {
   telegram?: TelegramPort
   hub?: HubOptions
   log?: (msg: string) => void
+  /** Defaults to the OS keystore (or files with TELEGRAM_MCP_SECRET_STORE=file). */
+  secrets?: SecretStore
 }
 
 export async function createDaemon(o: DaemonOptions) {
   const log = o.log ?? makeLogger(o.paths)
   const startedAt = Date.now()
   ensureHome(o.paths)
-  const token = ensureToken(o.paths)
+  const secrets = o.secrets ?? openSecretStore(o.paths)
+  const token = await ensureToken(secrets)
   const store = new ConfigStore(o.paths.config, log)
   const tg =
     o.telegram ??
-    new MtcuteTelegram({ sessionPath: o.paths.session, loadCredentials: () => loadCredentials(o.paths), log })
+    new MtcuteTelegram({
+      openStorage: () => openSessionStorage(o.paths.session, secrets, { log }),
+      loadCredentials: () => loadCredentials(secrets),
+      log,
+    })
   const hub = new SessionHub({ log, ...o.hub })
   const approvals = new Approvals()
 
@@ -35,12 +44,23 @@ export async function createDaemon(o: DaemonOptions) {
     tg,
     hub,
     approvals,
-    eventsUrl: sid => `ws://127.0.0.1:${port}/events?session=${sid}&token=${token}`,
+    // A key that opens this one session's stream and nothing else: the URL ends up in Claude transcripts.
+    eventsUrl: sid => `ws://127.0.0.1:${port}/events?session=${sid}&key=${eventsKey(token, sid)}`,
     recentPath: join(o.paths.home, 'recent.json'),
   })
 
   // Bind first: if another daemon already owns the port, fail before touching the Telegram session.
-  const server = startServer({ port: o.port, token, service, hub, tg, store, log, startedAt })
+  const server = startServer({
+    port: o.port,
+    token,
+    secrets: { kind: secrets.kind, where: secrets.where },
+    service,
+    hub,
+    tg,
+    store,
+    log,
+    startedAt,
+  })
   port = server.port ?? o.port
   store.watch()
 

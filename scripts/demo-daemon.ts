@@ -1,12 +1,14 @@
 // A daemon with a fake Telegram and some state, for working on the menu bar app without a real account.
 //   bun scripts/demo-daemon.ts            then, in another shell:
-//   TELEGRAM_MCP_HOME=/tmp/tgmcp-demo TELEGRAM_MCP_PORT=47901 "menubar/build/Telegram MCP.app/Contents/MacOS/TelegramMCPBar"
+//   TELEGRAM_MCP_HOME=/tmp/tgmcp-demo TELEGRAM_MCP_PORT=47901 TELEGRAM_MCP_SECRET_STORE=file "menubar/build/Telegram MCP.app/Contents/MacOS/TelegramMCPBar"
+// The demo keeps its token in a file, so it never adds entries to your Keychain.
 import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createDaemon } from '../src/daemon/main'
 import { DaemonClient } from '../src/mcp/daemon-client'
 import { getPaths } from '../src/shared/paths'
 import { ANNA, FakeTelegram, TEAM_QA, LEO, LEONARDO } from '../test/fake-telegram'
 
+process.env.TELEGRAM_MCP_SECRET_STORE = 'file'
 const home = '/tmp/tgmcp-demo'
 rmSync(home, { recursive: true, force: true })
 mkdirSync(home, { recursive: true })

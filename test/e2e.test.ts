@@ -7,6 +7,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { ElicitRequestSchema } from '@modelcontextprotocol/sdk/types.js'
 import { z } from 'zod'
 import { createDaemon } from '../src/daemon/main'
+import { eventsKey } from '../src/daemon/server'
 import { getPaths } from '../src/shared/paths'
 import { ANNA, FakeTelegram, TEAM_QA, LEO } from './fake-telegram'
 
@@ -277,6 +278,24 @@ describe('proxy <-> daemon', () => {
     const ws = await openWs(url)
     expect(daemon.hub.has('s_early123')).toBe(true)
     ws.close()
+  })
+
+  test('the Monitor URL carries a per-session key, never the token', async () => {
+    const client = await spawnProxy()
+    const r = await call(client, 'telegram_watch', { chat: 'anna' })
+    const url = /ws:\/\/\S+/.exec(r.text)?.[0] ?? ''
+    expect(url).toContain('key=')
+    expect(url).not.toContain(daemon.token)
+    const sid = new URL(url).searchParams.get('session')!
+    expect(new URL(url).searchParams.get('key')).toBe(eventsKey(daemon.token, sid))
+    const ws = await openWs(url)
+    ws.close()
+    // The key opens its own session only, and is no good for anything else.
+    await expect(openWs(`ws://127.0.0.1:${port}/events?session=s_other123&key=${eventsKey(daemon.token, sid)}`)).rejects.toThrow()
+    const status = await fetch(`http://127.0.0.1:${port}/status?token=${eventsKey(daemon.token, sid)}`)
+    expect(status.status).toBe(401)
+    await call(client, 'telegram_unwatch', { all: true })
+    await client.close()
   })
 
   test('rejects requests without the token', async () => {

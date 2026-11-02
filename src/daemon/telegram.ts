@@ -1,4 +1,4 @@
-import { Chat, TelegramClient, User, html, md, type Message, type Peer, type tl } from '@mtcute/bun'
+import { Chat, TelegramClient, User, html, md, type ITelegramStorageProvider, type Message, type Peer, type tl } from '@mtcute/bun'
 import type {
   DialogInfo,
   IncomingMessage,
@@ -6,7 +6,8 @@ import type {
   PeerInfo,
   TelegramState,
 } from '../shared/protocol'
-import type { Credentials } from '../shared/files'
+import type { Credentials } from '../shared/secrets'
+import { SessionLockedError } from './session-store'
 
 export interface SendOptions {
   replyTo?: number
@@ -122,8 +123,10 @@ const sleep = (ms: number) => new Promise(r => setTimeout(r, ms))
 // ---- the real client, with a supervisor around it ------------------------------------
 
 export interface MtcuteOptions {
-  sessionPath: string
-  loadCredentials: () => Credentials | null
+  /** Opens session.db for one client. A SessionLockedError means only `tgmcp login` can help. */
+  openStorage: () => Promise<ITelegramStorageProvider>
+  /** Reads api_id/api_hash. Throws when the keystore can't be read (retried with backoff). */
+  loadCredentials: () => Promise<Credentials | null>
   log: (msg: string) => void
   /** How often the watchdog checks the connection. */
   tickMs?: number
@@ -209,20 +212,44 @@ export class MtcuteTelegram implements TelegramPort {
   async #rebuildLoop(reason: string) {
     this.#o.log(`telegram: (re)connecting, reason: ${reason}`)
     let attempt = 0
+    const backoff = async (why: string) => {
+      attempt++
+      const delay = Math.min(60_000, 1_000 * 2 ** Math.min(attempt, 6))
+      this.#state.lastError = `${why} (retrying in ${Math.round(delay / 1000)}s)`
+      this.#o.log(`telegram: connect failed: ${this.#state.lastError}`)
+      await sleep(delay)
+    }
     while (!this.#stopped) {
-      const creds = this.#o.loadCredentials()
-      if (!creds) {
+      let creds: Credentials | null
+      let storage: ITelegramStorageProvider
+      try {
+        creds = await this.#o.loadCredentials()
+        if (!creds) {
+          await this.#teardown()
+          this.#setPhase('no_credentials', { lastError: 'No API id/hash. Run `tgmcp login`.' })
+          return
+        }
+        // The old client holds session.db open; close it before opening it again.
         await this.#teardown()
-        this.#setPhase('no_credentials', { lastError: 'No API id/hash. Run `tgmcp login`.' })
-        return
+        storage = await this.#o.openStorage()
+      } catch (e) {
+        if (e instanceof SessionLockedError) {
+          await this.#teardown()
+          this.#setPhase('logged_out', { me: null, lastError: e.message })
+          return
+        }
+        // The keystore may be locked or waiting for a click; that passes, so keep trying.
+        await this.#teardown()
+        this.#setPhase('connecting')
+        await backoff(errText(e))
+        continue
       }
-      await this.#teardown()
       this.#setPhase('connecting')
       this.#notConnectedSince ??= Date.now()
       const client = new TelegramClient({
         apiId: creds.apiId,
         apiHash: creds.apiHash,
-        storage: this.#o.sessionPath,
+        storage,
         updates: { catchUp: true },
         logLevel: 2,
       })
@@ -247,14 +274,10 @@ export class MtcuteTelegram implements TelegramPort {
         }
         if (isBadCredentialsError(e)) {
           await this.#teardown()
-          this.#setPhase('no_credentials', { me: null, lastError: `Telegram rejected the api_id/api_hash (${errText(e)}). Fix credentials.json, then \`tgmcp restart\`.` })
+          this.#setPhase('no_credentials', { me: null, lastError: `Telegram rejected the api_id/api_hash (${errText(e)}). Run \`tgmcp login --credentials\` to enter them again.` })
           return
         }
-        attempt++
-        const delay = Math.min(60_000, 1_000 * 2 ** Math.min(attempt, 6))
-        this.#state.lastError = `${errText(e)} (retrying in ${Math.round(delay / 1000)}s)`
-        this.#o.log(`telegram: connect failed: ${this.#state.lastError}`)
-        await sleep(delay)
+        await backoff(errText(e))
       }
     }
   }

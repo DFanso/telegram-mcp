@@ -1,4 +1,4 @@
-import { timingSafeEqual } from 'node:crypto'
+import { createHmac, timingSafeEqual } from 'node:crypto'
 import type { ServerWebSocket } from 'bun'
 import type { ConfigStore } from '../shared/config'
 import type { ClientMessage, ServerMessage } from '../shared/protocol'
@@ -14,6 +14,8 @@ interface WsData {
 export interface ServerOptions {
   port: number
   token: string
+  /** Shown in /status. */
+  secrets: { kind: string; where: string }
   service: Service
   hub: SessionHub
   tg: TelegramPort
@@ -30,8 +32,17 @@ function sameToken(given: string | null, token: string): boolean {
 }
 
 /**
- * Localhost only. Everything except /health needs the token from the token file, which also
- * keeps web pages in a browser (which can reach 127.0.0.1) from reading your messages.
+ * The key in a Monitor URL. It opens that one session's event stream and nothing else, so the
+ * URL (which the model sees, and Claude Code keeps in its transcripts) never carries the token.
+ */
+export function eventsKey(token: string, sessionId: string): string {
+  return createHmac('sha256', token).update(`events:${sessionId}`).digest('hex').slice(0, 32)
+}
+
+/**
+ * Localhost only. Everything except /health needs the token (kept in the OS keystore), which
+ * also keeps web pages in a browser (which can reach 127.0.0.1) from reading your messages.
+ * /events also takes its session's own key instead (see eventsKey).
  *
  *   GET  /health                 liveness, no auth
  *   GET  /status                 JSON status
@@ -39,7 +50,7 @@ function sameToken(given: string | null, token: string): boolean {
  *   GET  /ui/state               what the menu bar app shows
  *   POST /ui/approvals/:id       {"decision": "approve" | "deny", "remember"?: "autoSend" | "requireApproval", "nickname"?: "…"}
  *   WS   /bridge                 one per Claude session: the MCP proxy's tool calls and pushes
- *   WS   /events?session=ID      Monitor stream: one text frame per watched message
+ *   WS   /events?session=ID&key=K  Monitor stream: one text frame per watched message
  */
 export function startServer(o: ServerOptions) {
   const send = (ws: ServerWebSocket<WsData>, msg: ServerMessage) => ws.send(JSON.stringify(msg))
@@ -52,17 +63,24 @@ export function startServer(o: ServerOptions) {
       if (url.pathname === '/health') return Response.json({ ok: true, service: 'telegram-mcp' })
 
       const bearer = req.headers.get('authorization')?.replace(/^Bearer\s+/i, '') ?? null
-      if (!sameToken(bearer ?? url.searchParams.get('token'), o.token)) return new Response('unauthorized\n', { status: 401 })
+      const authed = sameToken(bearer ?? url.searchParams.get('token'), o.token)
 
-      if (url.pathname === '/bridge') {
-        return server.upgrade(req, { data: { kind: 'bridge', sessionId: null } })
+      if (url.pathname === '/events') {
+        const sid = url.searchParams.get('session')
+        if (!sid || !/^s_[a-z0-9]{8}$/.test(sid)) {
+          return new Response(authed ? 'bad session id\n' : 'unauthorized\n', { status: authed ? 400 : 401 })
+        }
+        if (!authed && !sameToken(url.searchParams.get('key'), eventsKey(o.token, sid))) {
+          return new Response('unauthorized\n', { status: 401 })
+        }
+        return server.upgrade(req, { data: { kind: 'events', sessionId: sid } })
           ? undefined
           : new Response('expected a websocket\n', { status: 400 })
       }
-      if (url.pathname === '/events') {
-        const sid = url.searchParams.get('session')
-        if (!sid || !/^s_[a-z0-9]{8}$/.test(sid)) return new Response('bad session id\n', { status: 400 })
-        return server.upgrade(req, { data: { kind: 'events', sessionId: sid } })
+      if (!authed) return new Response('unauthorized\n', { status: 401 })
+
+      if (url.pathname === '/bridge') {
+        return server.upgrade(req, { data: { kind: 'bridge', sessionId: null } })
           ? undefined
           : new Response('expected a websocket\n', { status: 400 })
       }
@@ -93,6 +111,7 @@ export function startServer(o: ServerOptions) {
           startedAt: new Date(o.startedAt).toISOString(),
           telegram: o.tg.state(),
           config: { path: o.store.path, error: o.store.error() },
+          secrets: o.secrets,
           menubar: o.service.uiActive(),
           sessions: o.hub.summary(),
         })

@@ -2,8 +2,9 @@
 import { spawn } from 'node:child_process'
 import { resolve } from 'node:path'
 import { createInterface } from 'node:readline/promises'
-import { ensureHome, loadCredentials, readToken, saveCredentials } from './shared/files'
+import { ensureHome } from './shared/files'
 import { getPaths, getPort } from './shared/paths'
+import { FileSecretStore, loadCredentials, openSecretStore, readToken, saveCredentials } from './shared/secrets'
 import { ConfigStore } from './shared/config'
 
 const HELP = `tgmcp: always-on Telegram daemon + per-session MCP bridge
@@ -13,6 +14,7 @@ const HELP = `tgmcp: always-on Telegram daemon + per-session MCP bridge
   tgmcp restart       restart the daemon
   tgmcp status        daemon, Telegram and session status
   tgmcp login         log in to Telegram (interactive; run it in a terminal)
+  tgmcp login --credentials   enter api_id/api_hash again, then log in
   tgmcp logs          follow the daemon log
   tgmcp config        print the rules file path
   tgmcp menubar       build and start the menu bar app (approvals, listeners, recent sends) at login
@@ -22,10 +24,11 @@ const HELP = `tgmcp: always-on Telegram daemon + per-session MCP bridge
   tgmcp daemon        run the daemon in the foreground
   tgmcp mcp [--channel]  stdio MCP server (Claude Code starts this, one per session)
 
-Files live in ${getPaths().home} (override with TELEGRAM_MCP_HOME). Port ${getPort()} (TELEGRAM_MCP_PORT).`
+Files live in ${getPaths().home} (override with TELEGRAM_MCP_HOME). Port ${getPort()} (TELEGRAM_MCP_PORT).
+Secrets (login key, API token, api_hash) live in the OS keystore; TELEGRAM_MCP_SECRET_STORE=file keeps them in files.`
 
 async function daemonFetch(path: string, init?: RequestInit): Promise<Response> {
-  const token = readToken(getPaths())
+  const token = await readToken(openSecretStore(getPaths()))
   return fetch(`http://127.0.0.1:${getPort()}${path}`, {
     ...init,
     headers: { ...(init?.headers ?? {}), authorization: `Bearer ${token ?? ''}` },
@@ -42,8 +45,22 @@ async function status() {
     startedAt: string
     telegram: { phase: string; me: { name: string; username: string | null; id: number } | null; reconnects: number; lastError: string | null; since: number }
     config: { path: string; error: string | null }
+    secrets?: { kind: string; where: string }
     menubar: boolean
     sessions: { id: string; label: string; connected: boolean; channel: boolean; monitors: number; watches: number; pending: number }[]
+  }
+  const paths = getPaths()
+  try {
+    const secrets = openSecretStore(paths)
+    console.log(`secrets: ${secrets.where}`)
+    const left = new FileSecretStore(paths).present()
+    if (secrets.kind === 'keychain' && left.length > 0) {
+      console.log(`  plain-text copies still on disk: ${left.join(', ')} (moved into the keystore the next time the daemon, a proxy or the CLI reads them)`)
+    }
+  } catch (e) {
+    console.log(`secrets: ${e instanceof Error ? e.message : e}`)
+    process.exitCode = 1
+    return
   }
   try {
     const res = await daemonFetch('/status')
@@ -60,6 +77,9 @@ async function status() {
     `telegram: ${t.phase}${t.me ? ` as ${t.me.name}${t.me.username ? ` (@${t.me.username})` : ''}` : ''}, ${t.reconnects} reconnects${t.lastError && t.phase !== 'connected' ? `\n  last error: ${t.lastError}` : ''}`,
   )
   console.log(`config: ${body.config.path}${body.config.error ? `\n  ${body.config.error}` : ''}`)
+  if (body.secrets && body.secrets.kind !== openSecretStore(paths).kind) {
+    console.log(`  the daemon keeps its secrets in ${body.secrets.where}: restart it (tgmcp install) so both agree`)
+  }
   console.log(`menu bar app: ${body.menubar ? 'connected (approvals go there)' : 'not running (approvals use the Claude Code dialog)'}`)
   console.log(`sessions: ${body.sessions.length}`)
   for (const s of body.sessions) {
@@ -69,19 +89,24 @@ async function status() {
   }
 }
 
-async function login() {
+async function login(askCredentials: boolean) {
   const paths = getPaths()
   ensureHome(paths)
+  const secrets = openSecretStore(paths)
+  // Never run a second client next to a connected daemon: two connections on one auth key at
+  // once can get the session killed by Telegram.
+  let connectedAs: string | null = null
   try {
     const res = await daemonFetch('/status')
     const body = (await res.json()) as { telegram: { phase: string; me: { name: string } | null } }
-    if (body.telegram.phase === 'connected') {
-      console.log(`Already logged in as ${body.telegram.me?.name}. Nothing to do.`)
-      return
-    }
+    if (body.telegram.phase === 'connected') connectedAs = body.telegram.me?.name ?? 'your account'
   } catch {}
+  if (connectedAs && !askCredentials) {
+    console.log(`Already logged in as ${connectedAs}. Nothing to do.`)
+    return
+  }
 
-  let creds = loadCredentials(paths)
+  let creds = askCredentials ? null : await loadCredentials(secrets)
   if (!creds) {
     const rl = createInterface({ input: process.stdin, output: process.stdout })
     console.log('Telegram API credentials (from https://my.telegram.org → API development tools).')
@@ -90,12 +115,19 @@ async function login() {
     rl.close()
     if (!apiId || !apiHash) throw new Error('Both api_id and api_hash are needed.')
     creds = { apiId, apiHash }
-    saveCredentials(paths, creds)
-    console.log(`Saved to ${paths.credentials}`)
+    await saveCredentials(secrets, creds)
+    console.log(`Saved to ${secrets.where}`)
+  }
+  if (connectedAs) {
+    console.log(`The daemon is logged in as ${connectedAs}. Run \`tgmcp restart\` to use the new credentials.`)
+    return
   }
 
   const { TelegramClient } = await import('@mtcute/bun')
-  const tg = new TelegramClient({ apiId: creds.apiId, apiHash: creds.apiHash, storage: paths.session, updates: false })
+  const { openSessionStorage } = await import('./daemon/session-store')
+  // fresh: a session.db whose key is gone can't be used, so start over instead of failing.
+  const storage = await openSessionStorage(paths.session, secrets, { fresh: true, log: m => console.log(m) })
+  const tg = new TelegramClient({ apiId: creds.apiId, apiHash: creds.apiHash, storage, updates: false })
   const me = await tg.start({
     phone: () => tg.input('Phone number (international format, e.g. +94771234567): '),
     code: () => tg.input('Login code (sent to your Telegram app): '),
@@ -123,7 +155,7 @@ function mcpAdd() {
 }
 
 const [cmd, ...rest] = process.argv.slice(2)
-// The session file is a login for your account: everything we create is private to you.
+// Everything we create in the home folder is private to you.
 process.umask(0o077)
 switch (cmd) {
   case 'daemon': {
@@ -159,7 +191,7 @@ switch (cmd) {
     await status()
     break
   case 'login':
-    await login()
+    await login(rest.includes('--credentials'))
     break
   case 'logs': {
     const p = getPaths()
@@ -178,10 +210,10 @@ switch (cmd) {
     }
     const { DaemonClient } = await import('./mcp/daemon-client')
     const { newId } = await import('./daemon/sessions')
-    const paths = getPaths()
+    const secrets = openSecretStore(getPaths())
     const client = new DaemonClient({
-      url: () => {
-        const token = readToken(paths)
+      url: async () => {
+        const token = await readToken(secrets)
         return token ? `ws://127.0.0.1:${getPort()}/bridge?token=${token}` : null
       },
       sessionId: newId('s_'),

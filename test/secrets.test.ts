@@ -1,0 +1,126 @@
+import { describe, expect, test } from 'bun:test'
+import { existsSync, mkdtempSync, statSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { defaultHome, getPaths } from '../src/shared/paths'
+import {
+  FileSecretStore,
+  KeychainSecretStore,
+  ensureToken,
+  keychainAccount,
+  loadCredentials,
+  openSecretStore,
+  secretStoreKind,
+  type KeystoreBackend,
+} from '../src/shared/secrets'
+
+const tempPaths = () => getPaths(mkdtempSync(join(tmpdir(), 'tgmcp-secrets-')))
+
+/** Bun.secrets, minus the operating system. */
+class FakeKeystore implements KeystoreBackend {
+  items = new Map<string, string>()
+  failing: string | null = null
+  /** Simulates a keystore that accepts a write but returns something else. */
+  corruptWrites = false
+  async get(o: { service: string; name: string }) {
+    if (this.failing) throw new Error(this.failing)
+    return this.items.get(`${o.service}/${o.name}`) ?? null
+  }
+  async set(o: { service: string; name: string; value: string }) {
+    if (this.failing) throw new Error(this.failing)
+    this.items.set(`${o.service}/${o.name}`, this.corruptWrites ? 'garbage' : o.value)
+  }
+  async delete(o: { service: string; name: string }) {
+    if (this.failing) throw new Error(this.failing)
+    return this.items.delete(`${o.service}/${o.name}`)
+  }
+}
+
+describe('where secrets go', () => {
+  test('the default home uses bare names, any other home gets its own entries', () => {
+    expect(keychainAccount('token', defaultHome())).toBe('token')
+    expect(keychainAccount('token', `${defaultHome()}/`)).toBe('token')
+    expect(keychainAccount('session-key', '/tmp/tgmcp-demo')).toBe('session-key@/tmp/tgmcp-demo')
+  })
+
+  test('TELEGRAM_MCP_SECRET_STORE picks the store, and a typo is an error, not plain files', () => {
+    expect(secretStoreKind({})).toBe('keychain')
+    expect(secretStoreKind({ TELEGRAM_MCP_SECRET_STORE: 'keychain' })).toBe('keychain')
+    expect(secretStoreKind({ TELEGRAM_MCP_SECRET_STORE: 'FILE' })).toBe('file')
+    expect(() => secretStoreKind({ TELEGRAM_MCP_SECRET_STORE: 'files' })).toThrow('must be "keychain" or "file"')
+    const paths = tempPaths()
+    expect(openSecretStore(paths, {}).kind).toBe('keychain')
+    expect(openSecretStore(paths, { TELEGRAM_MCP_SECRET_STORE: 'file' }).kind).toBe('file')
+  })
+})
+
+describe('file store', () => {
+  test('round trip, private files, delete', async () => {
+    const paths = tempPaths()
+    const files = new FileSecretStore(paths)
+    expect(await files.get('token')).toBeNull()
+    await files.set('token', 'abc')
+    expect(await files.get('token')).toBe('abc')
+    expect(statSync(paths.token).mode & 0o777).toBe(0o600)
+    expect(files.present()).toEqual(['token'])
+    expect(await files.delete('token')).toBe(true)
+    expect(await files.delete('token')).toBe(false)
+    expect(existsSync(paths.token)).toBe(false)
+  })
+})
+
+describe('keychain store', () => {
+  test('stores under service telegram-mcp, account named after the secret and home', async () => {
+    const kc = new FakeKeystore()
+    const store = new KeychainSecretStore('/tmp/x', { backend: kc })
+    await store.set('token', 't1')
+    expect([...kc.items.keys()]).toEqual(['telegram-mcp/token@/tmp/x'])
+    expect(await store.get('token')).toBe('t1')
+    expect(await store.delete('token')).toBe(true)
+    expect(await store.get('token')).toBeNull()
+  })
+
+  test('moves plain files from an older version into the keystore and deletes them', async () => {
+    const paths = tempPaths()
+    writeFileSync(paths.token, 'old-token\n')
+    writeFileSync(paths.credentials, JSON.stringify({ apiId: 12345, apiHash: 'feedface' }, null, 2))
+    const kc = new FakeKeystore()
+    const store = new KeychainSecretStore(paths.home, { backend: kc, legacy: new FileSecretStore(paths) })
+
+    expect(await ensureToken(store)).toBe('old-token') // same token, so running proxies keep working
+    expect(await loadCredentials(store)).toEqual({ apiId: 12345, apiHash: 'feedface' })
+    expect(existsSync(paths.token)).toBe(false)
+    expect(existsSync(paths.credentials)).toBe(false)
+    expect(kc.items.get(`telegram-mcp/${keychainAccount('token', paths.home)}`)).toBe('old-token')
+  })
+
+  test('a keystore that fails leaves the plain file alone and says how to opt out', async () => {
+    const paths = tempPaths()
+    writeFileSync(paths.token, 'old-token\n')
+    const kc = new FakeKeystore()
+    kc.failing = 'User interaction is not allowed.'
+    const store = new KeychainSecretStore(paths.home, { backend: kc, legacy: new FileSecretStore(paths), platform: 'darwin' })
+    const err = await store.get('token').catch(e => e as Error)
+    expect(err).toBeInstanceOf(Error)
+    expect((err as Error).message).toContain('macOS Keychain')
+    expect((err as Error).message).toContain('TELEGRAM_MCP_SECRET_STORE=file')
+    expect(existsSync(paths.token)).toBe(true)
+  })
+
+  test('a write that does not read back keeps the plain file', async () => {
+    const paths = tempPaths()
+    writeFileSync(paths.token, 'old-token\n')
+    const kc = new FakeKeystore()
+    kc.corruptWrites = true
+    const store = new KeychainSecretStore(paths.home, { backend: kc, legacy: new FileSecretStore(paths) })
+    await expect(store.get('token')).rejects.toThrow('reading it back')
+    expect(existsSync(paths.token)).toBe(true)
+  })
+
+  test('ensureToken creates a token once and keeps it', async () => {
+    const store = new KeychainSecretStore('/tmp/y', { backend: new FakeKeystore() })
+    const a = await ensureToken(store)
+    expect(a).toMatch(/^[0-9a-f]{48}$/)
+    expect(await ensureToken(store)).toBe(a)
+  })
+})

@@ -9,14 +9,22 @@ const domain = () => `gui/${process.getuid?.() ?? 0}`
 
 const esc = (s: string) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 
+/** Settings the CLI was run with that the daemon and the menu bar app must share. */
+function passThrough(env: Record<string, string>) {
+  for (const k of ['TELEGRAM_MCP_PORT', 'TELEGRAM_MCP_SECRET_STORE']) {
+    const v = process.env[k]
+    if (v) env[k] = v
+  }
+  return env
+}
+
 /** A user LaunchAgent: starts at login, restarts whenever the daemon exits. */
 export function buildPlist(paths: Paths): string {
   const cli = resolve(import.meta.dir, 'cli.ts')
-  const env: Record<string, string> = {
+  const env = passThrough({
     PATH: `${dirname(process.execPath)}:/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin`,
     TELEGRAM_MCP_HOME: paths.home,
-  }
-  if (process.env.TELEGRAM_MCP_PORT) env.TELEGRAM_MCP_PORT = process.env.TELEGRAM_MCP_PORT
+  })
   const envXml = Object.entries(env)
     .map(([k, v]) => `      <key>${esc(k)}</key><string>${esc(v)}</string>`)
     .join('\n')
@@ -101,8 +109,7 @@ export function buildMenubar(): string {
 /** Starts at login; restarts after a crash but stays quit when you choose Quit. */
 export function installMenubar(paths: Paths): string {
   const app = buildMenubar()
-  const env: Record<string, string> = { TELEGRAM_MCP_HOME: paths.home }
-  if (process.env.TELEGRAM_MCP_PORT) env.TELEGRAM_MCP_PORT = process.env.TELEGRAM_MCP_PORT
+  const env = passThrough({ TELEGRAM_MCP_HOME: paths.home })
   const plist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">

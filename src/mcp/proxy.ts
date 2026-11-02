@@ -6,7 +6,7 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { CallToolRequestSchema, ListToolsRequestSchema, type ElicitRequestFormParams } from '@modelcontextprotocol/sdk/types.js'
 import { newId } from '../daemon/sessions'
 import { parseConfig } from '../shared/config'
-import { readToken } from '../shared/files'
+import { openSecretStore, readToken } from '../shared/secrets'
 import { LAUNCHD_LABEL, getPaths, getPort } from '../shared/paths'
 import type { ApprovalRequest, TgEvent, ToolResult } from '../shared/protocol'
 import { toolList } from '../shared/tools'
@@ -59,9 +59,10 @@ export async function runProxy(opts: { channel: boolean }): Promise<void> {
   const log = (msg: string) => process.stderr.write(`[telegram-mcp] ${msg}\n`)
   const sessionId = newId('s_')
 
+  const secrets = openSecretStore(paths)
   const daemon = new DaemonClient({
-    url: () => {
-      const token = readToken(paths)
+    url: async () => {
+      const token = await readToken(secrets)
       return token ? `ws://127.0.0.1:${port}/bridge?token=${token}` : null
     },
     sessionId,
