@@ -60,4 +60,15 @@ public class FormatTests
     {
         Assert.Equal(expected, Format.ViaLabel(via));
     }
+
+    [Fact]
+    public void A_long_draft_runs_past_four_lines()
+    {
+        Assert.False(Format.IsLongDraft("hi"));
+        Assert.False(Format.IsLongDraft(new string('x', 220)));          // 4 lines of 55
+        Assert.True(Format.IsLongDraft(new string('x', 221)));           // a 5th line
+        Assert.False(Format.IsLongDraft("a\nb\nc\nd"));                 // 4 short lines
+        Assert.True(Format.IsLongDraft("a\nb\nc\nd\ne"));              // 5 short lines
+        Assert.True(Format.IsLongDraft("a\n\n\n" + new string('x', 60))); // blank lines count, and a wrapped one is 2
+    }
 }

@@ -9,6 +9,7 @@ Each release's section here becomes its "What's new" on GitHub. Add the next one
 - **Paging from Contacts**: on the Contacts page of the menu bar and tray apps, **Can page me** puts a person on `paging.pageFrom` (or takes them off), and **Page** sends them `/page <reason>` from your account, so you can page someone in two clicks. Groups, bots, yourself and blocked chats are refused.
 - **Tray panel stays above the taskbar**: on Windows the panel grew downward when its content did (opening Contacts, opening a contact, a long draft on hover), so it hung past the taskbar and off the screen, where the footer and the end of the list couldn't be reached. It's now anchored to the tray corner like the macOS panel: it grows upward, at most as tall as the screen, and the middle scrolls.
 - **Tray panel scrolls with the wheel anywhere**: over a contact's nickname or page-reason box the wheel used to stop, because the text box took it. It now scrolls the panel wherever the pointer is.
+- **Click to expand, never hover**: in the menu bar and tray apps, a long draft waiting for approval and a Recently sent chat used to pop open as the pointer passed over them. They now open on click (a long draft also gets **Show all**), and close on a second click.
 - **Your own alarm sound**: `alarm.mp3` (or `.m4a`, `.wav`, `.aiff`, `.caf`) in the home folder replaces the built-in beep in the menu bar app, and `alarm.wav` does the same in the tray app.
 
 ## 1.0.0

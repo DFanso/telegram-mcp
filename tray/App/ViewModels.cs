@@ -14,6 +14,7 @@ public sealed class ApprovalVM : Observable
     string _nick;
     string _ago = "";
     bool _busy;
+    bool _expanded;
 
     public ApprovalVM(PanelViewModel panel, UiApproval item)
     {
@@ -24,6 +25,7 @@ public sealed class ApprovalVM : Observable
         Approve = Command.Async(() => _panel.DecideAsync(this, new Decision(true)));
         AskEveryTime = Command.Async(() => _panel.DecideAsync(this, new Decision(true, "requireApproval", Nick)));
         AlwaysAllow = Command.Async(() => _panel.DecideAsync(this, new Decision(true, "autoSend", Nick)));
+        ToggleText = new Command(_ => { if (IsLong) Expanded = !Expanded; });
     }
 
     public UiApproval Item { get; }
@@ -39,6 +41,20 @@ public sealed class ApprovalVM : Observable
     public string? ExistingNickname => Item.Nickname;
 
     public string Nick { get => _nick; set => Set(ref _nick, value); }
+
+    /// <summary>A draft longer than the card's 4 lines: clicking it (or Show all) opens it. Nothing opens on hover.</summary>
+    public bool IsLong => Format.IsLongDraft(Item.Text);
+
+    public bool Expanded
+    {
+        get => _expanded;
+        set
+        {
+            if (Set(ref _expanded, value)) Raise(nameof(ExpandLabel));
+        }
+    }
+
+    public string ExpandLabel => _expanded ? "Show less" : "Show all";
     public string Ago { get => _ago; set => Set(ref _ago, value); }
 
     public bool Busy
@@ -56,6 +72,7 @@ public sealed class ApprovalVM : Observable
     public ICommand Approve { get; }
     public ICommand AskEveryTime { get; }
     public ICommand AlwaysAllow { get; }
+    public ICommand ToggleText { get; }
 }
 
 public sealed record WatchVM(string ChatLabel, string? From, string? Topic, string Tooltip);
@@ -75,16 +92,53 @@ public sealed record SessionVM(string Label, Tag Tag, IReadOnlyList<WatchVM> Wat
 
 public sealed record RecentMessageVM(string Body, string Meta);
 
-/// <summary>A chat sent to lately; hovering it shows the last three messages.</summary>
-public sealed record RecentChatVM(string Label, string? Count, string Ago, IReadOnlyList<RecentMessageVM> Messages)
+/// <summary>
+/// A chat sent to lately; clicking it shows (or hides) the last three messages. Rebuilt when the
+/// list changes, so the panel keeps which chats are open (<see cref="PanelViewModel"/>).
+/// </summary>
+public sealed class RecentChatVM : Observable
 {
-    public static RecentChatVM From(RecentChat c, string footer, DateTimeOffset now) => new(
+    bool _open;
+
+    RecentChatVM(long chatId, string label, string? count, string ago, IReadOnlyList<RecentMessageVM> messages, bool open, Action<RecentChatVM> toggle)
+    {
+        ChatId = chatId;
+        Label = label;
+        Count = count;
+        Ago = ago;
+        Messages = messages;
+        _open = open;
+        Toggle = new Command(_ => toggle(this));
+    }
+
+    public static RecentChatVM From(RecentChat c, string footer, DateTimeOffset now, bool open, Action<RecentChatVM> toggle) => new(
+        c.ChatId,
         c.Label,
         c.Messages.Count > 1 ? c.Messages.Count.ToString(System.Globalization.CultureInfo.InvariantCulture) : null,
         Format.Ago(c.Messages[0].At, now),
         c.Messages.Take(3).Select(m => new RecentMessageVM(
             Format.StripFooter(m.Text, footer),
-            $"{Format.Ago(m.At, now)} · {Format.ViaLabel(m.Via)}{(m.SessionLabel is null ? "" : $" · {m.SessionLabel}")}")).ToList());
+            $"{Format.Ago(m.At, now)} · {Format.ViaLabel(m.Via)}{(m.SessionLabel is null ? "" : $" · {m.SessionLabel}")}")).ToList(),
+        open,
+        toggle);
+
+    public long ChatId { get; }
+    public string Label { get; }
+    public string? Count { get; }
+    public string Ago { get; }
+    public IReadOnlyList<RecentMessageVM> Messages { get; }
+
+    public bool IsOpen
+    {
+        get => _open;
+        set
+        {
+            if (Set(ref _open, value)) Raise(nameof(Chevron));
+        }
+    }
+
+    public string Chevron => _open ? "" : "";
+    public ICommand Toggle { get; }
 }
 
 /// <summary>A saved chat on the Contacts page. Updated in place, so the open row and a half-typed name survive polls.</summary>

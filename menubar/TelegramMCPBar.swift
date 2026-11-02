@@ -1,6 +1,6 @@
 // Menu bar companion for the telegram-mcp daemon.
 // Shows approvals (approve / deny), which Claude sessions are listening to which chats,
-// and the chats you last sent to (hover a chat to see what was sent). The Contacts page lists the
+// and the chats you last sent to (click a chat to see what was sent). The Contacts page lists the
 // saved chats and edits their nickname, sending rule and auto-reply in config.json.
 // Talks only to the local daemon on 127.0.0.1, authenticated with the token the daemon keeps in
 // the login Keychain (service "telegram-mcp"; a file instead with TELEGRAM_MCP_SECRET_STORE=file).
@@ -500,11 +500,20 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate {
 // MARK: - Helpers
 
 let isSnapshot = CommandLine.arguments.contains("--snapshot")
-/// `SNAPSHOT_HOVER=1` starts approval cards and recent chats expanded, as if hovered;
-/// `approvals` or `recent` expands only that section.
-let snapshotHoverMode = ProcessInfo.processInfo.environment["SNAPSHOT_HOVER"] ?? ""
-let snapshotHoverApprovals = ["1", "approvals"].contains(snapshotHoverMode)
-let snapshotHoverRecent = ["1", "recent"].contains(snapshotHoverMode)
+/// `SNAPSHOT_EXPAND=1` starts approval cards and recent chats expanded, as if clicked open;
+/// `approvals` or `recent` expands only that section. (`SNAPSHOT_HOVER` is its old name.)
+let snapshotExpandMode = ProcessInfo.processInfo.environment["SNAPSHOT_EXPAND"]
+    ?? ProcessInfo.processInfo.environment["SNAPSHOT_HOVER"] ?? ""
+let snapshotExpandApprovals = ["1", "approvals"].contains(snapshotExpandMode)
+let snapshotExpandRecent = ["1", "recent"].contains(snapshotExpandMode)
+
+/// Whether a draft runs past the 4 lines an approval card shows (about 55 characters a line), so
+/// the card offers Show all. Nothing in the panel opens on hover: hovering past it shouldn't
+/// make the panel jump.
+func isLongDraft(_ text: String) -> Bool {
+    text.split(separator: "\n", omittingEmptySubsequences: false)
+        .reduce(0) { $0 + max(1, ($1.count + 54) / 55) } > 4
+}
 /// `SNAPSHOT_PAGE=contacts` renders the Contacts page; `SNAPSHOT_OPEN=<nickname>` opens that contact.
 let snapshotContacts = ProcessInfo.processInfo.environment["SNAPSHOT_PAGE"] == "contacts"
 let snapshotOpenContact = ProcessInfo.processInfo.environment["SNAPSHOT_OPEN"]
@@ -607,7 +616,7 @@ struct PanelView: View {
     @State private var page: PanelPage = snapshotContacts ? .contacts : .home
     @State private var query = ""
 
-    /// macOS doesn't keep a menu bar panel on screen: a long draft (expanded on hover), or many of
+    /// macOS doesn't keep a menu bar panel on screen: a long draft (opened with Show all), or many of
     /// them, pushed the buttons below the bottom of the screen. So the panel is at most as tall as
     /// the screen, and the middle (approvals, listening, recent) scrolls; header and footer stay put.
     var body: some View {
@@ -781,7 +790,7 @@ struct PanelView: View {
 struct ApprovalCard: View {
     @EnvironmentObject var store: Store
     let item: UiApproval
-    @State private var hover = snapshotHoverApprovals
+    @State private var expanded = snapshotExpandApprovals
     @State private var nick: String
 
     init(item: UiApproval) {
@@ -799,11 +808,22 @@ struct ApprovalCard: View {
             }
             Text(item.text)
                 .font(.system(size: 12))
-                .lineLimit(hover ? nil : 4)
+                .lineLimit(expanded ? nil : 4)
                 .fixedSize(horizontal: false, vertical: true)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(8)
                 .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.05)))
+                .contentShape(Rectangle())
+                .onTapGesture { toggle() }
+            if long {
+                HStack {
+                    Spacer()
+                    Button(expanded ? "Show less" : "Show all", action: toggle)
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(item.detail).lineLimit(1)
                 Text("\(item.reason) · \(item.sessionLabel)").lineLimit(2)
@@ -835,7 +855,14 @@ struct ApprovalCard: View {
         .padding(10)
         .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.07)))
         .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.orange.opacity(0.25)))
-        .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }
+    }
+
+    private var long: Bool { isLongDraft(item.text) }
+
+    /// A click on a long draft (or on Show all) opens it; another closes it.
+    private func toggle() {
+        guard long else { return }
+        withAnimation(.easeOut(duration: 0.12)) { expanded.toggle() }
     }
 
     /// First message to this chat: it gets saved, and the buttons decide what happens next time.
@@ -1179,20 +1206,30 @@ struct ContactRow: View {
 struct RecentChatRow: View {
     @EnvironmentObject var store: Store
     let chat: RecentChat
-    @State private var hover = snapshotHoverRecent
+    @State private var open = snapshotExpandRecent
 
     var body: some View {
         VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                Image(systemName: "bubble.left.fill").font(.system(size: 10)).foregroundStyle(Color.accentColor.opacity(0.8))
-                Text(chat.label).font(.system(size: 12)).lineLimit(1)
-                if chat.messages.count > 1 {
-                    Text("\(chat.messages.count)").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+            Button {
+                withAnimation(.easeOut(duration: 0.12)) { open.toggle() }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "bubble.left.fill").font(.system(size: 10)).foregroundStyle(Color.accentColor.opacity(0.8))
+                    Text(chat.label).font(.system(size: 12)).lineLimit(1)
+                    if chat.messages.count > 1 {
+                        Text("\(chat.messages.count)").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                    }
+                    Spacer()
+                    Text(ago(chat.messages[0].at)).font(.system(size: 10)).foregroundStyle(.tertiary)
+                    Image(systemName: "chevron.down")
+                        .font(.system(size: 8, weight: .semibold)).foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(open ? 180 : 0))
                 }
-                Spacer()
-                Text(ago(chat.messages[0].at)).font(.system(size: 10)).foregroundStyle(.tertiary)
+                .contentShape(Rectangle())
             }
-            if hover {
+            .buttonStyle(.plain)
+            .help(open ? "Hide what was sent" : "Show what was sent")
+            if open {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(chat.messages.prefix(3)) { m in
                         VStack(alignment: .leading, spacing: 2) {
@@ -1211,9 +1248,7 @@ struct RecentChatRow: View {
         }
         .padding(.vertical, 5)
         .padding(.horizontal, 7)
-        .background(RoundedRectangle(cornerRadius: 7).fill(hover ? Color.primary.opacity(0.05) : .clear))
-        .contentShape(Rectangle())
-        .onHover { h in withAnimation(.easeOut(duration: 0.12)) { hover = h } }
+        .background(RoundedRectangle(cornerRadius: 7).fill(open ? Color.primary.opacity(0.05) : .clear))
     }
 
     private func viaLabel(_ via: String) -> String {

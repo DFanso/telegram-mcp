@@ -26,6 +26,13 @@ public static class Format
         return mark.Length == 0 || !t.EndsWith(mark, StringComparison.Ordinal) ? t : t[..^mark.Length].Trim();
     }
 
+    /// <summary>
+    /// Whether a draft runs past the 4 lines an approval card shows (about 55 characters a line), so
+    /// the card offers Show all. Same rule as the menu bar app. Nothing opens on hover.
+    /// </summary>
+    public static bool IsLongDraft(string text) =>
+        text.Split('\n').Sum(line => Math.Max(1, (line.Length + 54) / 55)) > 4;
+
     /// <summary>How a sent message was let through. The daemon calls the tray (like the menu bar) "menubar".</summary>
     public static string ViaLabel(string via) => via switch
     {
