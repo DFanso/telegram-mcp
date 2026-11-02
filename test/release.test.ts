@@ -87,6 +87,7 @@ describe('release script', () => {
     expect(notes).toStartWith("## What's new in 1.2.3\n\n- a change\n")
     expect(notes).toContain(`curl --proto '=https' --tlsv1.2 -LsSf ${dl}/tgmcp-installer.sh | sh`)
     expect(notes).toContain(`irm ${dl}/tgmcp-installer.ps1 | iex`)
+    expect(notes).toContain('The Windows zip includes the tray app')
     for (const t of TARGETS) {
       expect(notes).toContain(`| [${archiveName(t)}](${dl}/${archiveName(t)}) | ${t.label} | [checksum](${dl}/${archiveName(t)}.sha256) |`)
     }
@@ -109,5 +110,11 @@ describe('release script', () => {
       expect(out).toContain('1.2.3')
       expect(out).toContain('https://github.com/o/r/releases/download/v1.2.3/tgmcp-installer')
     }
+  })
+
+  test('the PowerShell installer puts the tray app next to tgmcp.exe', () => {
+    const ps1 = readFileSync(join(repoRoot, 'scripts', 'install.ps1'), 'utf8')
+    expect(ps1).toContain("Install-Exe 'tgmcp.exe'")
+    expect(ps1).toContain("Install-Exe 'TelegramMCPTray.exe'")
   })
 })

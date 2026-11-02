@@ -2,14 +2,17 @@
 // one archive per platform, SHA-256 checksums, the two installers and the release notes.
 //
 //   bun scripts/release.ts [--out dist] [--tag v1.2.3] [--targets aarch64-apple-darwin,...]
+//                          [--windows-tray <dir with TelegramMCPTray.exe>]
 //
 // Writes <out>/assets/* (everything to attach to the GitHub release) and <out>/notes.md.
+// The Windows zip gets the tray app from --windows-tray (the release workflow publishes it on
+// Windows first). A tag build refuses to make the Windows zip without it.
 // The version is package.json's; --tag (or GITHUB_REF_NAME on a tag build) must match it,
 // and CHANGELOG.md must have a "## <version>" section, which becomes "What's new".
 // The menu bar app is built only on macOS; elsewhere the macOS archives would lack it, so
 // building them there is refused.
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, join, resolve } from 'node:path'
 
 export interface Target {
@@ -28,6 +31,8 @@ export const TARGETS: Target[] = [
   { triple: 'aarch64-unknown-linux-gnu', bun: 'bun-linux-arm64', label: 'ARM64 Linux', os: 'linux' },
   { triple: 'x86_64-unknown-linux-gnu', bun: 'bun-linux-x64', label: 'x64 Linux', os: 'linux' },
 ]
+
+export const TRAY_EXE = 'TelegramMCPTray.exe'
 
 export const archiveName = (t: Target) => `tgmcp-${t.triple}.${t.os === 'windows' ? 'zip' : 'tar.xz'}`
 
@@ -70,7 +75,7 @@ curl --proto '=https' --tlsv1.2 -LsSf ${dl}/tgmcp-installer.sh | sh
 powershell -ExecutionPolicy Bypass -c "irm ${dl}/tgmcp-installer.ps1 | iex"
 \`\`\`
 
-The macOS archives include the menu bar app; the shell installer puts it in \`~/Applications\`.
+The macOS archives include the menu bar app, which the shell installer puts in \`~/Applications\`. The Windows zip includes the tray app, which the PowerShell installer puts next to \`tgmcp.exe\`. \`tgmcp menubar\` starts either one.
 
 ## Download tgmcp ${o.version}
 
@@ -113,6 +118,13 @@ async function main() {
   if (wanted && targets.length !== wanted.length) throw new Error(`Unknown target in ${wanted.join(',')}.`)
   const onMac = process.platform === 'darwin'
   if (!onMac && targets.some(t => t.os === 'darwin')) throw new Error('macOS archives include the menu bar app, which only builds on macOS.')
+  const trayDir = arg('windows-tray')
+  const tray = trayDir ? join(resolve(trayDir), TRAY_EXE) : undefined
+  if (targets.some(t => t.os === 'windows')) {
+    if (tray && !existsSync(tray)) throw new Error(`No ${TRAY_EXE} in ${trayDir}.`)
+    if (!tray && tag) throw new Error(`A release's Windows zip includes the tray app: pass --windows-tray <dir with ${TRAY_EXE}>.`)
+    if (!tray) console.warn(`warning: no --windows-tray, so the Windows zip won't include ${TRAY_EXE}`)
+  }
 
   const out = resolve(arg('out') ?? join(root, 'dist'))
   const work = join(out, 'work')
@@ -138,6 +150,7 @@ async function main() {
     copyFileSync(join(root, 'LICENSE'), join(dir, 'LICENSE'))
     copyFileSync(join(root, 'CHANGELOG.md'), join(dir, 'CHANGELOG.md'))
     if (t.os === 'darwin') cpSync(app!, join(dir, basename(app!)), { recursive: true, verbatimSymlinks: true })
+    if (t.os === 'windows' && tray) copyFileSync(tray, join(dir, TRAY_EXE))
     const archive = join(assets, archiveName(t))
     if (t.os === 'windows') run('zip', ['-qr', archive, basename(dir)], { cwd: work })
     else run('tar', ['-cJf', archive, basename(dir)], { cwd: work, env: { COPYFILE_DISABLE: '1' } })
