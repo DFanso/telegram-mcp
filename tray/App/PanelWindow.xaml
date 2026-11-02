@@ -337,7 +337,8 @@
         </StackPanel>
 
         <!-- The middle scrolls when it would run past the screen; header and footer stay put. -->
-        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,14,0,14" Focusable="False">
+        <ScrollViewer x:Name="Middle" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,14,0,14" Focusable="False"
+                      PreviewMouseWheel="Middle_PreviewMouseWheel">
             <Grid Margin="14,0">
                 <!-- Main page -->
                 <StackPanel Visibility="{Binding MainPage, Converter={StaticResource Visible}}">

@@ -107,6 +107,17 @@ public partial class PanelWindow : Window
 
     void FitHeight() => MaxHeight = Math.Max(300, _workArea.Height / Scale - 2 * Gap);
 
+    /// <summary>
+    /// The wheel scrolls the panel wherever the pointer is. A TextBox (a contact's nickname, a page
+    /// reason) otherwise takes the wheel for itself, though it has nothing to scroll.
+    /// </summary>
+    void Middle_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
+    {
+        if (Middle.ScrollableHeight <= 0) return;
+        Middle.ScrollToVerticalOffset(Middle.VerticalOffset - e.Delta * 0.4); // 48 px a notch, like WPF's own
+        e.Handled = true;
+    }
+
     /// <summary>Moves the panel into the tray corner at its current size (Anchor does the placing).</summary>
     void Reposition()
     {
