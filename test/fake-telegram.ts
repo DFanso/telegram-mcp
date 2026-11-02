@@ -1,5 +1,8 @@
-import type { SendOptions, TelegramPort } from '../src/daemon/telegram'
-import type { DialogInfo, IncomingMessage, MessageInfo, PeerInfo, TelegramState } from '../src/shared/protocol'
+import { mkdirSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import type { SendFileOptions, SendOptions, TelegramPort } from '../src/daemon/telegram'
+import type { DialogInfo, DownloadedFile, IncomingMessage, MessageInfo, PeerInfo, TelegramState } from '../src/shared/protocol'
+import { downloadFileName, type OutgoingFile } from '../src/shared/media'
 
 /** In-memory stand-in for Telegram. Never touches the network. */
 export class FakeTelegram implements TelegramPort {
@@ -8,7 +11,10 @@ export class FakeTelegram implements TelegramPort {
   /** Ids that getPeer(id) pretends not to know yet (no access hash), like a fresh session. */
   uncached = new Set<number>()
   sent: { chatId: number; text: string; opts: SendOptions }[] = []
+  sentFiles: { chatId: number; file: OutgoingFile; caption: string; opts: SendFileOptions }[] = []
   history = new Map<number, MessageInfo[]>()
+  /** Attachments by `${chatId}:${messageId}`. */
+  files = new Map<string, { name: string | null; type: string; mime: string | null; data: string }>()
   phase: TelegramState['phase'] = 'connected'
   #listeners: ((m: IncomingMessage) => void)[] = []
   #nextId = 1000
@@ -75,6 +81,21 @@ export class FakeTelegram implements TelegramPort {
     }
   }
 
+  async sendFile(chatId: number, file: OutgoingFile, caption: string, opts: SendFileOptions = {}): Promise<MessageInfo> {
+    this.sentFiles.push({ chatId, file, caption, opts })
+    return {
+      id: this.#nextId++,
+      chatId,
+      date: new Date().toISOString(),
+      from: this.me,
+      outgoing: true,
+      text: caption,
+      media: opts.asPhoto ? 'photo' : `document: ${file.name}`,
+      replyToId: opts.replyTo ?? null,
+      topicId: opts.topicId ?? null,
+    }
+  }
+
   async getHistory(chatId: number, opts: { limit: number }): Promise<MessageInfo[]> {
     return (this.history.get(chatId) ?? []).slice(-opts.limit)
   }
@@ -92,6 +113,16 @@ export class FakeTelegram implements TelegramPort {
   }
 
   async markRead() {}
+
+  async downloadMedia(chatId: number, messageId: number, dir: string, maxBytes: number): Promise<DownloadedFile> {
+    const f = this.files.get(`${chatId}:${messageId}`)
+    if (!f) throw new Error(`Message #${messageId} has no attachment, nothing to download.`)
+    if (f.data.length > maxBytes) throw new Error(`Message #${messageId} is over the limit.`)
+    const name = downloadFileName(messageId, f)
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(join(dir, name), f.data)
+    return { path: join(dir, name), name, size: f.data.length, mime: f.mime }
+  }
 }
 
 export const LEO: PeerInfo = { id: 10, type: 'user', name: 'Leo Perera', username: 'leo_p' }

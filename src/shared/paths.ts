@@ -13,6 +13,8 @@ export interface Paths {
   sessionKey: string
   session: string
   log: string
+  /** Where telegram_download_media saves files, one folder per chat. */
+  downloads: string
 }
 
 export const defaultHome = () => join(homedir(), '.config', 'telegram-mcp')
@@ -27,6 +29,7 @@ export function getPaths(home = process.env.TELEGRAM_MCP_HOME || defaultHome()):
     sessionKey: join(home, 'session.key'),
     session: join(home, 'session.db'),
     log: join(home, 'daemon.log'),
+    downloads: process.env.TELEGRAM_MCP_DOWNLOADS ?? join(homedir(), 'Downloads', 'telegram-mcp'),
   }
 }
 

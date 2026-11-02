@@ -23,6 +23,14 @@ export interface MessageInfo {
   topicId: number | null
 }
 
+/** A message's attachment saved to disk. */
+export interface DownloadedFile {
+  path: string
+  name: string
+  size: number
+  mime: string | null
+}
+
 export interface IncomingMessage extends MessageInfo {
   chat: PeerInfo
 }
