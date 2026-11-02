@@ -23,10 +23,29 @@ namespace TelegramMCPTray;
 sealed class PageAlarm
 {
     const string Group = "pages";
-    readonly SoundPlayer _sound = new(new MemoryStream(Pages.AlarmWav()));
+    readonly string _home;
+    SoundPlayer _sound = new(new MemoryStream(Pages.AlarmWav()));
     readonly HashSet<string> _toasts = [];
     PageWindow? _window;
     bool _playing;
+
+    public PageAlarm(string home) => _home = home;
+
+    /// <summary>alarm.wav in the home folder if there is one, else the built-in beep.</summary>
+    SoundPlayer Sound()
+    {
+        if (Pages.CustomAlarm(_home) is { } path)
+        {
+            try
+            {
+                var custom = new SoundPlayer(path);
+                custom.Load();
+                return custom;
+            }
+            catch (Exception e) when (e is IOException or InvalidOperationException or UnauthorizedAccessException) { }
+        }
+        return new SoundPlayer(new MemoryStream(Pages.AlarmWav()));
+    }
 
     /// <summary>Ack (minutes null) or snooze a page.</summary>
     public event Action<string, bool, int>? Act;
@@ -64,6 +83,8 @@ sealed class PageAlarm
         }
         if (!_playing)
         {
+            _sound.Dispose();
+            _sound = Sound();
             _sound.PlayLooping();
             _playing = true;
         }

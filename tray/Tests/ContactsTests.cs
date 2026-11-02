@@ -120,4 +120,35 @@ public class ContactsTests
         Assert.Equal("The daemon is older than this app. Restart it to edit contacts.", Contacts.OlderDaemon);
         Assert.Equal("2 waiting for approval", Format.Waiting(2));
     }
+
+    static UiContact Person(bool? pageable, bool? pageFrom) =>
+        new("leo", 1188107983, "Leo F", "dfansoo", "user", null, [], null, "autoSend", false, "policy", [], pageable, pageFrom);
+
+    [Theory]
+    [InlineData("blocked", "approve", true)]
+    [InlineData("none", "block", true)]
+    [InlineData("none", "approve", false)]
+    [InlineData("autoSend", "block", false)]
+    [InlineData("requireApproval", "block", false)]
+    public void Blocked_counts_the_default_rule(string mode, string defaultPolicy, bool blocked)
+    {
+        Assert.Equal(blocked, Contacts.Blocked(C(sendMode: mode), defaultPolicy));
+    }
+
+    [Fact]
+    public void Can_page_me_tag_only_when_on()
+    {
+        Assert.Equal(new Tag("can page me", TagKind.Warn), Contacts.PageFromTag(Person(true, true)));
+        Assert.Null(Contacts.PageFromTag(Person(true, false)));
+        Assert.Null(Contacts.PageFromTag(Person(null, null))); // an older daemon
+    }
+
+    [Fact]
+    public void Explanation_says_whether_their_page_rings_for_people_only()
+    {
+        Assert.EndsWith("Their /page rings you.", Contacts.Explanation(Person(true, true), "approve"));
+        Assert.EndsWith("Their /page is ignored.", Contacts.Explanation(Person(true, false), "approve"));
+        Assert.DoesNotContain("/page", Contacts.Explanation(C(), "approve")); // a group
+        Assert.DoesNotContain("/page", Contacts.Explanation(Person(null, null), "approve"));
+    }
 }

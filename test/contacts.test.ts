@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { parseConfig, type Config } from '../src/shared/config'
 import { decideSend } from '../src/shared/policy'
-import { listContacts, renameContact, setAutoReply, setSendMode } from '../src/shared/contacts'
+import { listContacts, pageTarget, renameContact, setAutoReply, setPageFrom, setSendMode } from '../src/shared/contacts'
 
 function fresh(): Config {
   return parseConfig(
@@ -163,5 +163,46 @@ describe('renameContact', () => {
     const c = parseConfig(JSON.stringify({ chats: { anna: { id: 12 } }, rules: { autoSend: ['bob'] } }))
     expect(() => renameContact(c, 'anna', 'bob')).toThrow('autoSend')
     expect(c.chats.anna).toBeDefined()
+  })
+})
+
+describe('setPageFrom', () => {
+  test('a person goes on paging.pageFrom by user id, and comes off again', () => {
+    const c = fresh()
+    expect(setPageFrom(c, 'leo', true, 1)).toBe(true)
+    expect(c.paging.pageFrom).toEqual([10])
+    expect(byNick(c, 1).leo).toMatchObject({ pageable: true, pageFrom: true })
+    expect(byNick(c, 1).leonardo).toMatchObject({ pageable: true, pageFrom: false }) // no type saved, but a user id
+    expect(setPageFrom(c, 'leo', true, 1)).toBe(false)
+    expect(setPageFrom(c, 'leo', false, 1)).toBe(true)
+    expect(c.paging.pageFrom).toEqual([])
+    expect(setPageFrom(c, 'leo', false, 1)).toBe(false)
+  })
+
+  test('groups, channels and you are not people who page you', () => {
+    const c = fresh()
+    expect(() => setPageFrom(c, 'qa', true, 1)).toThrow('Only a person can page you, and "qa" is a group.')
+    expect(() => setPageFrom(c, 'allhands', true, 1)).toThrow('"allhands" is a group or channel.')
+    expect(() => setPageFrom(c, 'mine', true, 1)).toThrow('"mine" is you.')
+    expect(() => setPageFrom(c, 'nobody', true, 1)).toThrow('No saved chat called "nobody".')
+    const by = byNick(c, 1)
+    expect([by.qa!.pageable, by.allhands!.pageable, by.mine!.pageable]).toEqual([false, false, false])
+    expect(c.paging.pageFrom).toEqual([])
+  })
+
+  test('an id put on pageFrom by hand shows up, and can be taken off', () => {
+    const c = parseConfig(JSON.stringify({ chats: { anna: { id: 12 } }, paging: { pageFrom: [12, 99] } }))
+    expect(byNick(c).anna).toMatchObject({ pageFrom: true })
+    expect(setPageFrom(c, 'anna', false)).toBe(true)
+    expect(c.paging.pageFrom).toEqual([99])
+  })
+})
+
+describe('pageTarget', () => {
+  test('a person by nickname; anything else is refused', () => {
+    const c = fresh()
+    expect(pageTarget(c, 'leonardo', 1)).toMatchObject({ nickname: 'leonardo', entry: { id: 11 } })
+    expect(() => pageTarget(c, 'qa', 1)).toThrow('Only a person can be paged, and "qa" is a group.')
+    expect(() => pageTarget(c, 'mine', 1)).toThrow('"mine" is you.')
   })
 })

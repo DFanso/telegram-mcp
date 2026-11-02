@@ -52,7 +52,9 @@ export function eventsKey(token: string, sessionId: string): string {
  *   GET  /ui/state               what the menu bar app shows
  *   POST /ui/approvals/:id       {"decision": "approve" | "deny", "remember"?: "autoSend" | "requireApproval", "nickname"?: "…"}
  *   POST /ui/contacts            {"nickname": "…", "sendMode"?: "autoSend" | "requireApproval" | "blocked" | "none",
- *                                 "autoReply"?: true | false, "rename"?: "…"}  (the Contacts page: a human editing the rules)
+ *                                 "autoReply"?: true | false, "pageFrom"?: true | false, "rename"?: "…"}
+ *                                (the Contacts page: a human editing the rules)
+ *   POST /ui/contacts/page       {"nickname": "…", "reason"?: "…"}  the Page button: "/page <reason>" to that person
  *   POST /ui/pages/:id           {"action": "ack" | "snooze", "minutes"?: 15 | 60, "from"?: "menubar" | "tray"}
  *   POST /ui/pages/test          ring a test page (tgmcp page test)
  *   WS   /bridge                 one per Claude session: the MCP proxy's tool calls and pushes
@@ -132,6 +134,17 @@ export function startServer(o: ServerOptions) {
           return Response.json({ ok, text: ok ? 'done' : 'no such page, or it was settled already' }, { status: ok ? 200 : 409 })
         })()
       }
+      if (url.pathname === '/ui/contacts/page' && req.method === 'POST') {
+        return (async () => {
+          const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
+          const bad = (text: string) => Response.json({ ok: false, text }, { status: 400 })
+          if (typeof body.nickname !== 'string' || body.nickname.trim() === '') return bad('nickname is required')
+          if (body.reason !== undefined && typeof body.reason !== 'string') return bad('reason must be a string')
+          const r = await o.service.pageContact(body.nickname, (body.reason as string | undefined) ?? '')
+          o.log(`menu bar page to ${body.nickname}: ${r.ok ? 'sent' : r.text}`)
+          return Response.json(r, { status: r.ok ? 200 : 409 })
+        })()
+      }
       if (url.pathname === '/ui/contacts' && req.method === 'POST') {
         return (async () => {
           const body = (await req.json().catch(() => ({}))) as Record<string, unknown>
@@ -141,14 +154,16 @@ export function startServer(o: ServerOptions) {
             return bad(`sendMode must be one of ${SEND_MODES.join(', ')}`)
           }
           if (body.autoReply !== undefined && typeof body.autoReply !== 'boolean') return bad('autoReply must be true or false')
+          if (body.pageFrom !== undefined && typeof body.pageFrom !== 'boolean') return bad('pageFrom must be true or false')
           if (body.rename !== undefined && typeof body.rename !== 'string') return bad('rename must be a string')
-          if (body.sendMode === undefined && body.autoReply === undefined && body.rename === undefined) {
-            return bad('nothing to change: send sendMode, autoReply or rename')
+          if (body.sendMode === undefined && body.autoReply === undefined && body.pageFrom === undefined && body.rename === undefined) {
+            return bad('nothing to change: send sendMode, autoReply, pageFrom or rename')
           }
           const r = o.service.editContact({
             nickname: body.nickname,
             sendMode: body.sendMode as SendMode | undefined,
             autoReply: body.autoReply as boolean | undefined,
+            pageFrom: body.pageFrom as boolean | undefined,
             rename: body.rename as string | undefined,
           })
           if (r.ok) o.log(`menu bar contacts: ${r.text}`)

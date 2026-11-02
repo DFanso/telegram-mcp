@@ -15,7 +15,7 @@ import {
   type ChatRef,
   type ConfigStore,
 } from '../shared/config'
-import { listContacts, renameContact, setAutoReply, setSendMode } from '../shared/contacts'
+import { listContacts, pageTarget, renameContact, setAutoReply, setPageFrom, setSendMode } from '../shared/contacts'
 import { decideSend, policyLabel, withFooter } from '../shared/policy'
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -69,7 +69,22 @@ export interface ContactChange {
   nickname: string
   sendMode?: SendMode
   autoReply?: boolean
+  /** On or off paging.pageFrom: whether their "/page <reason>" rings you. */
+  pageFrom?: boolean
   rename?: string
+}
+
+/** The longest reason the Page button sends, so it fits the other side's page (and Telegram's limit). */
+export const PAGE_REASON_MAX = 200
+
+/** One line of plain text: no control characters or bidi overrides, cut at a whole character. */
+export function pageReason(text: string): string {
+  const flat = text
+    .replace(/[\u0000-\u001f\u007f‎‏؜‪-‮⁦-⁩]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const chars = Array.from(flat)
+  return chars.length > PAGE_REASON_MAX ? `${chars.slice(0, PAGE_REASON_MAX - 1).join('')}…` : flat
 }
 
 const SEND_MODE_TEXT: Record<SendMode, (defaultPolicy: 'approve' | 'block') => string> = {
@@ -406,6 +421,7 @@ export class Service {
     let key = change.nickname
     let sendText: string | null = null
     let replyChanged = false
+    let pageText: string | null = null
     let renamedFrom: string | null = null
     const unchanged = new Error('unchanged')
     try {
@@ -414,12 +430,15 @@ export class Service {
           sendText = SEND_MODE_TEXT[change.sendMode](c.defaultPolicy)
         }
         if (change.autoReply !== undefined) replyChanged = setAutoReply(c, key, change.autoReply, meId)
+        if (change.pageFrom !== undefined && setPageFrom(c, key, change.pageFrom, meId)) {
+          pageText = change.pageFrom ? 'can page you: their "/page <reason>" rings your desktop' : "can't page you"
+        }
         if (change.rename !== undefined) {
           const before = Object.keys(c.chats).find(k => normalizeNickname(k) === normalizeNickname(key)) ?? key
           key = renameContact(c, key, change.rename)
           if (key !== before) renamedFrom = before
         }
-        if (sendText === null && !replyChanged && renamedFrom === null) throw unchanged
+        if (sendText === null && !replyChanged && pageText === null && renamedFrom === null) throw unchanged
       })
       // Auto-reply is described from the result, since the sending rule decides whether replies ask.
       const contact = listContacts(saved, meId).find(x => x.nickname === key)
@@ -427,12 +446,43 @@ export class Service {
       const said = [
         sendText,
         contact && (replyChanged || (sendText !== null && contact.autoReply && tighter)) ? autoReplyText(contact) : null,
+        pageText,
         renamedFrom !== null ? `renamed from "${renamedFrom}"` : null,
       ].filter(s => s !== null)
       return { ok: true, text: `"${key}": ${said.join('; ')}.`, nickname: key }
     } catch (e) {
       if (e === unchanged) return { ok: true, text: `"${key}" already has that setting.`, nickname: key }
       return { ok: false, text: `Not changed: ${errText(e)}` }
+    }
+  }
+
+  /**
+   * The Contacts page's Page button: sends "/page <reason>" to a person from your own account. Their
+   * daemon rings them if you are on their paging.pageFrom. You pressed the button, so it needs no
+   * approval, but a chat the rules block is refused. No footer: everything after /page is the reason.
+   */
+  async pageContact(nickname: string, reason: string): Promise<{ ok: boolean; text: string }> {
+    const config = this.d.store.get()
+    let target: ReturnType<typeof pageTarget>
+    try {
+      target = pageTarget(config, nickname, this.d.tg.state().me?.id)
+    } catch (e) {
+      return { ok: false, text: `Not paged: ${errText(e)}` }
+    }
+    const { nickname: key, entry } = target
+    const why = pageReason(reason)
+    const text = why ? `/page ${why}` : '/page'
+    try {
+      // Like any send: the saved id must still have the saved username, and the rules are checked
+      // against the live chat, so a block by its current @username applies too.
+      const { peer } = await this.#verifyEntry(key, entry, true)
+      const rule = decideSend(config, peer, { isWatching: false })
+      if (rule.action === 'block') return { ok: false, text: `Not paged: "${key}" is blocked (${rule.reason}).` }
+      const sent = await this.#deliver(peer.id, text, undefined, { parseMode: 'plain' })
+      this.#record({ chatId: entry.id, chatLabel: key, text, messageId: sent.id, via: 'menubar', sessionLabel: null })
+      return { ok: true, text: `Paged ${key}. If you're on their pageFrom, their desktop rings and you'll hear back here.` }
+    } catch (e) {
+      return { ok: false, text: `Not paged: ${errText(e)}` }
     }
   }
 

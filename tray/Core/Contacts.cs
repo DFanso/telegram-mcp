@@ -15,6 +15,9 @@ public static class Contacts
     /// <summary>A 404 from POST /ui/contacts, or no contacts in /ui/state. (No "(below)": the tray has no Restart button.)</summary>
     public const string OlderDaemon = "The daemon is older than this app. Restart it to edit contacts.";
 
+    /// <summary>A 404 from POST /ui/contacts/page.</summary>
+    public const string OlderDaemonForPaging = "The daemon is older than this app. Restart it to page from here.";
+
     public static string NoMatch(string query) => $"No saved chat matches “{query.Trim()}”";
 
     public static string Summary(int count) =>
@@ -30,6 +33,12 @@ public static class Contacts
     };
 
     public static Tag? AutoReplyTag(UiContact c) => c.AutoReply ? new("auto-reply", TagKind.Info) : null;
+
+    /// <summary>Blocked by its own rule, or on no list while the default blocks: nothing is sent there, pages included.</summary>
+    public static bool Blocked(UiContact c, string? defaultPolicy) =>
+        c.SendMode == "blocked" || (c.SendMode == "none" && defaultPolicy == "block");
+
+    public static Tag? PageFromTag(UiContact c) => c.PagesMe ? new("can page me", TagKind.Warn) : null;
 
     public static string Subtitle(UiContact c) =>
         string.Join(" · ", new[] { c.Name, c.Username is null ? null : "@" + c.Username }.Where(s => !string.IsNullOrEmpty(s)));
@@ -54,7 +63,8 @@ public static class Contacts
                 "blocked" => "Sessions may listen here, but can't reply.",
                 _ => "Sessions may listen here and reply without asking while they do.",
             };
-        return $"{send} {reply}";
+        if (!c.CanPage) return $"{send} {reply}";
+        return $"{send} {reply} {(c.PagesMe ? "Their /page rings you." : "Their /page is ignored.")}";
     }
 
     public static string Details(UiContact c)

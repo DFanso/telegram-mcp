@@ -6,6 +6,7 @@ import {
   resolveRef,
   rulesMentioning,
   validateNickname,
+  type ChatEntry,
   type ChatKey,
   type Config,
   type RuleList,
@@ -61,9 +62,47 @@ export function listContacts(config: Config, meId?: number): UiContact[] {
         autoReply: isListed(config, 'autoReply', chat),
         policy: policyLabel(config, chat),
         sameChat: entries.filter(([n, other]) => n !== nickname && other.id === e.id).map(([n]) => n),
+        pageable: notPageable(e, meId) === null,
+        pageFrom: config.paging.pageFrom.includes(e.id),
       }
     })
     .sort((a, b) => a.nickname.localeCompare(b.nickname))
+}
+
+/**
+ * Pages go between people: "/page <reason>" in a private chat, answered by the other person's
+ * daemon. Returns what the chat is instead ("a group", "you"), or null for a person.
+ */
+function notPageable(e: ChatEntry, meId?: number): string | null {
+  if (meId !== undefined && e.id === meId) return 'you'
+  if (e.type === 'bot') return 'a bot'
+  if (e.type === 'group' || e.type === 'channel') return `a ${e.type}`
+  if (e.id <= 0) return 'a group or channel'
+  return null
+}
+
+/**
+ * Puts the person's user id on paging.pageFrom (their "/page <reason>" rings you), or takes it off.
+ * pageFrom holds ids, not nicknames, since a username can change hands. False = no change.
+ */
+export function setPageFrom(config: Config, nickname: string, on: boolean, meId?: number): boolean {
+  const key = keyFor(config, nickname)
+  const e = config.chats[key]!
+  const not = notPageable(e, meId)
+  if (on && not) throw new Error(`Only a person can page you, and "${key}" is ${not}.`)
+  const ids = config.paging.pageFrom
+  if (ids.includes(e.id) === on) return false
+  config.paging.pageFrom = on ? [...ids, e.id] : ids.filter(id => id !== e.id)
+  return true
+}
+
+/** The saved chat the Page button pages: a person, by nickname. Throws for anything else. */
+export function pageTarget(config: Config, nickname: string, meId?: number): { nickname: string; entry: ChatEntry } {
+  const key = keyFor(config, nickname)
+  const e = config.chats[key]!
+  const not = notPageable(e, meId)
+  if (not) throw new Error(`Only a person can be paged, and "${key}" is ${not}.`)
+  return { nickname: key, entry: e }
 }
 
 /** Every entry in `list` that means this chat, by nickname, alias, id, @username or "me". */

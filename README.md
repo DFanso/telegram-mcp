@@ -185,6 +185,10 @@ Only the daemon decides what pages, from the `paging` section of the rules file:
 - **A keyword** (as a whole word) pages you only in a `vip` chat. Elsewhere, "urgent" pages no one.
 - **Claude** can page you with `telegram_page`, under the same rate limit.
 
+On the [Contacts page](#contacts), **Can page me** puts a person on `pageFrom` (by their user id) or takes them off, and **Page** sends them `/page <reason>` from your account. It rings them if you're on *their* `pageFrom`, and you get their daemon's replies in that chat.
+
+**Your own alarm sound.** Put `alarm.mp3` (or `.m4a`, `.wav`, `.aiff`, `.caf`) in the home folder and the menu bar app plays it instead of the built-in beep. The tray app plays `alarm.wav` (its sound player takes WAV only). Both look for the file on each new page, so no restart is needed, and both fall back to the beep if the file is missing or unreadable. To make a WAV from an MP3: `ffmpeg -i alarm.mp3 alarm.wav`.
+
 The sender gets fixed replies, never text Claude wrote and never their own reason echoed back: "Paging Leo now. I'll tell you when they've seen it.", "Leo saw it.", and, if nobody acks after the last try on the phone, "Leo hasn't seen it yet. Try calling." The desktop keeps ringing after that. A page only ever notifies you; its reason is shown as text and nothing in it is acted on. Every page, retry, ack and snooze is written to `pages.jsonl` in the home folder (without the reason). Pages live in the daemon's memory, so a restart drops the ones still ringing.
 
 **The phone.** Messages from your own account don't buzz your phone, so pages reach it through a bot of your own:
@@ -225,12 +229,14 @@ The menu bar icon shows the number of drafts waiting. `tgmcp menubar uninstall` 
 - **Nickname**: type a new one and press Rename. Rules that used the old name are rewritten to the new one, so the chat keeps its lists. A name that already means another chat is refused, and so is a name the rules mention that matches no chat yet (taking it would quietly put this chat on those lists). One of the chat's own aliases can become its nickname.
 - **When Claude sends a message here**: **Always allow** (`autoSend`), **Ask every time** (`requireApproval`) or **Blocked** (`blocked`). The chat ends up on exactly that list: every other entry that means the same chat is taken out of the other two, whether it's a nickname, an alias, an id, an @username or `"me"`. A chat on none of them shows as *not set*.
 - **Auto-reply**: **On** puts it on `autoReply`, so sessions may watch it and reply without asking. **Off** takes out every entry that means the chat, and sessions watching it stop getting its messages at once. The text under the buttons says when the sending rule overrides this (Ask every time still asks; Blocked still refuses).
+- **Can page me** (people only, not groups, bots or yourself): **On** puts their user id on `paging.pageFrom`, so their `/page <reason>` rings you (see [Pages](#pages)). **Off** takes it out. The row gets a *can page me* tag.
+- **Page *nickname***: type a reason (or none) and press **Page** or Return. The daemon sends `/page <reason>` to that person from your account, as one line of at most 200 characters and without the footer, since everything after `/page` is their reason. It shows under Recently sent. A chat whose sending rule blocks it (Blocked, or on no list with `defaultPolicy: "block"`) is refused.
 
 Each click saves to `config.json` at once, the same way an approval does: the file is read fresh first, so a hand edit made a moment ago is kept, and a broken file is reported, never overwritten. A click that changes nothing writes nothing. Each change is noted in `daemon.log`. Rules are per chat, so if two nicknames point to the same chat, changing one changes both; the details line under the buttons names the other.
 
 <img src="docs/menubar-contacts.png" width="370" alt="The Contacts page: four saved chats with their tags, and Team QA opened with its nickname, the sending choices (Ask every time selected) and auto-reply (Off)">
 
-This page is the menu bar's own: it goes through the daemon's local API with the token (`POST /ui/contacts`, like approvals). No MCP tool offers the same, so sessions still can't change the rules through the server.
+This page is the menu bar's own: it goes through the daemon's local API with the token (`POST /ui/contacts` and `POST /ui/contacts/page`, like approvals). No MCP tool offers the same, so sessions still can't change the rules through the server.
 
 ## Tray app (Windows)
 
@@ -243,7 +249,7 @@ It is the menu bar app's counterpart:
 
 - **The tray icon** is a paper plane, filled while a session is listening. Its badge is the number of drafts waiting, or `!` when the daemon or Telegram is down. Hover it for a summary.
 - **Click it for the panel**: the connection, **Waiting for approval** (Approve / Deny; a new chat gets a nickname box and Deny / Ask every time / Always allow), **Listening**, and **Recently sent** (hover a chat to see its messages).
-- **Contacts** (top right of the panel) is the same page as the menu bar's (see [Contacts](#contacts) above): rename a saved chat, choose what happens when Claude sends there, and turn auto-reply on or off.
+- **Contacts** (top right of the panel) is the same page as the menu bar's (see [Contacts](#contacts) above): rename a saved chat, choose what happens when Claude sends there, turn auto-reply on or off, choose who can page you, and page someone.
 - **A Windows notification** for each draft has the same choices as buttons. Click the notification itself to open the panel.
 
 Right-click the icon for Open, Contacts, Rules, Log and Quit. Quit keeps it closed until your next login. `tgmcp menubar uninstall` quits it and stops it starting at login.

@@ -170,6 +170,7 @@
                                            Visibility="{Binding Subtitle, Converter={StaticResource IfSet}}" />
                             </StackPanel>
                             <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                                <ContentControl Content="{Binding PageFromTag}" Focusable="False" />
                                 <ContentControl Content="{Binding AutoReplyTag}" Focusable="False" />
                                 <ContentControl Content="{Binding ModeTag}" Focusable="False" />
                             </StackPanel>
@@ -201,6 +202,27 @@
                                               Command="{Binding SetAutoReply}" CommandParameter="on" />
                             <local:PillButton Content="Off" Choice="True" Tint="{DynamicResource Gray}" Filled="{Binding ReplyOff, Mode=OneWay}"
                                               Command="{Binding SetAutoReply}" CommandParameter="off" Margin="6,0,0,0" />
+                        </StackPanel>
+                        <StackPanel Visibility="{Binding CanPage, Converter={StaticResource Visible}}">
+                            <TextBlock Style="{StaticResource Label}" Text="Can page me" Margin="0,6,0,4" />
+                            <StackPanel Orientation="Horizontal">
+                                <local:PillButton Content="On" Choice="True" Tint="{DynamicResource Orange}" Filled="{Binding PageOn, Mode=OneWay}"
+                                                  Command="{Binding SetPageFrom}" CommandParameter="on"
+                                                  ToolTip="Their /page rings your desktop until you ack it (paging.pageFrom)" />
+                                <local:PillButton Content="Off" Choice="True" Tint="{DynamicResource Gray}" Filled="{Binding PageOff, Mode=OneWay}"
+                                                  Command="{Binding SetPageFrom}" CommandParameter="off" Margin="6,0,0,0" />
+                            </StackPanel>
+                            <TextBlock Style="{StaticResource Label}" Text="{Binding PageTitle}" Margin="0,6,0,4" />
+                            <DockPanel>
+                                <local:PillButton DockPanel.Dock="Right" Content="{Binding PageButtonText}" Filled="True" Tint="{DynamicResource Red}" Margin="8,0,0,0"
+                                                  Command="{Binding SendPage}"
+                                                  ToolTip="Sends “/page &lt;reason&gt;” from your account. It rings them if you're on their pageFrom." />
+                                <TextBox Text="{Binding PageReason, UpdateSourceTrigger=PropertyChanged}" ToolTip="Reason (optional)">
+                                    <TextBox.InputBindings>
+                                        <KeyBinding Key="Enter" Command="{Binding SendPage}" />
+                                    </TextBox.InputBindings>
+                                </TextBox>
+                            </DockPanel>
                         </StackPanel>
                         <TextBlock Text="{Binding Explanation}" FontSize="11" Foreground="{DynamicResource Fg2}" TextWrapping="Wrap" Margin="0,10,0,0" />
                         <TextBlock Text="{Binding Details}" FontSize="10" Foreground="{DynamicResource Fg3}" TextWrapping="Wrap" Margin="0,6,0,0" />
