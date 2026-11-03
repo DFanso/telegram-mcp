@@ -1,3 +1,4 @@
+using System.Text.Json;
 using TelegramMCPTray.Core;
 using Xunit;
 
@@ -125,5 +126,31 @@ public class JsonTests
         Assert.Equal("requireApproval", c.SendMode);
         Assert.False(c.AutoReply);
         Assert.Equal(["qa-team"], c.SameChat);
+    }
+
+    [Fact]
+    public void Parses_an_edited_sent_message()
+    {
+        var r = JsonSerializer.Deserialize<SentRecord>("""
+            {"at": "2026-11-03T09:00:00Z", "chatId": 10, "chatLabel": "Leo Perera [leo]", "text": "fixed",
+             "messageId": 1000, "via": "auto", "sessionLabel": "one", "sessionId": "s_abcdefgh", "kind": "text",
+             "edited": {"at": "2026-11-03T09:05:00Z", "by": "one", "original": "first"}}
+            """, Json.Options)!;
+
+        Assert.Equal("fixed", r.Text);
+        Assert.NotNull(r.Edited);
+        Assert.Equal("one", r.Edited!.By);
+        Assert.Equal("first", r.Edited.Original);
+    }
+
+    [Fact]
+    public void A_sent_message_from_an_older_daemon_is_not_edited()
+    {
+        var r = JsonSerializer.Deserialize<SentRecord>("""
+            {"at": "2026-11-03T09:00:00Z", "chatId": 10, "chatLabel": "Leo Perera [leo]", "text": "hi",
+             "messageId": 1000, "via": "auto", "sessionLabel": "one"}
+            """, Json.Options)!;
+
+        Assert.Null(r.Edited);
     }
 }

@@ -18,7 +18,12 @@ public sealed record UiApproval(
     DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, bool FirstTime, string? Nickname, string SuggestedNickname);
 
 public sealed record SentRecord(
-    DateTimeOffset At, long ChatId, string ChatLabel, string Text, long MessageId, string Via, string? SessionLabel);
+    DateTimeOffset At, long ChatId, string ChatLabel, string Text, long MessageId, string Via, string? SessionLabel,
+    /// <summary>Set once a session edited it (telegram_edit_message). Null from a daemon older than edits.</summary>
+    SentEdit? Edited = null);
+
+/// <summary>When a sent message was edited, by which session, and its text before the first edit.</summary>
+public sealed record SentEdit(DateTimeOffset At, string? By, string Original);
 
 /// <summary>A saved chat and the rules that apply to it (the Contacts page).</summary>
 public sealed record UiContact(

@@ -112,6 +112,16 @@ export interface SentRecord {
   /** auto = allowed by the rules; menubar / dialog / chat = approved there. */
   via: 'auto' | 'menubar' | 'dialog' | 'chat' | 'away'
   sessionLabel: string | null
+  /**
+   * The Claude session that wrote it: its own sends and the drafts it got approved. Absent for the
+   * pager's replies, away replies and the Page button, which no session wrote. Only this session may
+   * edit the message (telegram_edit_message).
+   */
+  sessionId?: string
+  /** What went out. Only a text message can be edited. */
+  kind?: 'text' | 'file' | 'sticker'
+  /** Set once a session edited it: when, by which session, and the text before the first edit. */
+  edited?: { at: string; by: string | null; original: string }
 }
 
 export interface UiApproval {

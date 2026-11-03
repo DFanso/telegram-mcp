@@ -60,7 +60,7 @@ export const TOOLS = {
   },
   telegram_edit_message: {
     description:
-      'Edit the text of a message this daemon sent earlier (one telegram_send_message or a /reply answer, found with telegram_read_messages or in the send result). Only works where sending needs no approval (auto-send, a watched autoReply chat, or a /reply takeover), because the chat sees the new text. It cannot edit messages the user typed, other people\'s messages, files or stickers. The footer is added again. Telegram only allows edits for 48 hours.',
+      'Edit the text of a text message this session sent recently (its telegram_send_message, a /reply answer, or a draft of its the user approved; the message id is in the send result). Only works where sending needs no approval (auto-send, a watched autoReply chat, or a /reply takeover), because the chat sees the new text. It cannot edit another session\'s messages, messages the user typed (including the Page button\'s), the pager\'s or away replies, other people\'s messages, files or stickers. The footer is added again, and the menu bar marks the message as edited. Telegram only allows edits for 48 hours.',
     input: z.object({
       chat: chatRef,
       messageId: z.number().int().describe('Id of the message to edit.'),
