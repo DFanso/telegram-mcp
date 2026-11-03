@@ -570,6 +570,21 @@ describe('away in the service', () => {
     expect(await away.onIncoming(m, false)).toBe('skipped')
   })
 
+  test('the Page button is not you speaking', async () => {
+    const away = withAway({ ...baseConfig, away: awayOn, paging: { pageFrom: [] } })
+    const r = await svc.pageContact('leo', 'ping')
+    expect(r.ok).toBe(true)
+    expect(tg.sent).toHaveLength(1)
+    const m = { ...tg.emit(LEO.id, 'hi'), outgoing: false }
+    expect(await away.onIncoming(m, false)).toBe('sent')
+  })
+
+  test('editAway reports a broken config file instead of throwing', () => {
+    setup(baseConfig)
+    writeFileSync(path, '{ not json')
+    expect(svc.editAway({ enabled: true }).ok).toBe(false)
+  })
+
   test('editAway saves and validates', () => {
     setup(baseConfig)
     expect(svc.editAway({ enabled: true })).toMatchObject({ ok: true })
