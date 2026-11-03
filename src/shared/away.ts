@@ -11,6 +11,11 @@ export const AWAY_DEFAULT_MESSAGE =
 export const AWAY_MESSAGE_MAX = 1000
 /** Only messages at most this old get a reply. */
 export const AWAY_MAX_AGE_MS = 600_000
+/**
+ * At most this many away replies in one away window, whoever writes. A wave of DMs from strangers
+ * would otherwise get a reply each from your own account, the pattern Telegram's anti-spam flags.
+ */
+export const AWAY_MAX_PER_WINDOW = 20
 
 const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/
 const timeField = (name: string, fallback: string) =>

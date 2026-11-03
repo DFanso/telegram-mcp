@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AwayResponder, type AwayDeps } from '../src/daemon/away'
+import { AWAY_MAX_PER_WINDOW } from '../src/shared/away'
 import { parseConfig, type Config } from '../src/shared/config'
 import type { IncomingMessage, PeerInfo, SentRecord } from '../src/shared/protocol'
 import { ANNA, FakeTelegram, LEO, TEAM_QA } from './fake-telegram'
@@ -12,15 +13,33 @@ const TELEGRAM: PeerInfo = { id: 777000, type: 'user', name: 'Telegram', usernam
 const SUPPORT: PeerInfo = { id: 4242, type: 'user', name: 'Volunteer Support', username: null, isSupport: true }
 const at = (day: number, h: number, m = 0) => new Date(2026, 10, day, h, m)
 
-function cfg(over: { away?: object; blocked?: number[]; autoReply?: number[] } = {}): Config {
+function cfg(
+  over: {
+    away?: object
+    blocked?: number[]
+    autoReply?: number[]
+    requireApproval?: number[]
+    autoSend?: number[]
+    defaultPolicy?: 'approve' | 'block'
+  } = {},
+): Config {
   return parseConfig(
     JSON.stringify({
       footer: '\n\nF',
+      defaultPolicy: over.defaultPolicy ?? 'approve',
       away: { enabled: true, from: '18:00', until: '09:00', message: '{name} is out 🔥', quietMinutes: 30, ...over.away },
-      rules: { blocked: over.blocked ?? [], autoReply: over.autoReply ?? [] },
+      rules: {
+        blocked: over.blocked ?? [],
+        autoReply: over.autoReply ?? [],
+        requireApproval: over.requireApproval ?? [],
+        autoSend: over.autoSend ?? [],
+      },
     }),
   )
 }
+
+/** A person nobody has saved: a stranger writing in. */
+const stranger = (n: number): PeerInfo => ({ id: 5000 + n, type: 'user', name: `Stranger ${n}`, username: null })
 
 let tg: FakeTelegram
 let config: Config
@@ -100,6 +119,8 @@ describe('AwayResponder', () => {
     ['to self', () => msg({ ...ANNA, isSelf: true })],
     ['to outgoing messages', () => msg(ANNA, undefined, { outgoing: true })],
     ['to a blocked chat', () => { config = cfg({ blocked: [ANNA.id] }); return msg(ANNA) }],
+    ['to an Ask every time chat (requireApproval)', () => { config = cfg({ requireApproval: [ANNA.id] }); return msg(ANNA) }],
+    ['to an unlisted chat when defaultPolicy is block', () => { config = cfg({ defaultPolicy: 'block' }); return msg(ANNA) }],
   ]
   for (const [name, build] of skipCases) {
     test(`no reply ${name}`, async () => {
@@ -108,6 +129,43 @@ describe('AwayResponder', () => {
       expect(tg.sent).toEqual([])
     })
   }
+
+  test('defaultPolicy block still lets an Always allow chat get a reply', async () => {
+    config = cfg({ defaultPolicy: 'block', autoSend: [ANNA.id] })
+    expect(await make().onIncoming(msg(ANNA), false)).toBe('sent')
+  })
+
+  test('no reply once the hours are over, though the message came in before', async () => {
+    const sentAt = at(4, 8, 58)
+    clock = at(4, 9, 5).getTime() // caught up after a sleep or a reconnect
+    expect(await make().onIncoming(msg(ANNA, sentAt), false)).toBe('skipped')
+    clock = at(4, 8, 59).getTime()
+    expect(await make().onIncoming(msg(ANNA, sentAt), false)).toBe('sent')
+  })
+
+  test(`at most ${AWAY_MAX_PER_WINDOW} replies a night, logged once`, async () => {
+    const r = make()
+    for (let i = 0; i < AWAY_MAX_PER_WINDOW; i++) expect(await r.onIncoming(msg(stranger(i)), false)).toBe('sent')
+    expect(await r.onIncoming(msg(stranger(100)), false)).toBe('skipped')
+    expect(await r.onIncoming(msg(stranger(101)), false)).toBe('skipped')
+    expect(tg.sent).toHaveLength(AWAY_MAX_PER_WINDOW)
+    expect(logs.filter(l => l.includes('limit'))).toHaveLength(1)
+    // The next night starts again.
+    clock = at(4, 20).getTime()
+    expect(await r.onIncoming(msg(stranger(100)), false)).toBe('sent')
+  })
+
+  test('the nightly limit survives a restart', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'away-cap-'))
+    try {
+      const statePath = join(dir, 'away.json')
+      const first = make({ statePath })
+      for (let i = 0; i < AWAY_MAX_PER_WINDOW; i++) await first.onIncoming(msg(stranger(i)), false)
+      expect(await make({ statePath }).onIncoming(msg(stranger(100)), false)).toBe('skipped')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
 
   test('no reply to a message older than 10 minutes', async () => {
     clock = at(3, 20, 15).getTime()

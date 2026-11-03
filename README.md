@@ -207,14 +207,16 @@ When you're off for the night, friends who write get one reply saying so. It's *
 
 `{name}` becomes your first name, and the footer is added as with any message. The reply goes out plain (not as a reply to their message) and without approval. The rules, so it never gets in the way:
 
-- Only private chats with people: not groups, bots, Saved Messages or blocked chats.
-- Once per chat per night. A restart in the middle of the night doesn't repeat it.
+- Only private chats with people: not groups, bots, Saved Messages, or Telegram's service and support accounts.
+- Only chats whose rules allow a message without asking: never a **Blocked** or **Ask every time** chat, nor a chat that isn't saved when `defaultPolicy` is `"block"`. (Like the pager's fixed replies: nobody is there to approve it.)
+- Once per chat per night, and at most 20 replies a night in all, so a wave of messages from strangers doesn't look like spam from your account. A restart in the middle of the night doesn't reset either.
+- Only while it's still away hours: a message from 08:58 that the laptop picks up at 09:05 gets nothing.
 - Not for 30 minutes after anything was sent from your account in that chat, whether you typed it or Claude sent it (`quietMinutes`; 0 turns this off). The Page button's message and the away reply itself don't count.
 - Not while a Claude session is handling the chat (watching it, or after `/reply`).
 - Not to someone who is paging you, or whose page is still waiting.
 - Only for messages less than 10 minutes old, so catching up after the laptop sleeps doesn't send night-time replies in the morning.
 
-Change it from the Away page of the tray app, with `tgmcp away`, or in `config.json`:
+Change it from the Away tab of the tray app, with `tgmcp away`, or in `config.json`:
 
 ```
 tgmcp away                          # show the settings and the reply text
