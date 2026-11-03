@@ -1,8 +1,10 @@
 // Menu bar companion for the telegram-mcp daemon.
-// Shows approvals (approve / deny), which Claude sessions are listening to which chats,
-// and the chats you last sent to (click a chat to see what was sent). The Contacts page lists the
-// saved chats and edits their nickname, sending rule and auto-reply in config.json. The Away page
-// sets the away auto-reply: on or off, its hours, quiet minutes and message.
+// Three tabs, like the Windows tray app. Home: tiles for Waiting, Listening and Sent pick the section
+// below them: drafts to send or deny; which Claude sessions listen to which chats, with a switch to
+// pause or resume each chat (or all of a session's) and a list of the chats Claude may listen to; and
+// the chats you last sent to (click one to see what was sent). Contacts: every saved chat with its
+// Listen switch on the row, a filter, and its sending rule, paging and nickname in config.json.
+// Away: the away auto-reply, on or off, its hours, quiet minutes and message.
 // Talks only to the local daemon on 127.0.0.1, authenticated with the token the daemon keeps in
 // the login Keychain (service "telegram-mcp"; a file instead with TELEGRAM_MCP_SECRET_STORE=file).
 
@@ -225,8 +227,15 @@ final class Store: ObservableObject {
     @Published var problem: String?
     @Published var busy: Set<String> = []
     @Published var flash: String?
+    /// The flash is good news (green check) or a failure (red warning).
+    @Published var flashOK = true
     @Published var pages: [UiPage] = []
+    /// A listen switch just flipped, by nickname, until the daemon's next state shows it: so the
+    /// switch doesn't spring back while the request is out.
+    @Published var pendingListen: [String: Bool] = [:]
     private let alarm = PageAlarm()
+
+    static let olderContacts = "The daemon is older than this app. Restart it (Restart, below) to edit contacts."
 
     let home: URL
     let port: Int
@@ -323,14 +332,14 @@ final class Store: ObservableObject {
         var body: [String: Any] = ["action": ack ? "ack" : "snooze", "from": "menubar"]
         if !ack { body["minutes"] = minutes }
         guard let req = await request("/ui/pages/\(id)", method: "POST", body: body) else {
-            show(tokenProblem ?? "No token for the daemon yet.")
+            show(tokenProblem ?? "No token for the daemon yet.", ok: false)
             return
         }
         showPages(pages.filter { $0.id != id })
         do {
             _ = try await URLSession.shared.data(for: req)
         } catch {
-            show("Could not reach the daemon: \(error.localizedDescription)")
+            show("Could not reach the daemon: \(error.localizedDescription)", ok: false)
         }
         await poll()
     }
@@ -341,17 +350,18 @@ final class Store: ObservableObject {
         if let remember { body["remember"] = remember }
         if let nickname, !nickname.trimmingCharacters(in: .whitespaces).isEmpty { body["nickname"] = nickname }
         guard let req = await request("/ui/approvals/\(id)", method: "POST", body: body) else {
-            show(tokenProblem ?? "No token for the daemon yet.")
+            show(tokenProblem ?? "No token for the daemon yet.", ok: false)
             return
         }
         busy.insert(id)
         defer { busy.remove(id) }
         do {
-            let (data, _) = try await URLSession.shared.data(for: req)
+            let (data, resp) = try await URLSession.shared.data(for: req)
             let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            show((obj?["text"] as? String) ?? (approve ? "Approved." : "Denied."))
+            let ok = (obj?["ok"] as? Bool) ?? ((resp as? HTTPURLResponse)?.statusCode == 200)
+            show((obj?["text"] as? String) ?? (!ok ? "Not done." : approve ? "Sent." : "Denied."), ok: ok)
         } catch {
-            show("Could not reach the daemon: \(error.localizedDescription)")
+            show("Could not reach the daemon: \(error.localizedDescription)", ok: false)
         }
         UNUserNotificationCenter.current().removeDeliveredNotifications(withIdentifiers: [id])
         await poll()
@@ -364,7 +374,7 @@ final class Store: ObservableObject {
         var body = change
         body["nickname"] = nickname
         guard let req = await request("/ui/contacts", method: "POST", body: body) else {
-            show(tokenProblem ?? "No token for the daemon yet.")
+            show(tokenProblem ?? "No token for the daemon yet.", ok: false)
             return nil
         }
         let key = "contact:\(nickname)"
@@ -376,13 +386,13 @@ final class Store: ObservableObject {
             let code = (resp as? HTTPURLResponse)?.statusCode
             let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             if code == 404 {
-                show("The daemon is older than this app. Restart it (below) to edit contacts.")
+                show(Self.olderContacts, ok: false)
             } else {
-                show((obj?["text"] as? String) ?? (code == 200 ? "Saved." : "Not changed."))
+                show((obj?["text"] as? String) ?? (code == 200 ? "Saved." : "Not changed."), ok: code == 200)
                 if code == 200 { saved = (obj?["nickname"] as? String) ?? nickname }
             }
         } catch {
-            show("Could not reach the daemon: \(error.localizedDescription)")
+            show("Could not reach the daemon: \(error.localizedDescription)", ok: false)
         }
         await poll()
         return saved
@@ -392,7 +402,7 @@ final class Store: ObservableObject {
     @discardableResult
     func pageContact(_ nickname: String, reason: String) async -> Bool {
         guard let req = await request("/ui/contacts/page", method: "POST", body: ["nickname": nickname, "reason": reason]) else {
-            show(tokenProblem ?? "No token for the daemon yet.")
+            show(tokenProblem ?? "No token for the daemon yet.", ok: false)
             return false
         }
         let key = "page:\(nickname)"
@@ -404,13 +414,13 @@ final class Store: ObservableObject {
             let code = (resp as? HTTPURLResponse)?.statusCode
             let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             if code == 404 {
-                show("The daemon is older than this app. Restart it (below) to page from here.")
+                show("The daemon is older than this app. Restart it (Restart, below) to page from here.", ok: false)
             } else {
                 sent = code == 200
-                show((obj?["text"] as? String) ?? (sent ? "Paged." : "Not paged."))
+                show((obj?["text"] as? String) ?? (sent ? "Paged." : "Not paged."), ok: sent)
             }
         } catch {
-            show("Could not reach the daemon: \(error.localizedDescription)")
+            show("Could not reach the daemon: \(error.localizedDescription)", ok: false)
         }
         await poll()
         return sent
@@ -421,7 +431,7 @@ final class Store: ObservableObject {
     @discardableResult
     func saveAway(_ change: [String: Any]) async -> Bool {
         guard let req = await request("/ui/away", method: "POST", body: change) else {
-            show(tokenProblem ?? "No token for the daemon yet.")
+            show(tokenProblem ?? "No token for the daemon yet.", ok: false)
             return false
         }
         busy.insert("away")
@@ -432,20 +442,69 @@ final class Store: ObservableObject {
             let code = (resp as? HTTPURLResponse)?.statusCode
             let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
             if code == 404 {
-                show(Away.olderDaemon)
+                show(Away.olderDaemon, ok: false)
             } else {
                 saved = code == 200
-                show((obj?["text"] as? String) ?? (saved ? "Saved." : "Not changed."))
+                show((obj?["text"] as? String) ?? (saved ? "Saved." : "Not changed."), ok: saved)
             }
         } catch {
-            show("Could not reach the daemon: \(error.localizedDescription)")
+            show("Could not reach the daemon: \(error.localizedDescription)", ok: false)
         }
         await poll()
         return saved
     }
 
-    private func show(_ text: String) {
+    /// The listen switches: turn auto-reply on or off for these saved chats. The daemon passes a chat's
+    /// messages to sessions only while it's on, so off pauses listening there (the watches stay) and on
+    /// resumes it. One flash for the lot; it stops at the first one that fails.
+    func setListening(_ nicknames: [String], on: Bool, label: String) async {
+        guard !nicknames.isEmpty else { return }
+        for n in nicknames { pendingListen[n] = on }
+        var failed: String?
+        for n in nicknames {
+            guard let req = await request("/ui/contacts", method: "POST", body: ["nickname": n, "autoReply": on]) else {
+                failed = tokenProblem ?? "No token for the daemon yet."
+                break
+            }
+            let key = "contact:\(n)"
+            busy.insert(key)
+            defer { busy.remove(key) }
+            do {
+                let (data, resp) = try await URLSession.shared.data(for: req)
+                let code = (resp as? HTTPURLResponse)?.statusCode
+                if code == 404 {
+                    failed = Self.olderContacts
+                    break
+                }
+                if code != 200 {
+                    let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+                    failed = (obj?["text"] as? String) ?? "\(n) wasn\u{2019}t changed."
+                    break
+                }
+            } catch {
+                failed = "Could not reach the daemon: \(error.localizedDescription)"
+                break
+            }
+        }
+        if let failed {
+            show(failed, ok: false)
+        } else if on {
+            show("Claude may listen to \(label) again.", ok: true)
+        } else {
+            show("Paused \(label): new messages there aren\u{2019}t passed to Claude.", ok: true)
+        }
+        await poll()
+        for n in nicknames { pendingListen[n] = nil }
+    }
+
+    /// Shows a line under the header for 6 seconds, and reads it out with VoiceOver.
+    private func show(_ text: String, ok: Bool = true) {
         flash = text
+        flashOK = ok
+        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested, userInfo: [
+            .announcement: text,
+            .priority: NSAccessibilityPriorityLevel.high.rawValue,
+        ])
         Task {
             try? await Task.sleep(for: .seconds(6))
             if flash == text { flash = nil }
@@ -459,11 +518,11 @@ final class Store: ObservableObject {
         if !gone.isEmpty { center.removeDeliveredNotifications(withIdentifiers: Array(gone)) }
         for a in approvals where !notified.contains(a.id) {
             let content = UNMutableNotificationContent()
-            content.title = "Approve Telegram message?"
+            content.title = "Send this Telegram message?"
             content.subtitle = "To \(a.to) (\(a.detail))"
             content.body = a.text
             content.categoryIdentifier = a.firstTime ? "APPROVAL_NEW" : "APPROVAL"
-            if a.firstTime { content.title = "First message to \(a.to): approve?" }
+            if a.firstTime { content.title = "First message to \(a.to): send it?" }
             content.userInfo = ["approvalId": a.id]
             content.sound = .default
             center.add(UNNotificationRequest(identifier: a.id, content: content, trigger: nil))
@@ -493,6 +552,54 @@ final class Store: ObservableObject {
 
     var listening: [UiSession] { (state?.sessions ?? []).filter { !$0.watches.isEmpty } }
 
+    /// The saved chat with this id: its auto-reply is the listen switch. Nil when it isn't saved, or
+    /// the daemon is older than the Contacts page.
+    func contact(chatId: Int) -> UiContact? {
+        state?.contacts?.first { $0.chatId == chatId }
+    }
+
+    /// Whether Claude may listen to this chat, counting a switch that was just flipped.
+    func listens(_ c: UiContact) -> Bool { pendingListen[c.nickname] ?? c.autoReply }
+
+    /// Chats sessions watch whose listen switch is off.
+    var pausedChats: Int {
+        Set(listening.flatMap { $0.watches.map(\.chatId) })
+            .filter { id in contact(chatId: id).map { !listens($0) } ?? false }
+            .count
+    }
+
+    /// The connection, in one word and one line, for the header and the menu bar icon.
+    var status: (health: Health, text: String) {
+        switch reachable ? (state?.telegram.phase ?? "") : "unreachable" {
+        case "connected":
+            let me = state?.telegram.me
+            return (.good, "Connected as \(me?.name ?? "?")\(me?.username.map { " (@\($0))" } ?? "")")
+        case "connecting", "starting": return (.busy, "Reconnecting\u{2026} (it retries on its own)")
+        case "logged_out": return (.bad, "Logged out. Run tgmcp login")
+        case "no_credentials": return (.bad, "No API credentials. Run tgmcp login")
+        default: return (.off, "Daemon not reachable")
+        }
+    }
+
+    /// The count of drafts waiting, else "!" when the daemon or Telegram is down. Unreachable shows
+    /// "!" even with drafts from the last good poll: those can't be decided until it's back.
+    var iconState: IconState {
+        let health = status.health
+        let waiting = reachable ? (state?.approvals.count ?? 0) : 0
+        let on = !listening.isEmpty
+        if waiting > 0 { return IconState(health: health, listening: on, badge: MenuBarIcon.badgeText(waiting), pending: true) }
+        return IconState(health: health, listening: on, badge: health == .good ? nil : "!")
+    }
+
+    /// What VoiceOver says for the menu bar icon.
+    var iconDescription: String {
+        let waiting = reachable ? (state?.approvals.count ?? 0) : 0
+        var bits = ["Telegram MCP", status.text]
+        if waiting > 0 { bits.append("\(waiting) waiting for approval") }
+        if !listening.isEmpty { bits.append("listening") }
+        return bits.joined(separator: ", ")
+    }
+
     func openFile(_ name: String) {
         NSWorkspace.shared.open(home.appendingPathComponent(name))
     }
@@ -502,7 +609,7 @@ final class Store: ObservableObject {
         p.executableURL = URL(fileURLWithPath: "/bin/launchctl")
         p.arguments = ["kickstart", "-k", "gui/\(getuid())/com.telegram-mcp.daemon"]
         try? p.run()
-        show("Restarting the daemon…")
+        show("Restarting the daemon\u{2026}")
     }
 }
 
@@ -515,10 +622,10 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate {
         self.store = store
         let center = UNUserNotificationCenter.current()
         center.delegate = self
-        let approve = UNNotificationAction(identifier: "APPROVE", title: "Approve", options: [])
+        let approve = UNNotificationAction(identifier: "APPROVE", title: "Send", options: [])
         let deny = UNNotificationAction(identifier: "DENY", title: "Deny", options: [.destructive])
-        let askNext = UNNotificationAction(identifier: "APPROVE", title: "Approve, ask next time", options: [])
-        let always = UNNotificationAction(identifier: "ALWAYS", title: "Approve, always allow", options: [])
+        let askNext = UNNotificationAction(identifier: "APPROVE", title: "Send, ask next time", options: [])
+        let always = UNNotificationAction(identifier: "ALWAYS", title: "Send, always allow", options: [])
         center.setNotificationCategories([
             UNNotificationCategory(identifier: "APPROVAL", actions: [approve, deny], intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: "APPROVAL_NEW", actions: [askNext, always, deny], intentIdentifiers: [], options: []),
@@ -561,13 +668,21 @@ func isLongDraft(_ text: String) -> Bool {
     text.split(separator: "\n", omittingEmptySubsequences: false)
         .reduce(0) { $0 + max(1, ($1.count + 54) / 55) } > 4
 }
-/// `SNAPSHOT_PAGE=contacts` renders the Contacts page and `SNAPSHOT_PAGE=away` the Away page;
-/// `SNAPSHOT_OPEN=<nickname>` opens that contact.
+/// `SNAPSHOT_PAGE=contacts` renders the Contacts tab and `SNAPSHOT_PAGE=away` the Away tab;
+/// `SNAPSHOT_OPEN=<nickname>` opens that contact. On Home, `SNAPSHOT_SECTION=listening` or `sent`
+/// picks the section below the tiles (Waiting by default).
 let snapshotPage: PanelPage = {
     switch ProcessInfo.processInfo.environment["SNAPSHOT_PAGE"] {
     case "contacts": return .contacts
     case "away": return .away
     default: return .home
+    }
+}()
+let snapshotSection: HomeSection = {
+    switch ProcessInfo.processInfo.environment["SNAPSHOT_SECTION"] {
+    case "listening": return .listening
+    case "sent": return .sent
+    default: return .waiting
     }
 }()
 let snapshotOpenContact = ProcessInfo.processInfo.environment["SNAPSHOT_OPEN"]
@@ -587,125 +702,845 @@ func ago(_ iso: String) -> String {
     return "\(s / 86400)d"
 }
 
-struct PillButton: ButtonStyle {
-    let tint: Color
-    var filled = true
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 12, weight: .semibold))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
-            .foregroundStyle(filled ? Color.white : tint)
-            .background(Capsule().fill(filled ? tint : tint.opacity(0.12)))
-            .opacity(configuration.isPressed ? 0.75 : 1)
+/// "just now", "5m ago" (the tray's AgoWords).
+func agoWords(_ iso: String) -> String {
+    let a = ago(iso)
+    if a.isEmpty { return "" }
+    return a == "now" ? "just now" : "\(a) ago"
+}
+
+/// One or two letters for an avatar: "Leo Gavin" → "LG", "team-qa" → "TQ", "@anna_k" → "AK",
+/// "leo" → "L" (Format.Initials in the tray). Emoji and symbols are skipped; nothing usable gives "?".
+/// A label's trailing " [nickname]" is not part of the name: "Leo Perera [leo]" → "LP", not "LL".
+func initials(_ name: String) -> String {
+    var name = name
+    if name.hasSuffix("]"), let open = name.range(of: " [", options: .backwards), open.lowerBound > name.startIndex {
+        name = String(name[..<open.lowerBound])
+    }
+    let separators: Set<Character> = [" ", "-", "_", ".", "@", "(", ")"]
+    let firsts = name.split(whereSeparator: { separators.contains($0) })
+        .compactMap { $0.first(where: { $0.isLetter || $0.isNumber }) }
+    guard let first = firsts.first else { return "?" }
+    let head = String(first).uppercased()
+    return firsts.count == 1 ? head : head + String(firsts[firsts.count - 1]).uppercased()
+}
+
+// MARK: - Look: colours, icons, avatars
+
+extension Color {
+    /// 0xAARRGGBB, as the tray app writes its colours (tray/App/Theme.cs).
+    init(argb: UInt32) {
+        self.init(.sRGB,
+                  red: Double((argb >> 16) & 0xFF) / 255,
+                  green: Double((argb >> 8) & 0xFF) / 255,
+                  blue: Double(argb & 0xFF) / 255,
+                  opacity: Double((argb >> 24) & 0xFF) / 255)
     }
 }
 
-struct IconButton: ButtonStyle {
-    func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 7)
-            .padding(.vertical, 4)
-            .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(configuration.isPressed ? 0.12 : 0.05)))
+/// What a chip or a dot means: green good, amber needs you, red bad, blue listening, grey idle.
+enum Tone { case good, warn, bad, info, muted }
+
+/// The daemon and Telegram, in one word: green online, yellow reconnecting, red logged out, grey offline.
+enum Health: Equatable { case good, busy, bad, off }
+
+/// The panel's colours, the same as the tray's (tray/App/Theme.cs), light and dark. Every colour used
+/// for text is at least 4.5:1 (WCAG AA) against a card in its theme and against a wash of its own colour.
+struct Palette {
+    let dark: Bool
+    init(_ scheme: ColorScheme) { dark = scheme == .dark }
+
+    private func c(_ darkValue: UInt32, _ lightValue: UInt32) -> Color { Color(argb: dark ? darkValue : lightValue) }
+
+    var fg: Color { c(0xFFF7F5F3, 0xFF1E1A17) }
+    var fg2: Color { c(0xFFC9C3BE, 0xFF5B544F) }
+    var fg3: Color { c(0xFFB8B1AC, 0xFF6B635D) }
+    var card: Color { c(0x14FFFFFF, 0x8CFFFFFF) }
+    var cardBorder: Color { c(0x1CFFFFFF, 0x14000000) }
+    var subtle: Color { c(0x0FFFFFFF, 0x0A000000) }
+    var subtle2: Color { c(0x1AFFFFFF, 0x12000000) }
+    var divider: Color { c(0x1AFFFFFF, 0x14000000) }
+    var accent: Color { c(0xFFFF8A63, 0xFFC23A12) }
+    var accentSoft: Color { c(0x2EFF6A3D, 0x24EE4F22) }
+    var green: Color { c(0xFF5BE3A0, 0xFF0F6B37) }
+    var orange: Color { c(0xFFFFBE4D, 0xFF8A5200) }
+    var yellow: Color { c(0xFFF5D547, 0xFF7A6200) }
+    var red: Color { c(0xFFFFB0B0, 0xFFA61F15) }
+    var blue: Color { c(0xFF7CCBF7, 0xFF0D5C99) }
+    var gray: Color { c(0xFFC2BBB6, 0xFF5F5852) }
+    var accentFill: Color { c(0xFFE0501F, 0xFFC93C14) }
+    var badgeBg: Color { c(0xFFFFBE4D, 0xFF8A5200) }
+    var badgeFg: Color { c(0xFF1E1A17, 0xFFFFFFFF) }
+    /// An ordinary window (the page alarm): opaque, no glass.
+    var surface: Color { c(0xFF2B2725, 0xFFF6F2EE) }
+
+    /// The panel's warm smoke, top to bottom. Opaque for snapshots, which can't draw the glass behind it.
+    func smoke(top: Bool, opaque: Bool) -> Color {
+        let v: UInt32 = dark ? (top ? 0xC83A3532 : 0xD8262322) : (top ? 0xD9F6F2EE : 0xE6ECE7E2)
+        return Color(argb: opaque ? v | 0xFF00_0000 : v)
+    }
+
+    /// A faint fill of a status colour, for pills and banners.
+    func wash(_ color: Color) -> Color { color.opacity(dark ? 0.15 : 0.133) }
+
+    func tone(_ t: Tone) -> Color {
+        switch t {
+        case .good: return green
+        case .warn: return orange
+        case .bad: return red
+        case .info: return blue
+        case .muted: return gray
+        }
+    }
+
+    func health(_ h: Health) -> Color {
+        switch h {
+        case .good: return green
+        case .busy: return yellow
+        case .bad: return red
+        case .off: return gray
+        }
+    }
+
+    // Solid fills behind white text, each at least 4.5:1 with white in both themes.
+    static let greenFill = Color(argb: 0xFF157A41)
+    static let orangeFill = Color(argb: 0xFFA85A00)
+    static let redFill = Color(argb: 0xFFC42B2B)
+    static let blueFill = Color(argb: 0xFF1565A8)
+    static let grayFill = Color(argb: 0xFF6B6560)
+
+    /// Avatar colours: the same name always gets the same one (FNV-1a, like the tray).
+    static let avatars: [Color] = ([0xFFFF6A3D, 0xFF4CC75A, 0xFF62AEFF, 0xFFFFAA3B, 0xFFB57BFF, 0xFF2EC4B6, 0xFFFF5F8F, 0xFF8D8A85] as [UInt32])
+        .map { Color(argb: $0) }
+
+    static func avatar(_ name: String) -> Color {
+        var h: UInt32 = 2_166_136_261
+        for unit in name.lowercased().utf16 {
+            h ^= UInt32(unit)
+            h = h &* 16_777_619
+        }
+        return avatars[Int(h % UInt32(avatars.count))]
     }
 }
 
-struct SectionHeader: View {
-    let title: String
-    var count: Int? = nil
-    var body: some View {
-        HStack(spacing: 6) {
-            Text(title.uppercased()).font(.system(size: 10, weight: .semibold)).foregroundStyle(.secondary)
-            if let count, count > 0 {
-                Text("\(count)").font(.system(size: 10, weight: .bold)).foregroundStyle(.white)
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(Capsule().fill(Color.orange))
+/// SVG path data to a SwiftUI path: M L H V C S Q A Z, absolute and relative. Enough for the
+/// Lucide icons and the app's paper plane.
+enum SVGPath {
+    static func parse(_ d: String) -> Path {
+        var path = Path()
+        let s = Array(d.utf8)
+        var i = 0
+        var cmd: UInt8 = 0
+        var cur = CGPoint.zero
+        var start = CGPoint.zero
+        var lastCubic: CGPoint?
+
+        func isSpace(_ c: UInt8) -> Bool { c == 32 || c == 44 || c == 9 || c == 10 || c == 13 }
+        func isCommand(_ c: UInt8) -> Bool { ((c >= 65 && c <= 90) || (c >= 97 && c <= 122)) && c != 101 && c != 69 }
+        func skip() { while i < s.count, isSpace(s[i]) { i += 1 } }
+        func number() -> CGFloat? {
+            skip()
+            let from = i
+            if i < s.count, s[i] == 43 || s[i] == 45 { i += 1 }
+            var dot = false
+            var digits = false
+            while i < s.count {
+                let c = s[i]
+                if c >= 48 && c <= 57 {
+                    digits = true
+                    i += 1
+                } else if c == 46 && !dot {
+                    dot = true
+                    i += 1
+                } else if (c == 101 || c == 69) && digits {
+                    i += 1
+                    if i < s.count, s[i] == 43 || s[i] == 45 { i += 1 }
+                } else {
+                    break
+                }
             }
-            Spacer()
+            guard digits, let v = Double(String(decoding: s[from..<i], as: UTF8.self)) else {
+                i = from
+                return nil
+            }
+            return CGFloat(v)
+        }
+        func flag() -> Bool? {
+            skip()
+            guard i < s.count, s[i] == 48 || s[i] == 49 else { return nil }
+            let on = s[i] == 49
+            i += 1
+            return on
+        }
+
+        parsing: while true {
+            skip()
+            guard i < s.count else { break }
+            if isCommand(s[i]) {
+                cmd = s[i]
+                i += 1
+            } else if cmd == 0 {
+                break
+            }
+            let rel = cmd >= 97
+            let base = rel ? cur : CGPoint.zero
+            func pt(_ x: CGFloat, _ y: CGFloat) -> CGPoint { CGPoint(x: base.x + x, y: base.y + y) }
+            switch cmd | 0x20 {
+            case 109: // m
+                guard let x = number(), let y = number() else { break parsing }
+                cur = pt(x, y)
+                start = cur
+                path.move(to: cur)
+                cmd = rel ? 108 : 76 // more pairs after a move are lines
+                lastCubic = nil
+            case 108: // l
+                guard let x = number(), let y = number() else { break parsing }
+                cur = pt(x, y)
+                path.addLine(to: cur)
+                lastCubic = nil
+            case 104: // h
+                guard let x = number() else { break parsing }
+                cur = CGPoint(x: rel ? cur.x + x : x, y: cur.y)
+                path.addLine(to: cur)
+                lastCubic = nil
+            case 118: // v
+                guard let y = number() else { break parsing }
+                cur = CGPoint(x: cur.x, y: rel ? cur.y + y : y)
+                path.addLine(to: cur)
+                lastCubic = nil
+            case 99: // c
+                guard let x1 = number(), let y1 = number(), let x2 = number(), let y2 = number(),
+                      let x = number(), let y = number() else { break parsing }
+                let c2 = pt(x2, y2)
+                let end = pt(x, y)
+                path.addCurve(to: end, control1: pt(x1, y1), control2: c2)
+                lastCubic = c2
+                cur = end
+            case 115: // s
+                guard let x2 = number(), let y2 = number(), let x = number(), let y = number() else { break parsing }
+                let c1 = lastCubic.map { CGPoint(x: 2 * cur.x - $0.x, y: 2 * cur.y - $0.y) } ?? cur
+                let c2 = pt(x2, y2)
+                let end = pt(x, y)
+                path.addCurve(to: end, control1: c1, control2: c2)
+                lastCubic = c2
+                cur = end
+            case 113: // q
+                guard let x1 = number(), let y1 = number(), let x = number(), let y = number() else { break parsing }
+                let end = pt(x, y)
+                path.addQuadCurve(to: end, control: pt(x1, y1))
+                cur = end
+                lastCubic = nil
+            case 97: // a
+                guard let rx = number(), let ry = number(), let rotation = number(), let large = flag(),
+                      let sweep = flag(), let x = number(), let y = number() else { break parsing }
+                let end = pt(x, y)
+                arc(&path, from: cur, to: end, rx: rx, ry: ry, degrees: rotation, large: large, sweep: sweep)
+                cur = end
+                lastCubic = nil
+            case 122: // z
+                path.closeSubpath()
+                cur = start
+                cmd = 0
+                lastCubic = nil
+            default:
+                break parsing
+            }
+        }
+        return path
+    }
+
+    /// An elliptical arc as cubic curves (SVG 1.1, appendix F.6.5).
+    private static func arc(_ path: inout Path, from p0: CGPoint, to p1: CGPoint, rx rx0: CGFloat, ry ry0: CGFloat,
+                            degrees: CGFloat, large: Bool, sweep: Bool) {
+        var rx = abs(rx0)
+        var ry = abs(ry0)
+        guard rx > 0, ry > 0, p0 != p1 else {
+            path.addLine(to: p1)
+            return
+        }
+        let phi = degrees * .pi / 180
+        let cosP = cos(phi)
+        let sinP = sin(phi)
+        let dx = (p0.x - p1.x) / 2
+        let dy = (p0.y - p1.y) / 2
+        let x1 = cosP * dx + sinP * dy
+        let y1 = -sinP * dx + cosP * dy
+        let lambda = (x1 * x1) / (rx * rx) + (y1 * y1) / (ry * ry)
+        if lambda > 1 {
+            rx *= lambda.squareRoot()
+            ry *= lambda.squareRoot()
+        }
+        let num = rx * rx * ry * ry - rx * rx * y1 * y1 - ry * ry * x1 * x1
+        let den = rx * rx * y1 * y1 + ry * ry * x1 * x1
+        var coef = den == 0 ? 0 : max(0, num / den).squareRoot()
+        if large == sweep { coef = -coef }
+        let cxp = coef * rx * y1 / ry
+        let cyp = -coef * ry * x1 / rx
+        let cx = cosP * cxp - sinP * cyp + (p0.x + p1.x) / 2
+        let cy = sinP * cxp + cosP * cyp + (p0.y + p1.y) / 2
+        let first = atan2((y1 - cyp) / ry, (x1 - cxp) / rx)
+        var delta = atan2((-y1 - cyp) / ry, (-x1 - cxp) / rx) - first
+        if sweep && delta < 0 { delta += 2 * .pi }
+        if !sweep && delta > 0 { delta -= 2 * .pi }
+        let n = max(1, Int((abs(delta) / (.pi / 2)).rounded(.up)))
+        let step = delta / CGFloat(n)
+        let t = 4 / 3 * tan(step / 4)
+        func point(_ a: CGFloat) -> CGPoint {
+            CGPoint(x: cx + rx * cos(a) * cosP - ry * sin(a) * sinP, y: cy + rx * cos(a) * sinP + ry * sin(a) * cosP)
+        }
+        func slope(_ a: CGFloat) -> CGPoint {
+            CGPoint(x: -rx * sin(a) * cosP - ry * cos(a) * sinP, y: -rx * sin(a) * sinP + ry * cos(a) * cosP)
+        }
+        var a = first
+        for k in 0..<n {
+            let b = a + step
+            let pa = point(a)
+            let da = slope(a)
+            let pb = k == n - 1 ? p1 : point(b)
+            let db = slope(b)
+            path.addCurve(to: pb,
+                          control1: CGPoint(x: pa.x + t * da.x, y: pa.y + t * da.y),
+                          control2: CGPoint(x: pb.x - t * db.x, y: pb.y - t * db.y))
+            a = b
         }
     }
 }
 
-struct Placeholder: View {
-    let text: String
-    var body: some View {
-        Text(text).font(.system(size: 12)).foregroundStyle(.tertiary).padding(.vertical, 2)
+/// Icons from Lucide (https://lucide.dev), lucide-static 0.460.0, ISC License, the same set the tray
+/// app draws (tray/App/Icons.xaml). Copyright (c) for portions of Lucide are held by Cole Bemis
+/// 2013-2022 as part of Feather (MIT); all other copyright (c) for Lucide is held by Lucide Contributors 2022.
+/// Each is a 24x24 outline drawn with a round stroke.
+enum Lucide {
+    static let raw: [String: String] = [
+        "bell-ring": "M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9 M10.3 21a1.94 1.94 0 0 0 3.4 0 M4 2C2.8 3.7 2 5.7 2 8 M22 8c0-2.3-.8-4.3-2-6",
+        "bot": "M12 8V4H8 M6,8 H18 A2,2 0 0 1 20,10 V18 A2,2 0 0 1 18,20 H6 A2,2 0 0 1 4,18 V10 A2,2 0 0 1 6,8 Z M2 14h2 M20 14h2 M15 13v2 M9 13v2",
+        "check": "M20 6 9 17l-5-5",
+        "chevron-down": "M6 9 l6 6 6-6",
+        "chevron-up": "M18 15 l-6-6-6 6",
+        "circle-check": "M2,12 A10,10 0 1 0 22,12 A10,10 0 1 0 2,12 Z M9 12 l2 2 4-4",
+        "clock": "M2,12 A10,10 0 1 0 22,12 A10,10 0 1 0 2,12 Z M12,6 L12,12 L16,14",
+        "external-link": "M15 3h6v6 M10 14 21 3 M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6",
+        "house": "M15 21v-8a1 1 0 0 0-1-1h-4a1 1 0 0 0-1 1v8 M3 10a2 2 0 0 1 .709-1.528l7-5.999a2 2 0 0 1 2.582 0l7 5.999A2 2 0 0 1 21 10v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z",
+        "info": "M2,12 A10,10 0 1 0 22,12 A10,10 0 1 0 2,12 Z M12 16v-4 M12 8h.01",
+        "megaphone": "M3 11 l18-5v12L3 14v-3z M11.6 16.8a3 3 0 1 1-5.8-1.6",
+        "message-circle": "M7.9 20A9 9 0 1 0 4 16.1L2 22Z",
+        "moon": "M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z",
+        "power": "M12 2v10 M18.4 6.6a9 9 0 1 1-12.77.04",
+        "radio": "M4.9 19.1C1 15.2 1 8.8 4.9 4.9 M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5 M10,12 A2,2 0 1 0 14,12 A2,2 0 1 0 10,12 Z M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5 M19.1 4.9C23 8.8 23 15.1 19.1 19",
+        "rotate-cw": "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8 M21 3v5h-5",
+        "scroll-text": "M15 12h-5 M15 8h-5 M19 17V5a2 2 0 0 0-2-2H4 M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3",
+        "search": "M3,11 A8,8 0 1 0 19,11 A8,8 0 1 0 3,11 Z M21 21 l-4.3-4.3",
+        "send": "M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z M21.854 2.147 l-10.94 10.939",
+        "settings": "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z M9,12 A3,3 0 1 0 15,12 A3,3 0 1 0 9,12 Z",
+        "terminal": "M4,17 L10,11 L4,5 M12,19 L20,19",
+        "triangle-alert": "M21.73 18 l-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3 M12 9v4 M12 17h.01",
+        "unplug": "M19 5 l3-3 M2 22 l3-3 M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z M7.5 13.5 10 11 M10.5 16.5 13 14 M12 6 l6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z",
+        "user-plus": "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M5,7 A4,4 0 1 0 13,7 A4,4 0 1 0 5,7 Z M19,8 L19,14 M22,11 L16,11",
+        "user": "M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2 M8,7 A4,4 0 1 0 16,7 A4,4 0 1 0 8,7 Z",
+        "users": "M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M5,7 A4,4 0 1 0 13,7 A4,4 0 1 0 5,7 Z M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75",
+        "x": "M18 6 6 18 M6 6 l12 12",
+    ]
+
+    static let paths: [String: Path] = raw.mapValues { SVGPath.parse($0) }
+}
+
+/// The app's paper plane (docs/icon.svg, a 100x100 drawing), for the panel's logo and the menu bar icon.
+enum Brand {
+    static let plane = SVGPath.parse(
+        "M88.723,12.142C76.419,17.238,23.661,39.091,9.084,45.047c-9.776,3.815-4.053,7.392-4.053,7.392s8.345,2.861,15.499,5.007c7.153,2.146,10.968-0.238,10.968-0.238l33.62-22.652c11.922-8.107,9.061-1.431,6.199,1.431c-6.199,6.2-16.452,15.975-25.036,23.844c-3.815,3.338-1.908,6.199-0.238,7.63c6.199,5.246,23.129,15.976,24.082,16.691c5.037,3.566,14.945,8.699,16.452-2.146c0,0,5.961-37.435,5.961-37.435c1.908-12.637,3.815-24.321,4.053-27.659C97.307,8.804,88.723,12.142,88.723,12.142z")
+    static let gradient = LinearGradient(colors: [Color(argb: 0xFF37AEE2), Color(argb: 0xFF1B92D1)],
+                                         startPoint: .topLeading, endPoint: .bottomTrailing)
+}
+
+/// A path drawn on a `box`-unit square, scaled to the frame.
+struct ScaledShape: Shape {
+    let shape: Path
+    var box: CGFloat = 24
+    func path(in rect: CGRect) -> Path {
+        shape.applying(CGAffineTransform(translationX: rect.minX, y: rect.minY).scaledBy(x: rect.width / box, y: rect.height / box))
     }
 }
 
-struct Tag: View {
-    let text: String
-    let color: Color
+/// A Lucide icon by name, in the current foreground colour. Decorative: the control it sits on is named.
+struct LucideIcon: View {
+    let name: String
+    let size: CGFloat
+    init(_ name: String, size: CGFloat = 15) {
+        self.name = name
+        self.size = size
+    }
     var body: some View {
-        Text(text).font(.system(size: 9, weight: .semibold)).foregroundStyle(color)
-            .lineLimit(1).fixedSize() // never wrap: the name next to it truncates instead
-            .padding(.horizontal, 6).padding(.vertical, 2)
-            .background(Capsule().fill(color.opacity(0.13)))
+        ScaledShape(shape: Lucide.paths[name] ?? Path())
+            .stroke(style: StrokeStyle(lineWidth: max(1.1, 2 * size / 24), lineCap: .round, lineJoin: .round))
+            .frame(width: size, height: size)
+            .accessibilityHidden(true)
     }
 }
 
-/// One option in a row of choices: filled when it's the current one.
-struct ChoiceButton: ButtonStyle {
-    let tint: Color
-    let selected: Bool
+/// The window behind the panel: macOS's glass with the tray's warm smoke over it.
+struct PanelBackground: View {
+    @Environment(\.colorScheme) private var scheme
+    var body: some View {
+        let p = Palette(scheme)
+        ZStack {
+            if !isSnapshot { Rectangle().fill(.ultraThinMaterial) }
+            LinearGradient(colors: [p.smoke(top: true, opaque: isSnapshot), p.smoke(top: false, opaque: isSnapshot)],
+                           startPoint: .top, endPoint: UnitPoint(x: 0.35, y: 1))
+        }
+        .ignoresSafeArea()
+    }
+}
+
+/// A frosted card: the panel's sections sit in these.
+struct CardBackground: ViewModifier {
+    @Environment(\.colorScheme) private var scheme
+    var padding: CGFloat
+    var highlighted: Bool
+    func body(content: Content) -> some View {
+        let p = Palette(scheme)
+        content
+            .padding(padding)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(p.card))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(highlighted ? p.accent.opacity(0.55) : p.cardBorder, lineWidth: highlighted ? 1.5 : 1))
+    }
+}
+
+extension View {
+    func card(padding: CGFloat = 14, highlighted: Bool = false) -> some View {
+        modifier(CardBackground(padding: padding, highlighted: highlighted))
+    }
+}
+
+/// A capsule button. With `fill`: a solid fill and white text (pass a fill from Palette, dark enough for
+/// 4.5:1). Without: the tint's text on a faint wash of it. `wide` stretches it to the space it gets.
+struct Pill: ButtonStyle {
+    var tint: Color
+    var fill: Color? = nil
+    var wide = false
+    @Environment(\.isEnabled) private var enabled
+
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
-            .font(.system(size: 11, weight: .semibold))
-            .padding(.horizontal, 10)
-            .padding(.vertical, 4)
-            .foregroundStyle(selected ? Color.white : Color.primary.opacity(0.75))
-            .background(Capsule().fill(selected ? tint : Color.primary.opacity(0.07)))
-            .opacity(configuration.isPressed ? 0.75 : 1)
+            .font(.system(size: 12, weight: .semibold))
+            .lineLimit(1)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 6)
+            .frame(maxWidth: wide ? .infinity : nil)
+            .foregroundStyle(fill == nil ? tint : Color.white)
+            .background(Capsule().fill(fill ?? tint.opacity(0.14)))
+            .contentShape(Capsule())
+            .opacity(configuration.isPressed ? 0.75 : enabled ? 1 : 0.5)
+    }
+}
+
+/// A round icon-only button in the header (Rules, Log).
+struct RoundButton: View {
+    @Environment(\.colorScheme) private var scheme
+    let icon: String
+    let label: String
+    let help: String
+    let action: () -> Void
+    var body: some View {
+        let p = Palette(scheme)
+        Button(action: action) {
+            LucideIcon(icon, size: 16)
+                .foregroundStyle(p.fg2)
+                .frame(width: 32, height: 32)
+                .background(Circle().fill(p.card))
+                .overlay(Circle().strokeBorder(p.cardBorder))
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+        .accessibilityLabel(Text(verbatim: label))
+    }
+}
+
+/// A plain icon + text button for the footer.
+struct FooterButton: View {
+    @Environment(\.colorScheme) private var scheme
+    let icon: String
+    let title: String
+    let help: String
+    let action: () -> Void
+    var body: some View {
+        let p = Palette(scheme)
+        Button(action: action) {
+            HStack(spacing: 5) {
+                LucideIcon(icon, size: 13)
+                Text(verbatim: title).font(.system(size: 11, weight: .medium))
+            }
+            .foregroundStyle(p.fg2)
+            .padding(.horizontal, 8).padding(.vertical, 5)
+            .background(Capsule().fill(p.subtle))
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .help(help)
+    }
+}
+
+/// A word in a coloured capsule: "needs you", "always allow", "Monitor on".
+struct Chip: View {
+    @Environment(\.colorScheme) private var scheme
+    let text: String
+    let tone: Tone
+    init(_ text: String, _ tone: Tone) {
+        self.text = text
+        self.tone = tone
+    }
+    var body: some View {
+        let p = Palette(scheme)
+        let c = p.tone(tone)
+        Text(verbatim: text)
+            .font(.system(size: 10, weight: .semibold))
+            .foregroundStyle(c)
+            .lineLimit(1).fixedSize() // never wrap: the name next to it truncates instead
+            .padding(.horizontal, 7).padding(.vertical, 2)
+            .background(Capsule().fill(p.wash(c)))
+    }
+}
+
+/// A count on amber: the drafts waiting.
+struct CountBadge: View {
+    @Environment(\.colorScheme) private var scheme
+    let count: Int
+    var body: some View {
+        let p = Palette(scheme)
+        Text(verbatim: count > 99 ? "99+" : "\(count)")
+            .font(.system(size: 10, weight: .bold))
+            .foregroundStyle(p.badgeFg)
+            .padding(.horizontal, 6).padding(.vertical, 1)
+            .frame(minWidth: 18)
+            .background(Capsule().fill(p.badgeBg))
+            .accessibilityLabel(Text(verbatim: "\(count) waiting"))
+    }
+}
+
+/// A round avatar: initials on a colour picked by name, or a glyph (groups, channels, bots).
+struct AvatarView: View {
+    let name: String
+    var glyph: String? = nil
+    var size: CGFloat = 34
+    var body: some View {
+        ZStack {
+            Circle().fill(Palette.avatar(name))
+            Circle().strokeBorder(Color.white.opacity(0.2))
+            if let glyph {
+                LucideIcon(glyph, size: size / 2).foregroundStyle(.white)
+            } else {
+                Text(verbatim: initials(name))
+                    .font(.system(size: size * 0.36, weight: .semibold))
+                    .foregroundStyle(.white)
+            }
+        }
+        .frame(width: size, height: size)
+        .accessibilityHidden(true)
+    }
+}
+
+/// An icon in a soft circle, for empty states and session rows.
+struct Disc: View {
+    @Environment(\.colorScheme) private var scheme
+    let icon: String
+    var tone: Tone? = nil
+    var size: CGFloat = 34
+    var body: some View {
+        let p = Palette(scheme)
+        LucideIcon(icon, size: size / 2)
+            .foregroundStyle(tone.map { p.tone($0) } ?? p.fg2)
+            .frame(width: size, height: size)
+            .background(Circle().fill(tone.map { p.wash(p.tone($0)) } ?? p.subtle2))
+    }
+}
+
+/// A card's title, with an optional count and something on the right.
+struct CardTitle<Trailing: View>: View {
+    let title: String
+    var count = 0
+    @ViewBuilder var trailing: () -> Trailing
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(verbatim: title).font(.system(size: 13, weight: .semibold))
+                .accessibilityAddTraits(.isHeader)
+            if count > 0 { CountBadge(count: count) }
+            Spacer(minLength: 4)
+            trailing()
+        }
+    }
+}
+
+extension CardTitle where Trailing == EmptyView {
+    init(_ title: String, count: Int = 0) {
+        self.title = title
+        self.count = count
+        self.trailing = { EmptyView() }
+    }
+}
+
+/// Nothing here yet: what would show up, and how it gets here.
+struct EmptyRow: View {
+    @Environment(\.colorScheme) private var scheme
+    let icon: String
+    var tone: Tone? = nil
+    let title: String
+    let text: String
+    var body: some View {
+        let p = Palette(scheme)
+        HStack(alignment: .top, spacing: 10) {
+            Disc(icon: icon, tone: tone)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: title).font(.system(size: 12, weight: .semibold)).foregroundStyle(p.fg2)
+                Text(verbatim: text).font(.system(size: 11)).foregroundStyle(p.fg3)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Spacer(minLength: 0)
+        }
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// A line of explanation with an icon: "what happens here, in plain words".
+struct Hint: View {
+    @Environment(\.colorScheme) private var scheme
+    var icon = "info"
+    let text: String
+    var boxed = true
+    var body: some View {
+        let p = Palette(scheme)
+        HStack(alignment: .top, spacing: 8) {
+            LucideIcon(icon, size: 14).foregroundStyle(p.accent).padding(.top, 1)
+            Text(verbatim: text).font(.system(size: 11)).foregroundStyle(p.fg2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, boxed ? 10 : 0).padding(.vertical, boxed ? 8 : 0)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(boxed ? p.subtle : .clear))
+    }
+}
+
+/// A coloured banner: the away line on Home, a config error, the flash after an action.
+struct Banner: View {
+    @Environment(\.colorScheme) private var scheme
+    let icon: String
+    let tone: Tone
+    let text: String
+    var bold: String? = nil
+    var body: some View {
+        let p = Palette(scheme)
+        HStack(alignment: .top, spacing: 8) {
+            LucideIcon(icon, size: 15).foregroundStyle(p.tone(tone)).padding(.top, 1)
+            (bold.map { Text(verbatim: $0).fontWeight(.semibold) + Text(verbatim: ": ") } ?? Text(verbatim: ""))
+                .font(.system(size: 11))
+                + Text(verbatim: text).font(.system(size: 11))
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(p.fg)
+        .fixedSize(horizontal: false, vertical: true)
+        .padding(.horizontal, 12).padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(p.wash(p.tone(tone))))
+        .accessibilityElement(children: .combine)
+    }
+}
+
+/// One choice out of a few, like a segmented control: the chosen one is filled.
+struct Segments: View {
+    @Environment(\.colorScheme) private var scheme
+    struct Option {
+        let title: String
+        let value: String
+        let fill: Color
+        let help: String
+    }
+    let options: [Option]
+    let selected: String
+    let choose: (String) -> Void
+    var body: some View {
+        let p = Palette(scheme)
+        HStack(spacing: 2) {
+            ForEach(options.indices, id: \.self) { i in
+                let o = options[i]
+                let on = o.value == selected
+                Button { if !on { choose(o.value) } } label: {
+                    Text(verbatim: o.title)
+                        .font(.system(size: 11, weight: .semibold))
+                        .lineLimit(1)
+                        .padding(.horizontal, 12).padding(.vertical, 5)
+                        .foregroundStyle(on ? Color.white : p.fg2)
+                        .background(Capsule().fill(on ? o.fill : Color.clear))
+                        .contentShape(Capsule())
+                }
+                .buttonStyle(.plain)
+                .help(o.help)
+                .accessibilityAddTraits(on ? .isSelected : [])
+            }
+        }
+        .padding(2)
+        .background(Capsule().fill(p.subtle2))
+    }
+}
+
+/// The on/off switch that lets Claude listen to a chat (its auto-reply). Blue while on.
+struct ListenSwitch: View {
+    let on: Bool
+    var busy = false
+    let label: String
+    let change: (Bool) -> Void
+    var body: some View {
+        if isSnapshot {
+            SnapshotSwitch(on: on, tint: Palette.blueFill, mini: true)
+        } else {
+            Toggle(isOn: Binding(get: { on }, set: { change($0) })) { Text(verbatim: label) }
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+                .tint(Palette.blueFill)
+                .disabled(busy)
+                .accessibilityLabel(Text(verbatim: label))
+        }
+    }
+}
+
+/// The offscreen snapshot renderer can't draw a native switch (it leaves a yellow placeholder),
+/// so snapshots get this drawing of one instead.
+struct SnapshotSwitch: View {
+    let on: Bool
+    let tint: Color
+    var mini = false
+    var body: some View {
+        let size = mini ? CGSize(width: 26, height: 15) : CGSize(width: 38, height: 22)
+        Capsule()
+            .fill(on ? tint : Color.primary.opacity(0.18))
+            .frame(width: size.width, height: size.height)
+            .overlay(alignment: on ? .trailing : .leading) {
+                Circle().fill(Color.white)
+                    .shadow(color: .black.opacity(0.25), radius: 0.5, y: 0.5)
+                    .padding(1.5)
+            }
+    }
+}
+
+/// A text box on a soft fill. The offscreen snapshot renderer can't draw text fields, so it shows the text.
+struct FieldBox: View {
+    @Environment(\.colorScheme) private var scheme
+    let placeholder: String
+    @Binding var text: String
+    var width: CGFloat? = nil
+    var center = false
+    var monospaced = false
+    var name: String
+    var submit: () -> Void = {}
+    var body: some View {
+        let p = Palette(scheme)
+        Group {
+            if isSnapshot {
+                Text(verbatim: text.isEmpty ? placeholder : text)
+                    .foregroundStyle(text.isEmpty ? p.fg3 : p.fg)
+                    .frame(maxWidth: .infinity, alignment: center ? .center : .leading)
+            } else {
+                TextField(placeholder, text: $text)
+                    .textFieldStyle(.plain)
+                    .multilineTextAlignment(center ? .center : .leading)
+                    .onSubmit(submit)
+                    .accessibilityLabel(Text(verbatim: name))
+            }
+        }
+        .font(monospaced ? .system(size: 12, weight: .medium).monospacedDigit() : .system(size: 12, weight: .medium))
+        .frame(width: width)
+        .padding(.horizontal, 10).padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(p.subtle2))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(p.cardBorder))
+    }
+}
+
+/// A setting's name and a line saying what it does, above its control.
+struct Setting<Content: View>: View {
+    @Environment(\.colorScheme) private var scheme
+    let title: String
+    let hint: String
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        let p = Palette(scheme)
+        VStack(alignment: .leading, spacing: 0) {
+            Text(verbatim: title).font(.system(size: 12, weight: .semibold))
+            Text(verbatim: hint).font(.system(size: 11)).foregroundStyle(p.fg3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 2).padding(.bottom, 7)
+            content()
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
 // MARK: - Panel
 
-enum PanelPage { case home, contacts, away }
+enum PanelPage: Int { case home = 1, contacts, away }
+
+/// What Home shows under its tiles: one section at a time, so the panel stays short.
+enum HomeSection { case waiting, listening, sent }
+
+/// The Contacts tab's filter: everything, or only the chats Claude may (or may not) listen to.
+enum ContactFilter: String, CaseIterable {
+    case all = "All"
+    case on = "Listening"
+    case off = "Not listening"
+}
 
 struct PanelView: View {
+    static let width: CGFloat = 392
+
     @EnvironmentObject var store: Store
+    @Environment(\.colorScheme) private var scheme
     @State private var page: PanelPage = snapshotPage
+    @State private var section: HomeSection = snapshotSection
     @State private var query = ""
+    @State private var filter: ContactFilter = .all
+    @FocusState private var searchFocused: Bool
+
+    private var p: Palette { Palette(scheme) }
 
     /// macOS doesn't keep a menu bar panel on screen: a long draft (opened with Show all), or many of
     /// them, pushed the buttons below the bottom of the screen. So the panel is at most as tall as
-    /// the screen, and the middle (approvals, listening, recent) scrolls; header and footer stay put.
+    /// the screen, and the middle scrolls; the header (status, tabs) and footer stay put.
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
                 header
-                if let flash = store.flash {
-                    Text(flash).font(.system(size: 11)).foregroundStyle(.secondary)
-                        .padding(8).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.10)))
-                }
+                tabs
+                if page == .contacts { contactTools }
+                if let flash = store.flash { flashBanner(flash) }
             }
-            .padding(14)
+            .padding(.horizontal, 18).padding(.top, 18).padding(.bottom, 12)
             middle
-            VStack(alignment: .leading, spacing: 14) {
-                Divider()
-                footer
-            }
-            .padding([.horizontal, .bottom], 14)
+            footer
+                .padding(.horizontal, 18).padding(.top, 8).padding(.bottom, 12)
         }
-        .frame(width: 370)
+        .frame(width: Self.width)
         .frame(maxHeight: maxPanelHeight)
         // MenuBarExtra sizes its window to the content's minimum height, and a ScrollView's is 0;
         // pin it to the ideal height instead (the content's, capped by the frame above).
         .fixedSize(horizontal: false, vertical: true)
+        .foregroundStyle(p.fg)
+        .background(PanelBackground())
+        .background(shortcuts)
+        .onExitCommand(perform: escape)
+        .onChange(of: store.state?.approvals.count ?? 0) { old, new in
+            // A new draft needs you more than whatever was open.
+            if new > old, page == .home { withAnimation(.easeOut(duration: 0.15)) { section = .waiting } }
+        }
     }
 
     /// A ScrollView is as tall as its content until the panel's height cap squeezes it.
     @ViewBuilder private var middle: some View {
         if isSnapshot {
             // The offscreen snapshot renderer draws a ScrollView blank; this sizes the same, and clips.
-            sections.fixedSize(horizontal: false, vertical: true)
+            content.fixedSize(horizontal: false, vertical: true)
                 .frame(minHeight: 0, maxHeight: .infinity, alignment: .top).clipped()
         } else {
-            ScrollView(.vertical) { sections }.scrollBounceBehavior(.basedOnSize)
+            ScrollView(.vertical) { content }.scrollBounceBehavior(.basedOnSize)
         }
     }
 
@@ -716,180 +1551,308 @@ struct PanelView: View {
         return max(300, visible - 16)
     }
 
-    private var sections: some View {
-        VStack(alignment: .leading, spacing: 14) {
+    private var content: some View {
+        VStack(alignment: .leading, spacing: 12) {
             if let state = store.state, store.reachable {
-                if let err = state.configError {
-                    Label(err, systemImage: "exclamationmark.triangle.fill")
-                        .font(.system(size: 11)).foregroundStyle(.orange)
-                }
+                if let err = state.configError { Banner(icon: "triangle-alert", tone: .bad, text: err) }
                 switch page {
+                case .home: home(state)
                 case .contacts:
-                    ContactsList(contacts: state.contacts, query: query, defaultPolicy: state.defaultPolicy ?? "approve",
-                                 waiting: state.approvals.count) { page = .home }
+                    ContactsList(contacts: state.contacts, query: query, filter: filter,
+                                 defaultPolicy: state.defaultPolicy ?? "approve", waiting: state.approvals.count) {
+                        page = .home
+                        section = .waiting
+                    }
                 case .away:
                     if let away = state.away {
                         AwayEditor(away: away, name: state.telegram.me?.name, footer: state.footer)
                     } else {
-                        Placeholder(text: Away.olderDaemon)
+                        EmptyRow(icon: "moon", title: "Away needs a newer daemon", text: Away.olderDaemon).card()
                     }
-                case .home:
-                    if let line = Away.badge(state.away) { awayLine(line) }
-                    approvals(state.approvals)
-                    listening
-                    recent
                 }
-            } else if let problem = store.problem {
-                Text(problem).font(.system(size: 12)).foregroundStyle(.secondary)
+            } else {
+                offline(store.problem ?? "Connecting to the daemon\u{2026}")
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .padding([.horizontal, .bottom], 14)
+        .padding(.horizontal, 18).padding(.bottom, 4)
     }
 
-    @ViewBuilder private var header: some View {
-        switch page {
-        case .contacts: contactsHeader
-        case .away: awayHeader
-        case .home: homeHeader
+    // MARK: Header
+
+    /// The logo, the name, the connection status and the Rules and Log buttons. The status gets all the
+    /// width the buttons leave (two lines if it needs them), so a long name is never cut off.
+    private var header: some View {
+        let status = store.status
+        return HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                Circle().fill(p.card)
+                Circle().strokeBorder(p.cardBorder)
+                ScaledShape(shape: Brand.plane, box: 100).fill(Brand.gradient)
+                    .frame(width: 24, height: 24).offset(x: -0.5, y: 0.5)
+            }
+            .frame(width: 42, height: 42)
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Telegram MCP").font(.system(size: 16, weight: .semibold))
+                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                    Circle().fill(p.health(status.health)).frame(width: 7, height: 7)
+                        .alignmentGuide(.firstTextBaseline) { $0[.bottom] - 1 }
+                    Text(verbatim: status.text)
+                        .font(.system(size: 11))
+                        .lineLimit(2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.leading, 7).padding(.trailing, 9).padding(.vertical, 3)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(p.wash(p.health(status.health))))
+                .help(status.text)
+                .accessibilityElement(children: .combine)
+                .accessibilityLabel(Text(verbatim: "Status: \(status.text)"))
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .layoutPriority(1)
+            HStack(spacing: 8) {
+                RoundButton(icon: "settings", label: "Rules", help: "Rules: open config.json, where every chat\u{2019}s rules live") {
+                    store.openFile("config.json")
+                }
+                RoundButton(icon: "scroll-text", label: "Log", help: "Log: open daemon.log, for when something looks wrong") {
+                    store.openFile("daemon.log")
+                }
+            }
+            .fixedSize()
         }
     }
 
-    private var awayHeader: some View {
-        HStack(spacing: 10) {
-            Button { page = .home } label: { Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold)) }
-                .buttonStyle(IconButton()).help("Back")
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Away").font(.system(size: 13, weight: .semibold))
-                Text(store.state?.away.map(Away.status) ?? "One reply for you while you\u{2019}re off")
-                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+    /// Home (drafts, listening, sent), Contacts (each chat's rules) and Away (the away auto-reply).
+    private var tabs: some View {
+        let waiting = store.reachable ? (store.state?.approvals.count ?? 0) : 0
+        let away = Away.badge(store.state?.away) != nil
+        return HStack(spacing: 2) {
+            tab(.home, "Home", icon: "house", key: "1", help: "Home: drafts waiting, who\u{2019}s listening, what was sent (\u{2318}1)") {
+                if waiting > 0 { CountBadge(count: waiting) }
             }
-            Spacer()
+            tab(.contacts, "Contacts", icon: "users", key: "2", help: "Contacts: each chat\u{2019}s rules, and who Claude may listen to (\u{2318}2)") {
+                EmptyView()
+            }
+            tab(.away, "Away", icon: "moon", key: "3", help: "Away: one reply for you while you\u{2019}re off (\u{2318}3)") {
+                // Green while away replies can go out.
+                if away {
+                    Circle().fill(p.green).frame(width: 7, height: 7).accessibilityLabel(Text("away now"))
+                }
+            }
         }
+        .padding(3)
+        .background(Capsule().fill(p.subtle))
+        .overlay(Capsule().strokeBorder(p.cardBorder))
     }
 
-    /// On Home while replies can go out. Click it for the Away page.
-    private func awayLine(_ line: String) -> some View {
-        Button { page = .away } label: {
-            HStack(alignment: .top, spacing: 6) {
-                Image(systemName: "moon.fill").font(.system(size: 11)).foregroundStyle(Color.accentColor)
-                Text("\(line): people who message you privately get one reply saying you\u{2019}re away.")
-                    .font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 0)
+    private func tab<Extra: View>(_ target: PanelPage, _ title: String, icon: String, key: KeyEquivalent, help: String,
+                                  @ViewBuilder extra: () -> Extra) -> some View {
+        let on = page == target
+        return Button {
+            withAnimation(.easeOut(duration: 0.12)) { page = target }
+        } label: {
+            HStack(spacing: 6) {
+                LucideIcon(icon, size: 14)
+                Text(verbatim: title).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                extra()
             }
-            .padding(8)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.08)))
-            .contentShape(Rectangle())
+            .foregroundStyle(on ? Color.white : p.fg2)
+            .frame(maxWidth: .infinity, minHeight: 28)
+            .background(Capsule().fill(on ? p.accentFill : Color.clear))
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-        .help("Change the away hours or message")
+        .keyboardShortcut(key, modifiers: .command)
+        .help(help)
+        .accessibilityLabel(Text(verbatim: title))
+        .accessibilityAddTraits(on ? .isSelected : [])
     }
 
-    private var contactsHeader: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 10) {
-                Button { page = .home } label: { Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold)) }
-                    .buttonStyle(IconButton()).help("Back")
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Contacts").font(.system(size: 13, weight: .semibold))
-                    let n = store.state?.contacts?.count ?? 0
-                    Text("\(n) saved chat\(n == 1 ? "" : "s") · changes save to config.json at once")
-                        .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+    /// Contacts: the search box, the filter, and a line saying what the tab is for.
+    private var contactTools: some View {
+        let contacts = store.state?.contacts ?? []
+        let listening = contacts.filter { store.listens($0) }.count
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 8) {
+                LucideIcon("search", size: 15).foregroundStyle(p.fg3)
+                if isSnapshot {
+                    Text("Search by nickname, name, @username or id").foregroundStyle(p.fg3)
+                } else {
+                    TextField("Search by nickname, name, @username or id", text: $query)
+                        .textFieldStyle(.plain)
+                        .focused($searchFocused)
+                        .accessibilityLabel(Text("Search contacts"))
                 }
-                Spacer()
-            }
-            HStack(spacing: 6) {
-                Image(systemName: "magnifyingglass").font(.system(size: 11)).foregroundStyle(.secondary)
-                // The offscreen snapshot renderer can't draw text fields; show the placeholder instead.
-                if isSnapshot { Text("Search nickname, name, @username or id").foregroundStyle(.tertiary) }
-                else { TextField("Search nickname, name, @username or id", text: $query).textFieldStyle(.plain) }
                 Spacer(minLength: 0)
                 if !query.isEmpty {
-                    Button { query = "" } label: { Image(systemName: "xmark.circle.fill") }
-                        .buttonStyle(.plain).foregroundStyle(.tertiary)
+                    Button { query = "" } label: { LucideIcon("x", size: 13).foregroundStyle(p.fg3) }
+                        .buttonStyle(.plain).help("Clear (Esc)").accessibilityLabel(Text("Clear search"))
                 }
             }
             .font(.system(size: 12))
-            .padding(.horizontal, 8).padding(.vertical, 5)
-            .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.06)))
-        }
-    }
-
-    private var homeHeader: some View {
-        let phase = store.reachable ? (store.state?.telegram.phase ?? "") : "unreachable"
-        let (color, text): (Color, String) = {
-            switch phase {
-            case "connected":
-                let me = store.state?.telegram.me
-                return (.green, "Connected as \(me?.name ?? "?")\(me?.username.map { " (@\($0))" } ?? "")")
-            case "connecting", "starting": return (.yellow, "Reconnecting… (it retries on its own)")
-            case "logged_out": return (.red, "Logged out. Run tgmcp login")
-            case "no_credentials": return (.red, "No API credentials. Run tgmcp login")
-            default: return (.gray, "Daemon not reachable")
+            .padding(.horizontal, 12).padding(.vertical, 8)
+            .background(Capsule().fill(p.subtle))
+            .overlay(Capsule().strokeBorder(p.cardBorder))
+            HStack(spacing: 8) {
+                Segments(options: ContactFilter.allCases.map {
+                    Segments.Option(title: $0.rawValue, value: $0.rawValue, fill: p.accentFill,
+                                    help: $0 == .all ? "Every saved chat" : $0 == .on ? "Chats Claude may listen to" : "Chats Claude can\u{2019}t listen to")
+                }, selected: filter.rawValue) { v in filter = ContactFilter(rawValue: v) ?? .all }
+                Spacer(minLength: 0)
             }
-        }()
-        return HStack(spacing: 10) {
-            Image(systemName: "paperplane.fill").font(.system(size: 16)).foregroundStyle(Color.accentColor)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Telegram MCP").font(.system(size: 13, weight: .semibold))
-                HStack(spacing: 5) {
-                    Circle().fill(color).frame(width: 7, height: 7)
-                    Text(text).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                }
-            }
-            Spacer()
-            Button { page = .away } label: {
-                Label("Away", systemImage: Away.badge(store.state?.away) == nil ? "moon" : "moon.fill")
-            }
-            .buttonStyle(IconButton())
-            .help("Away auto-reply: one reply for you while you\u{2019}re off")
-            Button { page = .contacts } label: { Label("Contacts", systemImage: "person.2") }
-                .buttonStyle(IconButton())
-                .help("Saved chats: nicknames, sending rules and auto-reply")
+            Text(verbatim: "\(contacts.count) saved \u{00B7} Claude may listen to \(listening) \u{00B7} changes save to config.json at once")
+                .font(.system(size: 11)).foregroundStyle(p.fg3).lineLimit(1)
         }
     }
 
-    private func approvals(_ items: [UiApproval]) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "Waiting for approval", count: items.count)
-            if items.isEmpty { Placeholder(text: "Nothing waiting") }
-            ForEach(items) { ApprovalCard(item: $0) }
-        }
-    }
-
-    private var listening: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            SectionHeader(title: "Listening")
-            if store.listening.isEmpty { Placeholder(text: "No session is listening to a chat") }
-            ForEach(store.listening) { SessionRow(session: $0) }
-        }
-    }
-
-    private var recent: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            SectionHeader(title: "Recently sent")
-            if store.recentChats.isEmpty { Placeholder(text: "Nothing sent yet") }
-            ForEach(store.recentChats) { RecentChatRow(chat: $0) }
-        }
+    /// What just happened: a green check when it worked, a red warning when it didn't.
+    private func flashBanner(_ text: String) -> some View {
+        Banner(icon: store.flashOK ? "circle-check" : "triangle-alert", tone: store.flashOK ? .good : .bad, text: text)
+            .transition(.opacity)
     }
 
     private var footer: some View {
-        HStack(spacing: 6) {
-            Button { store.openFile("config.json") } label: { Label("Rules", systemImage: "list.bullet.rectangle") }
-                .buttonStyle(IconButton())
-            Button { store.openFile("daemon.log") } label: { Label("Log", systemImage: "doc.text") }
-                .buttonStyle(IconButton())
-            Button { store.restartDaemon() } label: { Label("Restart", systemImage: "arrow.clockwise") }
-                .buttonStyle(IconButton())
-            Spacer()
-            Button { NSApp.terminate(nil) } label: { Label("Quit", systemImage: "power") }
-                .buttonStyle(IconButton())
+        HStack(spacing: 8) {
+            FooterButton(icon: "rotate-cw", title: "Restart", help: "Restart the daemon (launchd starts it again)") { store.restartDaemon() }
+            Text("Esc closes \u{00B7} \u{2318}1\u{2013}3 tabs \u{00B7} \u{2318}F find")
+                .font(.system(size: 10)).foregroundStyle(p.fg3).lineLimit(1).minimumScaleFactor(0.8)
+            Spacer(minLength: 4)
+            FooterButton(icon: "power", title: "Quit", help: "Quit the menu bar app (the daemon keeps running)") { NSApp.terminate(nil) }
         }
+    }
+
+    /// ⌘F: find a contact. A button nobody sees, so the shortcut works from any tab.
+    private var shortcuts: some View {
+        Button("Find a contact") {
+            page = .contacts
+            DispatchQueue.main.async { searchFocused = true }
+        }
+        .keyboardShortcut("f", modifiers: .command)
+        .opacity(0)
+        .frame(width: 0, height: 0)
+        .accessibilityHidden(true)
+    }
+
+    /// Esc clears the search first, then closes the panel.
+    private func escape() {
+        if page == .contacts && !query.isEmpty {
+            query = ""
+        } else {
+            NSApp.keyWindow?.close()
+        }
+    }
+
+    private func offline(_ problem: String) -> some View {
+        VStack(spacing: 10) {
+            Disc(icon: "unplug", size: 44)
+            Text(verbatim: problem).font(.system(size: 12, weight: .semibold)).multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Text("This panel checks again every 2 seconds and fills in as soon as the daemon answers.")
+                .font(.system(size: 11)).foregroundStyle(p.fg3).multilineTextAlignment(.center)
+                .fixedSize(horizontal: false, vertical: true)
+            Button("Restart the daemon") { store.restartDaemon() }
+                .buttonStyle(Pill(tint: p.accent))
+        }
+        .frame(maxWidth: .infinity)
+        .card(padding: 18)
+    }
+
+    // MARK: Home
+
+    @ViewBuilder private func home(_ state: UiState) -> some View {
+        if let line = Away.badge(state.away) {
+            Button { page = .away } label: {
+                Banner(icon: "moon", tone: .info, text: "people who message you privately get one reply saying you\u{2019}re away.", bold: line)
+            }
+            .buttonStyle(.plain)
+            .help("Change the away hours or message")
+        }
+        tiles(state)
+        switch section {
+        case .waiting: WaitingSection(items: state.approvals)
+        case .listening: ListeningSection { page = .contacts }
+        case .sent: SentSection()
+        }
+    }
+
+    /// Three tiles: each is a count and a word, and picks the section below.
+    private func tiles(_ state: UiState) -> some View {
+        let waiting = state.approvals.count
+        let sessions = store.listening
+        let chats = Set(sessions.flatMap { $0.watches.map(\.chatId) }).count
+        let live = sessions.filter(\.connected).count
+        let paused = store.pausedChats
+        let listenChip: (String, Tone) = live > 0
+            ? (paused > 0 ? ("\(paused) paused", .warn) : ("\(live) session\(live == 1 ? "" : "s")", .good))
+            : (sessions.isEmpty ? "idle" : "session gone", .muted)
+        let sent = state.recent.count
+        return HStack(spacing: 8) {
+            StatTile(title: "Waiting", value: waiting, chip: waiting > 0 ? ("needs you", .warn) : ("all clear", .good),
+                     selected: section == .waiting) { pick(.waiting) }
+            StatTile(title: "Listening", value: chats, chip: listenChip, selected: section == .listening) { pick(.listening) }
+            StatTile(title: "Sent", value: sent, chip: sent > 0 ? ("lately", .info) : ("none yet", .muted),
+                     selected: section == .sent) { pick(.sent) }
+        }
+    }
+
+    private func pick(_ s: HomeSection) {
+        withAnimation(.easeOut(duration: 0.12)) { section = s }
     }
 }
 
+/// A tile at the top of Home: label, big number, chip. Selected: it's the section showing below.
+struct StatTile: View {
+    @Environment(\.colorScheme) private var scheme
+    let title: String
+    let value: Int
+    let chip: (String, Tone)
+    let selected: Bool
+    let action: () -> Void
+    var body: some View {
+        let p = Palette(scheme)
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: title).font(.system(size: 11, weight: .semibold)).foregroundStyle(p.fg2)
+                Text(verbatim: "\(value)").font(.system(size: 24, weight: .semibold, design: .rounded)).foregroundStyle(p.fg)
+                Chip(chip.0, chip.1).padding(.top, 2)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 12).padding(.vertical, 10)
+            .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(selected ? p.accentSoft : p.card))
+            .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+                .strokeBorder(selected ? p.accent.opacity(0.6) : p.cardBorder, lineWidth: selected ? 1.5 : 1))
+            .contentShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
+        .help("Show \(title.lowercased()) below")
+        .accessibilityLabel(Text(verbatim: "\(title): \(value), \(chip.0)"))
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+}
+
+// MARK: - Home: Waiting
+
+struct WaitingSection: View {
+    let items: [UiApproval]
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            CardTitle("Waiting for approval", count: items.count)
+            if items.isEmpty {
+                EmptyRow(icon: "check", tone: .good, title: "You\u{2019}re all caught up",
+                         text: "When Claude wants to message a chat that needs your OK, the draft waits here.")
+                    .padding(.top, 12)
+            }
+            ForEach(items) { ApprovalCard(item: $0).padding(.top, 12) }
+        }
+        .card()
+    }
+}
+
+/// A draft waiting for approval. A long one opens on click (or Show all), never on hover.
 struct ApprovalCard: View {
     @EnvironmentObject var store: Store
+    @Environment(\.colorScheme) private var scheme
     let item: UiApproval
     @State private var expanded = snapshotExpandApprovals
     @State private var nick: String
@@ -899,181 +1862,434 @@ struct ApprovalCard: View {
         _nick = State(initialValue: item.suggestedNickname)
     }
 
+    private var p: Palette { Palette(scheme) }
+    private var busy: Bool { store.busy.contains(item.id) }
+    private var long: Bool { isLongDraft(item.text) }
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            HStack(spacing: 6) {
-                Image(systemName: "arrow.up.right.circle.fill").foregroundStyle(.orange)
-                Text(item.to).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                Spacer()
-                Text(ago(item.createdAt)).font(.system(size: 10)).foregroundStyle(.tertiary)
-            }
-            Text(item.text)
-                .font(.system(size: 12))
-                .lineLimit(expanded ? nil : 4)
-                .fixedSize(horizontal: false, vertical: true)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(8)
-                .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.05)))
-                .contentShape(Rectangle())
-                .onTapGesture { toggle() }
-            if long {
-                HStack {
-                    Spacer()
-                    Button(expanded ? "Show less" : "Show all", action: toggle)
-                        .buttonStyle(.plain)
-                        .font(.system(size: 10, weight: .semibold))
-                        .foregroundStyle(Color.accentColor)
-                }
-            }
-            VStack(alignment: .leading, spacing: 2) {
-                Text(item.detail).lineLimit(1)
-                Text("\(item.reason) · \(item.sessionLabel)").lineLimit(2)
-            }
-            .font(.system(size: 10)).foregroundStyle(.secondary)
-            if item.firstTime { firstTimeRow }
-            HStack(spacing: 8) {
-                Spacer()
-                let busy = store.busy.contains(item.id)
-                Button("Deny") { Task { await store.decide(item.id, approve: false) } }
-                    .buttonStyle(PillButton(tint: .red, filled: false)).disabled(busy)
-                if item.firstTime {
-                    Button("Ask every time") {
-                        Task { await store.decide(item.id, approve: true, remember: "requireApproval", nickname: nick) }
-                    }
-                    .buttonStyle(PillButton(tint: .green, filled: false)).disabled(busy)
-                    .help("Send now; future messages to this chat need approval too")
-                    Button(busy ? "Sending…" : "Always allow") {
-                        Task { await store.decide(item.id, approve: true, remember: "autoSend", nickname: nick) }
-                    }
-                    .buttonStyle(PillButton(tint: .green)).disabled(busy)
-                    .help("Send now and whitelist this chat: future messages send without asking")
-                } else {
-                    Button(busy ? "Sending…" : "Approve") { Task { await store.decide(item.id, approve: true) } }
-                        .buttonStyle(PillButton(tint: .green)).disabled(busy)
-                }
-            }
+        VStack(alignment: .leading, spacing: 0) {
+            top
+            message.padding(.top, 10)
+            infoLine("terminal", "Asked by \(item.sessionLabel)").padding(.top, 8)
+            infoLine("info", item.reason).padding(.top, 3).help(item.reason)
+            if item.firstTime { firstTime.padding(.top, 10) }
+            actions.padding(.top, 10)
         }
-        .padding(10)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.orange.opacity(0.07)))
-        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.orange.opacity(0.25)))
+        .padding(12)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(p.subtle))
+        .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(p.orange.opacity(0.4)))
     }
 
-    private var long: Bool { isLongDraft(item.text) }
+    private var top: some View {
+        HStack(alignment: .top, spacing: 10) {
+            AvatarView(name: item.nickname ?? item.to)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(verbatim: item.to).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                Text(verbatim: item.detail).font(.system(size: 11)).foregroundStyle(p.fg3).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 4) {
+                LucideIcon("clock", size: 12)
+                Text(verbatim: agoWords(item.createdAt)).font(.system(size: 11))
+            }
+            .foregroundStyle(p.fg3)
+            .padding(.top, 2)
+        }
+    }
+
+    private var message: some View {
+        Button(action: toggle) {
+            VStack(alignment: .trailing, spacing: 4) {
+                Text(verbatim: item.text)
+                    .font(.system(size: 12))
+                    .lineSpacing(2)
+                    .lineLimit(expanded ? nil : 4)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 10).padding(.vertical, 8)
+                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(p.subtle2))
+                if long {
+                    Text(expanded ? "Show less" : "Show all")
+                        .font(.system(size: 11, weight: .semibold)).foregroundStyle(p.accent)
+                }
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("The exact message Claude wants to send")
+        .accessibilityLabel(Text(verbatim: "Message: \(item.text)"))
+        .accessibilityHint(long ? Text(expanded ? "Shows less" : "Shows the whole message") : Text(verbatim: ""))
+    }
+
+    private func infoLine(_ icon: String, _ text: String) -> some View {
+        HStack(alignment: .top, spacing: 6) {
+            LucideIcon(icon, size: 13).padding(.top, 1)
+            Text(verbatim: text).font(.system(size: 11)).lineLimit(2)
+                .fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+        .foregroundStyle(p.fg3)
+    }
+
+    /// First message to a chat: say so plainly, and it gets saved under this nickname.
+    private var firstTime: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 6) {
+                LucideIcon("user-plus", size: 15).foregroundStyle(p.blue)
+                Text("First message to this chat").font(.system(size: 12, weight: .semibold))
+            }
+            Text("Pick how to send it: ask you again next time, or trust this chat and send without asking from now on.")
+                .font(.system(size: 11)).foregroundStyle(p.fg2)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 3)
+            HStack(spacing: 8) {
+                Text("Save as").font(.system(size: 11)).foregroundStyle(p.fg2)
+                if let existing = item.nickname {
+                    Text(verbatim: existing).font(.system(size: 12, weight: .semibold))
+                } else {
+                    FieldBox(placeholder: "nickname", text: $nick, name: "Nickname for this chat")
+                        .frame(maxWidth: 170)
+                        .help("The nickname you\u{2019}ll use for this chat, e.g. \u{201C}send to leo\u{201D}")
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.top, 8)
+            // The two ways to send it, side by side under the explanation they answer. The menu bar
+            // panel is narrower than the tray's, so they stack when both labels don't fit in full.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { sendChoices(p) }
+                VStack(spacing: 6) { sendChoices(p) }
+            }
+            .padding(.top, 10)
+            .disabled(busy)
+        }
+        .padding(.horizontal, 10).padding(.vertical, 8)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(p.wash(p.blue)))
+    }
+
+    @ViewBuilder private func sendChoices(_ p: Palette) -> some View {
+        Button(busy ? "Sending\u{2026}" : "Send, ask next time") { decide(remember: "requireApproval") }
+            .buttonStyle(Pill(tint: p.orange, wide: true))
+            .help("Send now. Future messages to this chat wait for you too (Ask every time).")
+        Button(busy ? "Sending\u{2026}" : "Send, always allow") { decide(remember: "autoSend") }
+            .buttonStyle(Pill(tint: .white, fill: Palette.greenFill, wide: true))
+            .help("Send now and trust this chat: future messages send without asking")
+    }
+
+    /// Deny, and Send for a chat that has a rule (a new chat's two ways to send are in its box above).
+    private var actions: some View {
+        HStack(spacing: 8) {
+            Spacer()
+            Button("Deny") { Task { await store.decide(item.id, approve: false) } }
+                .buttonStyle(Pill(tint: p.red))
+                .help("Don\u{2019}t send it. Claude is told you said no.")
+            if !item.firstTime {
+                Button { Task { await store.decide(item.id, approve: true) } } label: {
+                    HStack(spacing: 6) {
+                        LucideIcon("send", size: 13)
+                        Text(busy ? "Sending\u{2026}" : "Send")
+                    }
+                }
+                .buttonStyle(Pill(tint: .white, fill: Palette.greenFill))
+                .help("Send this message now")
+            }
+        }
+        .disabled(busy)
+    }
+
+    private func decide(remember: String) {
+        Task { await store.decide(item.id, approve: true, remember: remember, nickname: nick) }
+    }
 
     /// A click on a long draft (or on Show all) opens it; another closes it.
     private func toggle() {
         guard long else { return }
         withAnimation(.easeOut(duration: 0.12)) { expanded.toggle() }
     }
+}
 
-    /// First message to this chat: it gets saved, and the buttons decide what happens next time.
-    private var firstTimeRow: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "person.crop.circle.badge.plus").font(.system(size: 11)).foregroundStyle(.blue)
-            Text("New chat, save as").font(.system(size: 11)).foregroundStyle(.secondary)
-            if let existing = item.nickname {
-                Text(existing).font(.system(size: 11, weight: .semibold))
-            } else {
-                // The offscreen snapshot renderer can't draw text fields; show the value instead.
-                Group {
-                    if isSnapshot { Text(nick).frame(maxWidth: .infinity, alignment: .leading) }
-                    else { TextField("nickname", text: $nick).textFieldStyle(.plain) }
+// MARK: - Home: Listening
+
+/// Who Claude is listening to, with a switch on each chat and on each session, and below it the
+/// saved chats Claude may listen to. A chat's switch is its auto-reply: the daemon passes a chat's
+/// messages to sessions only while it's on (the watches stay), so off pauses and on resumes.
+struct ListeningSection: View {
+    @EnvironmentObject var store: Store
+    let showContacts: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 0) {
+                CardTitle("Listening now")
+                if store.listening.isEmpty {
+                    EmptyRow(icon: "radio", title: "No one is listening",
+                             text: "Ask Claude to watch a chat. It can only watch the chats you switch on below.")
+                        .padding(.top, 12)
+                } else {
+                    Hint(text: "Each switch pauses or resumes a chat for every session listening to it. While it\u{2019}s paused, new messages there aren\u{2019}t passed to Claude; the watch stays.")
+                        .padding(.top, 10)
                 }
-                    .font(.system(size: 11, weight: .semibold))
-                    .padding(.horizontal, 6).padding(.vertical, 3)
-                    .background(RoundedRectangle(cornerRadius: 5).fill(Color.primary.opacity(0.07)))
-                    .frame(maxWidth: 150)
+                ForEach(store.listening) { SessionBlock(session: $0).padding(.top, 12) }
             }
-            Spacer()
+            .card()
+            MayListenCard(showContacts: showContacts)
         }
     }
 }
 
-struct SessionRow: View {
+/// A Claude session and the chats it listens to.
+struct SessionBlock: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.colorScheme) private var scheme
     let session: UiSession
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            HStack(spacing: 6) {
-                Image(systemName: "terminal").font(.system(size: 11)).foregroundStyle(.secondary)
-                Text(session.label).font(.system(size: 12, weight: .medium)).lineLimit(1)
-                Spacer()
-                badge
-            }
-            ForEach(session.watches) { w in
-                HStack(spacing: 6) {
-                    Image(systemName: "ear").font(.system(size: 10)).foregroundStyle(.blue)
-                    Text(w.chatLabel).font(.system(size: 11)).lineLimit(1)
-                    if let from = w.fromLabel { Text("from \(from)").font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1) }
-                    if let topic = w.topicId { Text("topic \(topic)").font(.system(size: 10)).foregroundStyle(.secondary) }
-                    Spacer()
+        let p = Palette(scheme)
+        // The saved chats it listens to: those have a switch. One nickname per chat.
+        let names = Array(Set(session.watches.compactMap { store.contact(chatId: $0.chatId)?.nickname })).sorted()
+        let anyOn = names.contains { n in store.state?.contacts?.first(where: { $0.nickname == n }).map { store.listens($0) } ?? false }
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 10) {
+                Disc(icon: "terminal", size: 30)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(verbatim: session.label).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                    let tag = sessionTag
+                    Chip(tag.0, tag.1)
                 }
-                .padding(.leading, 17)
-                .help(w.note ?? w.chatLabel)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if names.count > 1 {
+                    VStack(spacing: 2) {
+                        ListenSwitch(on: anyOn, busy: names.contains { store.busy.contains("contact:\($0)") },
+                                     label: "Every chat \(session.label) listens to") { on in
+                            Task { await store.setListening(names, on: on, label: "every chat \(session.label) listens to") }
+                        }
+                        Text("all").font(.system(size: 9, weight: .medium)).foregroundStyle(p.fg3)
+                    }
+                    .help("Pause or resume every chat this session listens to (other sessions on those chats pause too)")
+                }
             }
-        }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
-    }
-
-    @ViewBuilder private var badge: some View {
-        if !session.connected {
-            tag("session gone", .gray)
-        } else if session.channel {
-            tag("push", .green)
-        } else if session.monitors > 0 {
-            tag("Monitor on", .green)
-        } else {
-            tag(session.pending > 0 ? "Monitor off · \(session.pending) queued" : "Monitor off", .orange)
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(session.watches) { WatchRow(watch: $0) }
+            }
+            .padding(.leading, 40)
         }
     }
 
-    private func tag(_ text: String, _ color: Color) -> some View { Tag(text: text, color: color) }
+    private var sessionTag: (String, Tone) {
+        if !session.connected { return ("session gone", .muted) }
+        if session.channel { return ("push", .good) }
+        if session.monitors > 0 { return ("Monitor on", .good) }
+        return (session.pending > 0 ? "Monitor off \u{00B7} \(session.pending) queued" : "Monitor off", .warn)
+    }
 }
 
-// MARK: - Contacts page
+/// One chat a session listens to, with its pause / resume switch.
+struct WatchRow: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.colorScheme) private var scheme
+    let watch: WatchSpec
 
-/// Every saved chat (`chats` in config.json). Click one to change its nickname, which list decides
-/// sending there, and whether sessions may listen and auto-reply. Each click saves at once.
+    var body: some View {
+        let p = Palette(scheme)
+        let contact = store.contact(chatId: watch.chatId)
+        // A chat that isn't saved is one handed over with /reply: it's listened to while that lasts.
+        let on = contact.map { store.listens($0) } ?? true
+        let bits: [String?] = [on ? "listening" : "paused", watch.fromLabel.map { "from \($0)" }, watch.topicId.map { "topic \($0)" },
+                               contact == nil ? "not a saved chat" : nil]
+        let detail = bits.compactMap { $0 }.joined(separator: " \u{00B7} ")
+        HStack(spacing: 8) {
+            Circle().fill(on ? p.blue : p.fg3).frame(width: 7, height: 7)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(verbatim: watch.chatLabel).font(.system(size: 12)).foregroundStyle(on ? p.fg : p.fg2).lineLimit(1)
+                Text(verbatim: detail).font(.system(size: 10)).foregroundStyle(p.fg3).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            if let contact {
+                ListenSwitch(on: on, busy: store.busy.contains("contact:\(contact.nickname)"),
+                             label: on ? "Pause listening to \(watch.chatLabel)" : "Resume listening to \(watch.chatLabel)") { want in
+                    Task { await store.setListening([contact.nickname], on: want, label: watch.chatLabel) }
+                }
+                .help(on ? "Pause: stop passing \(watch.chatLabel)\u{2019}s messages to Claude (turns auto-reply off; the watch stays)"
+                         : "Resume: \(watch.chatLabel)\u{2019}s messages reach Claude again (turns auto-reply back on)")
+            }
+        }
+        .help(watch.note ?? watch.chatLabel)
+    }
+}
+
+/// Every saved chat with its listen switch: pick who Claude may watch, without opening Contacts.
+struct MayListenCard: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.colorScheme) private var scheme
+    let showContacts: () -> Void
+    @State private var showAll = false
+    private static let shortList = 6
+
+    var body: some View {
+        let p = Palette(scheme)
+        VStack(alignment: .leading, spacing: 0) {
+            CardTitle(title: "Chats Claude may listen to") {
+                Button("All settings", action: showContacts)
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(p.accent)
+                    .help("Open Contacts for every chat\u{2019}s rules")
+            }
+            Text("Switch a chat on and a Claude session can watch it and reply there without asking while it does. Off: no session can listen.")
+                .font(.system(size: 11)).foregroundStyle(p.fg3)
+                .fixedSize(horizontal: false, vertical: true)
+                .padding(.top, 4)
+            if let contacts = store.state?.contacts {
+                if contacts.isEmpty {
+                    EmptyRow(icon: "users", title: "No saved chats yet", text: "Approving the first message to a chat saves it.")
+                        .padding(.top, 12)
+                }
+                // Alphabetical, so a row doesn't jump away from the pointer when it's switched.
+                let sorted = contacts.sorted { $0.nickname.localizedCaseInsensitiveCompare($1.nickname) == .orderedAscending }
+                let shown = showAll ? sorted : Array(sorted.prefix(Self.shortList))
+                ForEach(shown) { ContactSwitchRow(contact: $0).padding(.top, 10) }
+                if sorted.count > Self.shortList {
+                    Button(showAll ? "Show fewer" : "Show all \(sorted.count)") {
+                        withAnimation(.easeOut(duration: 0.12)) { showAll.toggle() }
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(p.accent)
+                    .padding(.top, 10)
+                }
+            } else {
+                Text(verbatim: Store.olderContacts).font(.system(size: 11)).foregroundStyle(p.fg2).padding(.top, 10)
+            }
+        }
+        .card()
+    }
+}
+
+/// A saved chat and its listen switch, for the list above.
+struct ContactSwitchRow: View {
+    @EnvironmentObject var store: Store
+    @Environment(\.colorScheme) private var scheme
+    let contact: UiContact
+
+    var body: some View {
+        let p = Palette(scheme)
+        let on = store.listens(contact)
+        HStack(spacing: 10) {
+            AvatarView(name: contact.nickname, glyph: contactGlyph(contact), size: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text(verbatim: contact.nickname).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                Text(verbatim: on ? listenWords(contact) : "Claude can\u{2019}t listen here")
+                    .font(.system(size: 10)).foregroundStyle(p.fg3).lineLimit(1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            ListenSwitch(on: on, busy: store.busy.contains("contact:\(contact.nickname)"),
+                         label: "Let Claude listen to \(contact.nickname)") { want in
+                Task { await store.setListening([contact.nickname], on: want, label: contact.nickname) }
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+}
+
+/// How listening works out with the chat's sending rule, in a few words.
+func listenWords(_ c: UiContact) -> String {
+    switch c.sendMode {
+    case "requireApproval": return "May listen; replies still ask you"
+    case "blocked": return "May listen, but can\u{2019}t reply"
+    default: return "May listen and reply without asking"
+    }
+}
+
+/// Groups, channels and bots get a glyph on their avatar instead of initials.
+func contactGlyph(_ c: UiContact) -> String? {
+    switch c.type {
+    case "group": return "users"
+    case "channel": return "megaphone"
+    case "bot": return "bot"
+    default: return nil
+    }
+}
+
+// MARK: - Home: Sent
+
+struct SentSection: View {
+    @EnvironmentObject var store: Store
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            CardTitle("Recently sent")
+            if store.recentChats.isEmpty {
+                EmptyRow(icon: "send", title: "Nothing sent yet", text: "Messages Claude sends show up here. Click one to see what went out.")
+                    .padding(.top, 12)
+            }
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(store.recentChats) { RecentChatRow(chat: $0) }
+            }
+            .padding(.top, 6)
+        }
+        .card()
+    }
+}
+
+// MARK: - Contacts tab
+
+/// Every saved chat (`chats` in config.json), each with its listen switch on the row. Click one to
+/// change its nickname, which list decides sending there, and paging. Each click saves at once.
 struct ContactsList: View {
     @EnvironmentObject var store: Store
+    @Environment(\.colorScheme) private var scheme
     let contacts: [UiContact]?
     let query: String
+    let filter: ContactFilter
     let defaultPolicy: String
     let waiting: Int
     let showApprovals: () -> Void
     @State private var open: String? = snapshotOpenContact
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        let p = Palette(scheme)
+        VStack(alignment: .leading, spacing: 10) {
             if waiting > 0 {
-                HStack(spacing: 6) {
-                    Image(systemName: "arrow.up.right.circle.fill").foregroundStyle(.orange)
-                    Text("\(waiting) waiting for approval").font(.system(size: 11, weight: .medium))
+                HStack(spacing: 8) {
+                    LucideIcon("clock", size: 16).foregroundStyle(p.orange)
+                    Text(verbatim: "\(waiting) waiting for approval").font(.system(size: 12, weight: .semibold))
                     Spacer()
-                    Button("Show", action: showApprovals).buttonStyle(PillButton(tint: .orange, filled: false))
+                    Button("Review", action: showApprovals).buttonStyle(Pill(tint: p.orange))
                 }
-                .padding(8)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.08)))
+                .padding(.horizontal, 12).padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(p.wash(p.orange)))
             }
             if let contacts {
                 let shown = filtered(contacts)
                 if contacts.isEmpty {
-                    Placeholder(text: "No saved chats yet. Approving the first message to a chat saves it.")
+                    EmptyRow(icon: "users", title: "No saved chats yet", text: "Approving the first message to a chat saves it here.").card()
                 } else if shown.isEmpty {
-                    Placeholder(text: "No saved chat matches \u{201C}\(query)\u{201D}")
+                    EmptyRow(icon: "search", title: "Nothing matches", text: emptyText).card()
                 }
                 ForEach(shown) { ContactRow(contact: $0, defaultPolicy: defaultPolicy, open: $open) }
             } else {
-                Placeholder(text: "The daemon is older than this app. Restart it (below) to edit contacts.")
+                EmptyRow(icon: "users", title: "Contacts need a newer daemon", text: Store.olderContacts).card()
             }
         }
     }
 
+    private var emptyText: String {
+        let q = query.trimmingCharacters(in: .whitespaces)
+        switch filter {
+        case .all: return "No saved chat matches \u{201C}\(q)\u{201D}."
+        case .on: return q.isEmpty ? "Claude may listen to none of your chats. Switch one on to let it." : "No chat Claude may listen to matches \u{201C}\(q)\u{201D}."
+        case .off: return q.isEmpty ? "Claude may listen to every saved chat." : "No chat Claude can\u{2019}t listen to matches \u{201C}\(q)\u{201D}."
+        }
+    }
+
     private func filtered(_ list: [UiContact]) -> [UiContact] {
+        let byFilter = list.filter { c in
+            switch filter {
+            case .all: return true
+            case .on: return c.autoReply
+            case .off: return !c.autoReply
+            }
+        }
         let q = query.trimmingCharacters(in: .whitespaces).lowercased()
-        guard !q.isEmpty else { return list }
-        return list.filter { c in
+        guard !q.isEmpty else { return byFilter }
+        return byFilter.filter { c in
             ([c.nickname, c.name ?? "", c.username.map { "@\($0)" } ?? "", String(c.chatId)] + c.aliases)
                 .contains { $0.lowercased().contains(q) }
         }
@@ -1082,6 +2298,7 @@ struct ContactsList: View {
 
 struct ContactRow: View {
     @EnvironmentObject var store: Store
+    @Environment(\.colorScheme) private var scheme
     let contact: UiContact
     let defaultPolicy: String
     @Binding var open: String?
@@ -1095,131 +2312,122 @@ struct ContactRow: View {
         _nick = State(initialValue: contact.nickname)
     }
 
+    private var p: Palette { Palette(scheme) }
     private var isOpen: Bool { open == contact.nickname }
     private var busy: Bool { store.busy.contains("contact:\(contact.nickname)") }
     private var paging: Bool { store.busy.contains("page:\(contact.nickname)") }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Button {
-                withAnimation(.easeOut(duration: 0.12)) { open = isOpen ? nil : contact.nickname }
-            } label: { summary }
-                .buttonStyle(.plain)
-            if isOpen { editor.transition(.opacity) }
+        VStack(alignment: .leading, spacing: 0) {
+            summary.padding(12)
+            if isOpen {
+                editor
+                    .padding(.horizontal, 14).padding(.bottom, 14)
+                    .transition(.opacity)
+            }
         }
-        .padding(8)
-        .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(isOpen ? 0.06 : 0.035)))
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(p.card))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous)
+            .strokeBorder(isOpen ? p.accent.opacity(0.45) : p.cardBorder, lineWidth: isOpen ? 1.5 : 1))
+    }
+
+    private func toggleOpen() {
+        withAnimation(.easeOut(duration: 0.12)) { open = isOpen ? nil : contact.nickname }
     }
 
     private var summary: some View {
-        HStack(spacing: 7) {
-            Image(systemName: typeIcon).font(.system(size: 11)).foregroundStyle(.secondary).frame(width: 15)
-            VStack(alignment: .leading, spacing: 1) {
-                Text(contact.nickname).font(.system(size: 12, weight: .semibold)).lineLimit(1)
-                if !subtitle.isEmpty {
-                    Text(subtitle).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+        HStack(spacing: 10) {
+            Button(action: toggleOpen) {
+                HStack(spacing: 10) {
+                    AvatarView(name: contact.nickname, glyph: contactGlyph(contact))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(verbatim: contact.nickname).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                        if !subtitle.isEmpty {
+                            Text(verbatim: subtitle).font(.system(size: 11)).foregroundStyle(p.fg3).lineLimit(1)
+                        }
+                        HStack(spacing: 4) {
+                            Chip(modeTag.0, modeTag.1)
+                            if contact.pagesMe { Chip("can page me", .warn) }
+                        }
+                        .padding(.top, 3)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                .contentShape(Rectangle())
             }
-            Spacer(minLength: 4)
-            if contact.pagesMe { Tag(text: "can page me", color: .pink) }
-            if contact.autoReply { Tag(text: "auto-reply", color: .blue) }
-            Tag(text: modeTag.text, color: modeTag.color)
-            Image(systemName: "chevron.down")
-                .font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
-                .rotationEffect(.degrees(isOpen ? 180 : 0))
+            .buttonStyle(.plain)
+            .help(isOpen ? "Hide this chat\u{2019}s settings" : "Show this chat\u{2019}s settings")
+            .accessibilityLabel(Text(verbatim: "\(contact.nickname), \(modeTag.0)"))
+            .accessibilityHint(Text(isOpen ? "Hides its settings" : "Shows its settings"))
+            VStack(spacing: 2) {
+                ListenSwitch(on: store.listens(contact), busy: busy, label: "Let Claude listen to \(contact.nickname)") { want in
+                    Task { await store.setListening([contact.nickname], on: want, label: contact.nickname) }
+                }
+                Text("Listen").font(.system(size: 9, weight: .medium)).foregroundStyle(p.fg3)
+            }
+            .help("Listen: a Claude session may watch this chat and answer new messages (auto-reply)")
+            Button(action: toggleOpen) {
+                LucideIcon(isOpen ? "chevron-up" : "chevron-down", size: 13).foregroundStyle(p.fg3)
+                    .frame(width: 20, height: 28).contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHidden(true)
         }
-        .contentShape(Rectangle())
     }
 
     private var editor: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            field("Nickname") {
-                HStack(spacing: 6) {
-                    Group {
-                        if isSnapshot { Text(nick).frame(maxWidth: .infinity, alignment: .leading) }
-                        else { TextField("nickname", text: $nick).textFieldStyle(.plain).onSubmit(rename) }
+        VStack(alignment: .leading, spacing: 14) {
+            Rectangle().fill(p.divider).frame(height: 1)
+            // In plain words first: what happens with this chat right now.
+            Hint(text: explanation)
+            Setting(title: "When Claude sends a message here",
+                    hint: "Always allow sends at once; Ask every time waits for you here; Blocked never sends.") {
+                Segments(options: [
+                    .init(title: "Always allow", value: "autoSend", fill: Palette.greenFill, help: "Send without asking (autoSend)"),
+                    .init(title: "Ask every time", value: "requireApproval", fill: Palette.orangeFill, help: "Every message waits for your approval (requireApproval)"),
+                    .init(title: "Blocked", value: "blocked", fill: Palette.redFill, help: "Never send here (blocked)"),
+                ], selected: contact.sendMode) { save(["sendMode": $0]) }
+            }
+            if contact.canPage {
+                Setting(title: "Can page me", hint: "Their /page rings an alarm on this Mac until you answer it.") {
+                    Segments(options: [
+                        .init(title: "On", value: "on", fill: Palette.orangeFill, help: "Their \u{201C}/page <reason>\u{201D} rings your desktop until you ack it (paging.pageFrom)"),
+                        .init(title: "Off", value: "off", fill: Palette.grayFill, help: "Their /page is ignored"),
+                    ], selected: contact.pagesMe ? "on" : "off") { save(["pageFrom": $0 == "on"]) }
+                }
+                Setting(title: "Page \(contact.nickname)", hint: "Sends them \u{201C}/page <reason>\u{201D} from your account. It rings if you\u{2019}re on their list.") {
+                    HStack(spacing: 8) {
+                        FieldBox(placeholder: "Reason (optional)", text: $reason, name: "Reason for the page", submit: page)
+                        Button(action: page) {
+                            HStack(spacing: 6) {
+                                LucideIcon("bell-ring", size: 13)
+                                Text(paging ? "Paging\u{2026}" : "Page")
+                            }
+                        }
+                        .buttonStyle(Pill(tint: .white, fill: Palette.redFill))
+                        .disabled(paging || blocked)
+                        .help(blocked ? "Blocked: the daemon won\u{2019}t send here" : "Sends \u{201C}/page <reason>\u{201D} from your account. It rings them if you\u{2019}re on their pageFrom.")
                     }
-                    .font(.system(size: 12, weight: .medium))
-                    .padding(.horizontal, 7).padding(.vertical, 4)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.07)))
+                }
+            }
+            Setting(title: "Nickname", hint: "The name you use with Claude, as in \u{201C}send to leo\u{201D}.") {
+                HStack(spacing: 8) {
+                    FieldBox(placeholder: "nickname", text: $nick, name: "Nickname", submit: rename)
                     Button("Rename", action: rename)
-                        .buttonStyle(ChoiceButton(tint: .accentColor, selected: renamed))
+                        .buttonStyle(Pill(tint: p.accent))
                         .disabled(!renamed || busy)
                 }
             }
-            field("When Claude sends a message here") {
-                HStack(spacing: 6) {
-                    choice("Always allow", mode: "autoSend", tint: .green, help: "Send without asking (autoSend)")
-                    choice("Ask every time", mode: "requireApproval", tint: .orange, help: "Every message waits for your approval (requireApproval)")
-                    choice("Blocked", mode: "blocked", tint: .red, help: "Never send here (blocked)")
-                }
-            }
-            field("Auto-reply") {
-                HStack(spacing: 6) {
-                    Button("On") { save(["autoReply": true], unless: contact.autoReply) }
-                        .buttonStyle(ChoiceButton(tint: .blue, selected: contact.autoReply))
-                        .help("Sessions may listen to this chat and reply without asking while they do (autoReply)")
-                    Button("Off") { save(["autoReply": false], unless: !contact.autoReply) }
-                        .buttonStyle(ChoiceButton(tint: .gray, selected: !contact.autoReply))
-                        .help("Sessions can't listen to this chat")
-                }
-            }
-            if contact.canPage {
-                field("Can page me") {
-                    HStack(spacing: 6) {
-                        Button("On") { save(["pageFrom": true], unless: contact.pagesMe) }
-                            .buttonStyle(ChoiceButton(tint: .pink, selected: contact.pagesMe))
-                            .help("Their \u{201C}/page <reason>\u{201D} rings your desktop until you ack it (paging.pageFrom)")
-                        Button("Off") { save(["pageFrom": false], unless: !contact.pagesMe) }
-                            .buttonStyle(ChoiceButton(tint: .gray, selected: !contact.pagesMe))
-                            .help("Their /page is ignored")
-                    }
-                }
-                field("Page \(contact.nickname)") {
-                    HStack(spacing: 6) {
-                        Group {
-                            if isSnapshot { Text(reason.isEmpty ? "Reason (optional)" : reason).foregroundStyle(.tertiary).frame(maxWidth: .infinity, alignment: .leading) }
-                            else { TextField("Reason (optional)", text: $reason).textFieldStyle(.plain).onSubmit(page) }
-                        }
-                        .font(.system(size: 12))
-                        .padding(.horizontal, 7).padding(.vertical, 4)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.07)))
-                        Button(action: page) {
-                            Label(paging ? "Paging…" : "Page", systemImage: "bell.and.waves.left.and.right.fill")
-                        }
-                        .buttonStyle(PillButton(tint: .red, filled: true))
-                        .disabled(paging || blocked)
-                        .help("Sends \u{201C}/page <reason>\u{201D} to \(contact.nickname) from your account. It rings them if you\u{2019}re on their pageFrom.")
-                    }
-                }
-            }
-            Text(explanation)
-                .font(.system(size: 10)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            Text(details)
-                .font(.system(size: 9)).foregroundStyle(.tertiary)
+            Text(verbatim: details)
+                .font(.system(size: 10)).foregroundStyle(p.fg3)
                 .fixedSize(horizontal: false, vertical: true)
                 .textSelection(.enabled)
         }
-        .padding(.leading, 22)
         .disabled(busy)
     }
 
-    private func field<Content: View>(_ title: String, @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.system(size: 10, weight: .medium)).foregroundStyle(.secondary)
-            content()
-        }
-    }
-
-    private func choice(_ title: String, mode: String, tint: Color, help: String) -> some View {
-        Button(title) { save(["sendMode": mode], unless: contact.sendMode == mode) }
-            .buttonStyle(ChoiceButton(tint: tint, selected: contact.sendMode == mode))
-            .help(help)
-    }
-
-    private func save(_ change: [String: Any], unless current: Bool) {
-        guard !current, !busy else { return }
+    private func save(_ change: [String: Any]) {
+        guard !busy else { return }
         Task { await store.editContact(contact.nickname, change) }
     }
 
@@ -1248,26 +2456,16 @@ struct ContactRow: View {
         }
     }
 
-    private var typeIcon: String {
-        switch contact.type {
-        case "user": return "person.fill"
-        case "bot": return "cpu"
-        case "group": return "person.3.fill"
-        case "channel": return "megaphone.fill"
-        default: return "bubble.left.fill"
-        }
-    }
-
     private var subtitle: String {
-        [contact.name, contact.username.map { "@\($0)" }].compactMap { $0 }.joined(separator: " · ")
+        [contact.name, contact.username.map { "@\($0)" }].compactMap { $0 }.joined(separator: " \u{00B7} ")
     }
 
-    private var modeTag: (text: String, color: Color) {
+    private var modeTag: (String, Tone) {
         switch contact.sendMode {
-        case "autoSend": return ("always allow", .green)
-        case "requireApproval": return ("ask every time", .orange)
-        case "blocked": return ("blocked", .red)
-        default: return defaultPolicy == "block" ? ("blocked by default", .red) : ("not set", .gray)
+        case "autoSend": return ("always allow", .good)
+        case "requireApproval": return ("ask every time", .warn)
+        case "blocked": return ("blocked", .bad)
+        default: return defaultPolicy == "block" ? ("blocked by default", .bad) : ("not set", .muted)
         }
     }
 
@@ -1282,14 +2480,14 @@ struct ContactRow: View {
                 ? "On no list, so the default rule blocks it."
                 : "On no list yet: the next message asks you, and you pick what happens after."
         }
-        let reply: String
-        if !contact.autoReply { reply = "Sessions can't listen to this chat." }
-        else if contact.sendMode == "requireApproval" { reply = "Sessions may listen here, but their replies still ask first." }
-        else if contact.sendMode == "blocked" { reply = "Sessions may listen here, but can't reply." }
-        else { reply = "Sessions may listen here and reply without asking while they do." }
-        guard contact.canPage else { return "\(send) \(reply)" }
+        let listen: String
+        if !store.listens(contact) { listen = "Claude can\u{2019}t listen to this chat (switch Listen on to let it)." }
+        else if contact.sendMode == "requireApproval" { listen = "Claude may listen here, but its replies still ask first." }
+        else if contact.sendMode == "blocked" { listen = "Claude may listen here, but can\u{2019}t reply." }
+        else { listen = "Claude may listen here and reply without asking while it does." }
+        guard contact.canPage else { return "\(send) \(listen)" }
         let page = contact.pagesMe ? "Their /page rings you." : "Their /page is ignored."
-        return "\(send) \(reply) \(page)"
+        return "\(send) \(listen) \(page)"
     }
 
     private var details: String {
@@ -1300,7 +2498,7 @@ struct ContactRow: View {
             bits.append("same chat as \(contact.sameChat.joined(separator: ", ")), so these rules apply to it too")
         }
         if let n = contact.notes, !n.isEmpty { bits.append(n) }
-        return bits.joined(separator: " · ")
+        return bits.joined(separator: " \u{00B7} ")
     }
 }
 
@@ -1398,15 +2596,16 @@ extension AwayFields {
     init(_ a: UiAway) { self.init(from: a.from, until: a.until, message: a.message, quiet: String(a.quietMinutes)) }
 }
 
-/// The away auto-reply. On/Off saves at once; the hours, quiet minutes and message wait for Save, so a
-/// half-typed time never goes out. The fields are filled when the page opens: polling leaves them alone.
+/// The away auto-reply. The switch saves at once; the hours, quiet minutes and message wait for Save, so a
+/// half-typed time never goes out. The fields are filled when the tab opens: polling leaves them alone.
 struct AwayEditor: View {
     @EnvironmentObject var store: Store
+    @Environment(\.colorScheme) private var scheme
     let away: UiAway
     let name: String?
     let footer: String
     @State private var typed: AwayFields
-    /// What the daemon has saved as far as this page knows: as loaded, then as last sent. Save sends only what differs.
+    /// What the daemon has saved as far as this tab knows: as loaded, then as last sent. Save sends only what differs.
     @State private var saved: AwayFields
 
     init(away: UiAway, name: String?, footer: String) {
@@ -1417,90 +2616,77 @@ struct AwayEditor: View {
         _saved = State(initialValue: AwayFields(away))
     }
 
+    private var p: Palette { Palette(scheme) }
     private var busy: Bool { store.busy.contains("away") }
     private var problem: String? { Away.check(typed.cleaned) }
     private var changed: Bool { typed.cleaned != saved }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .top, spacing: 6) {
-                Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(Color.accentColor)
-                (Text(Away.status(away)).fontWeight(.semibold)
-                    + Text(verbatim: ". When it\u{2019}s on, someone who messages you privately during these hours gets this reply, once a night. Groups, bots, Blocked and Ask every time chats, and chats Claude is handling, never do."))
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            .padding(8)
-            .frame(maxWidth: .infinity, alignment: .leading)
-            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
-
-            field("Reply while I\u{2019}m away", hint: "Saves as soon as you switch it.") {
-                HStack(spacing: 6) {
-                    Button("On") { toggle(true) }
-                        .buttonStyle(ChoiceButton(tint: .green, selected: away.enabled))
-                    Button("Off") { toggle(false) }
-                        .buttonStyle(ChoiceButton(tint: .gray, selected: !away.enabled))
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .center, spacing: 12) {
+                Disc(icon: "moon", tone: away.active ? .info : nil, size: 36)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Reply while I\u{2019}m away").font(.system(size: 13, weight: .semibold))
+                    Text(verbatim: Away.status(away)).font(.system(size: 11)).foregroundStyle(away.active ? p.blue : p.fg3)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if isSnapshot {
+                    SnapshotSwitch(on: away.enabled, tint: Palette.greenFill)
+                } else {
+                    Toggle(isOn: Binding(get: { away.enabled }, set: { toggle($0) })) { Text("Reply while I\u{2019}m away") }
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .tint(Palette.greenFill)
+                        .disabled(busy)
+                        .help("Saves as soon as you switch it")
                 }
             }
-            field("Hours", hint: "This Mac\u{2019}s time. Overnight works, like 18:00 until 09:00.") {
-                HStack(spacing: 6) {
-                    Text("From").font(.system(size: 11)).foregroundStyle(.secondary)
-                    box($typed.from, placeholder: "18:00", width: 46)
-                    Text("until").font(.system(size: 11)).foregroundStyle(.secondary)
-                    box($typed.until, placeholder: "09:00", width: 46)
+            // In plain words first: what happens, and who never gets it.
+            Hint(text: "When it\u{2019}s on, someone who messages you privately during these hours gets this reply, once a night. Groups, bots, Blocked and Ask every time chats, and chats Claude is handling, never do.")
+            Setting(title: "Hours", hint: "This Mac\u{2019}s time. Overnight works, like 18:00 until 09:00.") {
+                HStack(spacing: 8) {
+                    Text("From").font(.system(size: 12)).foregroundStyle(p.fg2)
+                    FieldBox(placeholder: "HH:MM", text: $typed.from, width: 52, center: true, monospaced: true, name: "Away from")
+                    Text("until").font(.system(size: 12)).foregroundStyle(p.fg2)
+                    FieldBox(placeholder: "HH:MM", text: $typed.until, width: 52, center: true, monospaced: true, name: "Away until")
                 }
             }
-            field("Quiet after you write",
-                  hint: "No away reply in a chat for this long after anything is sent from your account there, by you or by Claude. 0 turns this off.") {
-                HStack(spacing: 6) {
-                    box($typed.quiet, placeholder: "30", width: 40)
-                    Text("minutes").font(.system(size: 11)).foregroundStyle(.secondary)
+            Setting(title: "Quiet after you write",
+                    hint: "No away reply in a chat for this long after anything is sent from your account there, by you or by Claude. 0 turns this off.") {
+                HStack(spacing: 8) {
+                    FieldBox(placeholder: "30", text: $typed.quiet, width: 44, center: true, monospaced: true, name: "Quiet minutes")
+                    Text("minutes").font(.system(size: 12)).foregroundStyle(p.fg2)
                 }
             }
-            field("Message", hint: "{name} becomes your first name.") { messageBox }
-            field("Preview", hint: "What they get, footer included.") {
+            Setting(title: "Message", hint: "{name} becomes your first name.") { messageBox }
+            Setting(title: "Preview", hint: "What they get, footer included.") {
                 Text(verbatim: Away.preview(typed.message, name: name, footer: footer))
-                    .font(.system(size: 11))
+                    .font(.system(size: 12))
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(7)
-                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.07)))
+                    .padding(.horizontal, 10).padding(.vertical, 7)
+                    .background(UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 4, bottomTrailingRadius: 12,
+                                                       topTrailingRadius: 12, style: .continuous).fill(p.accentSoft))
             }
             if let problem {
-                Label(problem, systemImage: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11)).foregroundStyle(.red)
+                HStack(alignment: .top, spacing: 6) {
+                    LucideIcon("triangle-alert", size: 14).padding(.top, 1)
+                    Text(verbatim: problem).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(p.red)
             }
-            HStack(spacing: 6) {
-                Text("Hours, quiet minutes and message save with Save.")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                Text(changed ? "Not saved yet." : "Hours, quiet minutes and message save with Save.")
+                    .font(.system(size: 11)).foregroundStyle(changed ? p.orange : p.fg3)
                 Spacer(minLength: 4)
                 Button(busy ? "Saving\u{2026}" : "Save", action: save)
-                    .buttonStyle(PillButton(tint: .accentColor))
+                    .buttonStyle(Pill(tint: .white, fill: p.accentFill))
                     .disabled(busy || problem != nil || !changed)
-                    .help("Save the hours, quiet minutes and message")
+                    .keyboardShortcut("s", modifiers: .command)
+                    .help("Save the hours, quiet minutes and message (\u{2318}S)")
             }
         }
-    }
-
-    private func field<Content: View>(_ title: String, hint: String, @ViewBuilder _ content: () -> Content) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(title).font(.system(size: 11, weight: .semibold))
-            Text(verbatim: hint).font(.system(size: 10)).foregroundStyle(.secondary)
-                .fixedSize(horizontal: false, vertical: true)
-            content()
-        }
-    }
-
-    private func box(_ text: Binding<String>, placeholder: String, width: CGFloat) -> some View {
-        Group {
-            // The offscreen snapshot renderer can't draw text fields; show the text instead.
-            if isSnapshot { Text(text.wrappedValue.isEmpty ? placeholder : text.wrappedValue) }
-            else { TextField(placeholder, text: text).textFieldStyle(.plain).multilineTextAlignment(.center) }
-        }
-        .font(.system(size: 12, weight: .medium).monospacedDigit())
-        .frame(width: width)
-        .padding(.horizontal, 7).padding(.vertical, 4)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.07)))
+        .card()
     }
 
     @ViewBuilder private var messageBox: some View {
@@ -1509,12 +2695,16 @@ struct AwayEditor: View {
                 Text(verbatim: typed.message).fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                TextEditor(text: $typed.message).scrollContentBackground(.hidden).frame(minHeight: 54, maxHeight: 110)
+                TextEditor(text: $typed.message)
+                    .scrollContentBackground(.hidden)
+                    .frame(minHeight: 60, maxHeight: 130)
+                    .accessibilityLabel(Text("Away message"))
             }
         }
         .font(.system(size: 12))
-        .padding(5)
-        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.07)))
+        .padding(7)
+        .background(RoundedRectangle(cornerRadius: 9, style: .continuous).fill(p.subtle2))
+        .overlay(RoundedRectangle(cornerRadius: 9, style: .continuous).strokeBorder(p.cardBorder))
     }
 
     private func toggle(_ on: Bool) {
@@ -1540,52 +2730,62 @@ struct AwayEditor: View {
     }
 }
 
+/// A chat sent to lately. Click it to show (or hide) what was sent; nothing opens on hover.
 struct RecentChatRow: View {
     @EnvironmentObject var store: Store
+    @Environment(\.colorScheme) private var scheme
     let chat: RecentChat
     @State private var open = snapshotExpandRecent
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
+        let p = Palette(scheme)
+        VStack(alignment: .leading, spacing: 8) {
             Button {
                 withAnimation(.easeOut(duration: 0.12)) { open.toggle() }
             } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "bubble.left.fill").font(.system(size: 10)).foregroundStyle(Color.accentColor.opacity(0.8))
-                    Text(chat.label).font(.system(size: 12)).lineLimit(1)
-                    if chat.messages.count > 1 {
-                        Text("\(chat.messages.count)").font(.system(size: 9, weight: .semibold)).foregroundStyle(.secondary)
+                HStack(spacing: 10) {
+                    AvatarView(name: chat.label)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(verbatim: chat.label).font(.system(size: 12, weight: .semibold)).lineLimit(1)
+                        Text(verbatim: summary).font(.system(size: 11)).foregroundStyle(p.fg3).lineLimit(1)
                     }
-                    Spacer()
-                    Text(ago(chat.messages[0].at)).font(.system(size: 10)).foregroundStyle(.tertiary)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .semibold)).foregroundStyle(.tertiary)
-                        .rotationEffect(.degrees(open ? 180 : 0))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    LucideIcon(open ? "chevron-up" : "chevron-down", size: 13).foregroundStyle(p.fg3)
                 }
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(open ? "Hide what was sent" : "Show what was sent")
+            .accessibilityLabel(Text(verbatim: "\(chat.label), \(summary)"))
+            .accessibilityHint(Text(open ? "Hides what was sent" : "Shows what was sent"))
             if open {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(chat.messages.prefix(3)) { m in
-                        VStack(alignment: .leading, spacing: 2) {
-                            Text(store.body(m.text)).font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
-                            Text("\(ago(m.at)) · \(viaLabel(m.via))\(m.sessionLabel.map { " · \($0)" } ?? "")")
-                                .font(.system(size: 9)).foregroundStyle(.tertiary)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(verbatim: store.body(m.text)).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
+                            Text(verbatim: "\(agoWords(m.at)) \u{00B7} \(viaLabel(m.via))\(m.sessionLabel.map { " \u{00B7} \($0)" } ?? "")")
+                                .font(.system(size: 10)).foregroundStyle(p.fg3)
+                                .fixedSize(horizontal: false, vertical: true)
                         }
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(7)
-                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.07)))
+                        .padding(.horizontal, 10).padding(.vertical, 7)
+                        .background(UnevenRoundedRectangle(topLeadingRadius: 12, bottomLeadingRadius: 4, bottomTrailingRadius: 12,
+                                                           topTrailingRadius: 12, style: .continuous).fill(p.accentSoft))
                     }
                 }
-                .padding(.leading, 16)
+                .padding(.leading, 44)
                 .transition(.opacity)
             }
         }
-        .padding(.vertical, 5)
-        .padding(.horizontal, 7)
-        .background(RoundedRectangle(cornerRadius: 7).fill(open ? Color.primary.opacity(0.05) : .clear))
+        .padding(.horizontal, 8).padding(.vertical, 6)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(open ? p.subtle : Color.clear))
+        .padding(.horizontal, -8)
+    }
+
+    /// "3 messages · last sent 5m ago".
+    private var summary: String {
+        let n = chat.messages.count
+        return "\(n == 1 ? "1 message" : "\(n) messages") \u{00B7} last sent \(agoWords(chat.messages[0].at))"
     }
 
     private func viaLabel(_ via: String) -> String {
@@ -1601,43 +2801,85 @@ struct RecentChatRow: View {
 
 // MARK: - Menu bar icon
 
-/// The menu bar icon, drawn like Telegram's: a glyph with a small badge on its lower-right corner.
-/// It's a template image, so macOS tints it for light, dark and coloured menu bars. The badge text
-/// is knocked out of the badge (the bar shows through), with a clear ring separating it from the glyph.
+/// What the menu bar icon shows: the plane coloured by health, a green dot while a session listens,
+/// and a badge (the count of drafts waiting on amber, or "!" when something is down).
+struct IconState: Equatable {
+    let health: Health
+    let listening: Bool
+    let badge: String?
+    /// The badge counts drafts waiting (amber), not a problem.
+    var pending = false
+}
+
+/// The menu bar icon, drawn like the tray's: the app's paper plane in Telegram blue online, yellow
+/// reconnecting, red logged out and grey offline; a green dot on its top right while a session listens;
+/// and a badge on its lower right. A clear ring separates the dot and badge from the plane. It's in
+/// colour (not a template image), so the status colours mean the same on every menu bar.
 enum MenuBarIcon {
-    static func image(symbol: String, badge: String?) -> NSImage {
-        let size = NSSize(width: badge == nil ? 18 : 22, height: 18)
-        let image = NSImage(size: size, flipped: false) { rect in
+    private static func rgb(_ v: UInt32) -> NSColor {
+        NSColor(srgbRed: CGFloat((v >> 16) & 0xFF) / 255, green: CGFloat((v >> 8) & 0xFF) / 255,
+                blue: CGFloat(v & 0xFF) / 255, alpha: 1)
+    }
+
+    // The tray's status colours (Theme.Status in tray/App/Theme.cs).
+    static let brand = rgb(0x2AA3E0)
+    static let offline = rgb(0x8E8E93)
+    static let online = rgb(0x2FC97A)
+    static let pending = rgb(0xFFA814)
+    static let reconnecting = rgb(0xF0C41B)
+    static let error = rgb(0xE53E3E)
+    static let ink = rgb(0x1E1A17)
+
+    static func planeColour(_ h: Health) -> NSColor {
+        switch h {
+        case .good: return brand
+        case .busy: return reconnecting
+        case .bad: return error
+        case .off: return offline
+        }
+    }
+
+    static func image(_ s: IconState) -> NSImage {
+        let size = NSSize(width: s.badge == nil ? 19 : 24, height: 18)
+        let image = NSImage(size: size, flipped: true) { rect in
             guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
-            let config = NSImage.SymbolConfiguration(pointSize: 14, weight: .medium)
-            if let glyph = NSImage(systemSymbolName: symbol, accessibilityDescription: "Telegram MCP")?
-                .withSymbolConfiguration(config) {
-                let g = glyph.size
-                let x = badge == nil ? (rect.width - g.width) / 2 : 1
-                glyph.draw(in: NSRect(x: x, y: (rect.height - g.height) / 2 + 1, width: g.width, height: g.height))
+            var t = CGAffineTransform(translationX: 0.5, y: 1).scaledBy(x: 0.165, y: 0.165)
+            if let plane = Brand.plane.cgPath.copy(using: &t) {
+                ctx.addPath(plane)
+                ctx.setFillColor(planeColour(s.health).cgColor)
+                ctx.fillPath()
             }
-            guard let badge else { return true }
+            if s.listening {
+                let dot = CGRect(x: 12.5, y: 0.5, width: 6, height: 6)
+                ctx.setBlendMode(.clear)
+                ctx.fillEllipse(in: dot.insetBy(dx: -1.3, dy: -1.3))
+                ctx.setBlendMode(.normal)
+                ctx.setFillColor(online.cgColor)
+                ctx.fillEllipse(in: dot)
+            }
+            guard let badge = s.badge else { return true }
 
             let font = NSFont.systemFont(ofSize: 8.5, weight: .heavy)
-            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: NSColor.black]
+            let colour: NSColor = s.pending ? pending : s.health == .busy ? reconnecting : error
+            let textColour: NSColor = s.pending || s.health == .busy ? ink : .white
+            let attrs: [NSAttributedString.Key: Any] = [.font: font, .foregroundColor: textColour]
             let textSize = (badge as NSString).size(withAttributes: attrs)
             let height: CGFloat = 10.5
             let width = max(height, textSize.width + 4.5)
-            let pill = NSRect(x: rect.width - width, y: 0, width: width, height: height)
+            let pill = NSRect(x: rect.width - width, y: rect.height - height, width: width, height: height)
 
-            ctx.setBlendMode(.clear) // gap between badge and glyph
+            ctx.setBlendMode(.clear) // gap between badge and plane
             NSBezierPath(roundedRect: pill.insetBy(dx: -1.4, dy: -1.4), xRadius: height / 2 + 1.4, yRadius: height / 2 + 1.4).fill()
             ctx.setBlendMode(.normal)
-            NSColor.black.setFill()
+            colour.setFill()
             NSBezierPath(roundedRect: pill, xRadius: height / 2, yRadius: height / 2).fill()
-            ctx.setBlendMode(.destinationOut) // number shows the bar through the badge
             (badge as NSString).draw(
-                at: NSPoint(x: pill.midX - textSize.width / 2, y: pill.midY - textSize.height / 2 + 0.3),
+                at: NSPoint(x: pill.midX - textSize.width / 2, y: pill.midY - textSize.height / 2 - 0.3),
                 withAttributes: attrs)
-            ctx.setBlendMode(.normal)
             return true
         }
-        image.isTemplate = true
+        image.isTemplate = false
+        image.accessibilityDescription = "Telegram MCP"
         return image
     }
 
@@ -1648,52 +2890,45 @@ struct MenuIcon: View {
     @ObservedObject var store: Store
 
     var body: some View {
-        let waiting = store.state?.approvals.count ?? 0
-        let healthy = store.reachable && store.state?.telegram.phase == "connected"
-        let symbol = store.listening.isEmpty ? "paperplane" : "paperplane.fill"
-        if waiting > 0 {
-            Image(nsImage: MenuBarIcon.image(symbol: symbol, badge: MenuBarIcon.badgeText(waiting)))
-        } else if !healthy {
-            Image(nsImage: MenuBarIcon.image(symbol: symbol, badge: "!"))
-        } else {
-            Image(nsImage: MenuBarIcon.image(symbol: symbol, badge: nil))
-        }
+        let s = store.iconState
+        Image(nsImage: MenuBarIcon.image(s))
+            .renderingMode(.original)
+            .accessibilityLabel(Text(verbatim: store.iconDescription))
     }
 }
 
-/// `--icons out.png`: every icon state, tinted the way macOS tints template images, on dark and light bars.
+/// `--icons out.png`: every icon state, on a tinted, a dark and a light menu bar.
 @MainActor
 enum IconPreview {
     static func run(to path: String) {
         _ = NSApplication.shared
-        let states: [(String, String?)] = [
-            ("paperplane", nil), ("paperplane.fill", nil), ("paperplane", "1"),
-            ("paperplane", "2"), ("paperplane.fill", "12"), ("paperplane", "!"),
+        let states: [IconState] = [
+            IconState(health: .good, listening: false, badge: nil),
+            IconState(health: .good, listening: true, badge: nil),
+            IconState(health: .good, listening: false, badge: "1", pending: true),
+            IconState(health: .good, listening: true, badge: "12", pending: true),
+            IconState(health: .busy, listening: false, badge: "!"),
+            IconState(health: .bad, listening: false, badge: "!"),
+            IconState(health: .off, listening: false, badge: "!"),
         ]
         let scale: CGFloat = 6
         let cell = NSSize(width: 34, height: 24)
-        let bars: [(NSColor, NSColor)] = [
-            (NSColor(srgbRed: 0.27, green: 0.20, blue: 0.62, alpha: 1), .white), // tinted (like the screenshot)
-            (NSColor(white: 0.12, alpha: 1), .white),
-            (NSColor(white: 0.93, alpha: 1), .black),
+        let bars: [NSColor] = [
+            NSColor(srgbRed: 0.27, green: 0.20, blue: 0.62, alpha: 1), // tinted
+            NSColor(white: 0.12, alpha: 1),
+            NSColor(white: 0.93, alpha: 1),
         ]
         let size = NSSize(width: cell.width * CGFloat(states.count) * scale, height: cell.height * CGFloat(bars.count) * scale)
         let out = NSImage(size: size, flipped: false) { _ in
             for (row, bar) in bars.enumerated() {
                 let y = CGFloat(bars.count - 1 - row) * cell.height * scale
-                bar.0.setFill()
+                bar.setFill()
                 NSRect(x: 0, y: y, width: size.width, height: cell.height * scale).fill()
                 for (col, state) in states.enumerated() {
-                    let icon = MenuBarIcon.image(symbol: state.0, badge: state.1)
-                    let tinted = NSImage(size: icon.size, flipped: false) { r in
-                        icon.draw(in: r)
-                        bar.1.setFill()
-                        r.fill(using: .sourceAtop)
-                        return true
-                    }
+                    let icon = MenuBarIcon.image(state)
                     let w = icon.size.width * scale, h = icon.size.height * scale
                     let x = CGFloat(col) * cell.width * scale + (cell.width * scale - w) / 2
-                    tinted.draw(in: NSRect(x: x, y: y + (cell.height * scale - h) / 2, width: w, height: h))
+                    icon.draw(in: NSRect(x: x, y: y + (cell.height * scale - h) / 2, width: w, height: h))
                 }
             }
             return true
@@ -1819,66 +3054,106 @@ struct PageAlarmView: View {
     static let maxCards = 3
 
     @EnvironmentObject var store: Store
+    @Environment(\.colorScheme) private var scheme
 
     var body: some View {
+        let p = Palette(scheme)
         let ringing = store.pages.filter(\.ringing)
         VStack(alignment: .leading, spacing: 12) {
-            HStack(spacing: 8) {
-                Image(systemName: "bell.and.waves.left.and.right.fill")
-                    .font(.system(size: 18, weight: .semibold))
-                    .foregroundStyle(.red)
-                Text(ringing.count > 1 ? "\(ringing.count) pages" : "Page")
-                    .font(.system(size: 17, weight: .bold))
-                Spacer()
+            HStack(spacing: 12) {
+                LucideIcon("bell-ring", size: 20)
+                    .foregroundStyle(p.red)
+                    .frame(width: 42, height: 42)
+                    .background(Circle().fill(p.wash(p.red)))
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(ringing.count > 1 ? "\(ringing.count) pages" : "Page")
+                        .font(.system(size: 17, weight: .bold))
+                    Text("Someone needs you now. It rings until you ack or snooze it.")
+                        .font(.system(size: 11)).foregroundStyle(p.fg2)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                Spacer(minLength: 0)
             }
             ForEach(ringing.prefix(Self.maxCards)) { page in
                 PageCard(page: page)
             }
             if ringing.count > Self.maxCards {
                 Text("+\(ringing.count - Self.maxCards) more: ack these to see them")
-                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .font(.system(size: 11)).foregroundStyle(p.fg2)
             }
         }
+        .foregroundStyle(p.fg)
         .padding(18)
         .frame(width: Self.width)
         .fixedSize(horizontal: false, vertical: true)
+        .background(p.surface)
     }
 }
 
 struct PageCard: View {
     @EnvironmentObject var store: Store
+    @Environment(\.colorScheme) private var scheme
     let page: UiPage
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(page.from).font(.system(size: 13, weight: .semibold))
-            if let chat = page.chat {
-                Text(chat).font(.system(size: 11)).foregroundStyle(.secondary)
+        let p = Palette(scheme)
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                AvatarView(name: page.from)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(verbatim: page.from).font(.system(size: 13, weight: .semibold)).lineLimit(1)
+                    if let chat = page.chat {
+                        Text(verbatim: chat).font(.system(size: 11)).foregroundStyle(p.fg3).lineLimit(1)
+                    }
+                }
+                Spacer(minLength: 0)
+                HStack(spacing: 4) {
+                    LucideIcon("clock", size: 12)
+                    Text(verbatim: agoWords(page.createdAt)).font(.system(size: 11))
+                }
+                .foregroundStyle(p.fg3)
             }
-            Text(page.reason.isEmpty ? "No reason given" : page.reason)
+            Text(verbatim: page.reason.isEmpty ? "No reason given" : page.reason)
                 .font(.system(size: 13))
+                .foregroundStyle(page.reason.isEmpty ? p.fg3 : p.fg)
                 .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10).padding(.vertical, 8)
+                .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(p.subtle2))
             if page.state == "unanswered" {
-                Text("Not acked on the phone either; the sender was told to call.")
-                    .font(.system(size: 11)).foregroundStyle(.orange)
+                HStack(alignment: .top, spacing: 6) {
+                    LucideIcon("triangle-alert", size: 13).padding(.top, 1)
+                    Text("Not acked on the phone either; the sender was told to call.")
+                        .font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
+                }
+                .foregroundStyle(p.orange)
             }
             HStack(spacing: 8) {
                 Button("Ack") { Task { await store.page(page.id, ack: true) } }
-                    .buttonStyle(PillButton(tint: .red))
+                    .buttonStyle(Pill(tint: .white, fill: Palette.redFill))
                     .keyboardShortcut(.defaultAction)
+                    .help("Stop the alarm everywhere: here, in the tray and on the phone")
                 Button("Snooze 15m") { Task { await store.page(page.id, ack: false, minutes: 15) } }
-                    .buttonStyle(PillButton(tint: .secondary, filled: false))
+                    .buttonStyle(Pill(tint: p.fg2))
                 Button("1h") { Task { await store.page(page.id, ack: false, minutes: 60) } }
-                    .buttonStyle(PillButton(tint: .secondary, filled: false))
-                Spacer()
+                    .buttonStyle(Pill(tint: p.fg2))
+                    .accessibilityLabel(Text("Snooze 1 hour"))
+                Spacer(minLength: 0)
                 if let url = page.messageURL {
-                    Button("Open message") { NSWorkspace.shared.open(url) }
-                        .buttonStyle(IconButton())
+                    Button { NSWorkspace.shared.open(url) } label: {
+                        HStack(spacing: 5) {
+                            LucideIcon("external-link", size: 12)
+                            Text("Open")
+                        }
+                    }
+                    .buttonStyle(Pill(tint: p.accent))
+                    .help("Open the message in Telegram")
                 }
             }
         }
         .padding(12)
-        .background(RoundedRectangle(cornerRadius: 10).fill(Color.red.opacity(0.08)))
+        .background(RoundedRectangle(cornerRadius: 14, style: .continuous).fill(p.wash(p.red)))
+        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(p.red.opacity(0.35)))
     }
 }
 
