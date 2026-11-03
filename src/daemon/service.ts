@@ -331,6 +331,10 @@ export class Service {
 
   #record(r: Omit<SentRecord, 'at'>) {
     this.#recent = [...this.#recent, { ...r, at: new Date().toISOString() }].slice(-20)
+    this.#saveRecent()
+  }
+
+  #saveRecent() {
     if (!this.d.recentPath) return
     try {
       const tmp = `${this.d.recentPath}.tmp`
@@ -823,6 +827,32 @@ export class Service {
     },
 
     telegram_send_message: async (sid, p) => this.#send(sid, p, { text: p.text }),
+
+    telegram_edit_message: async (sid, p) => {
+      const config = this.d.store.get()
+      const t = await this.#resolve(p.chat, true)
+      const key = `${t.peer.id}:${p.messageId}`
+      const known = this.#ownSent.has(key) || this.#recent.some(r => r.chatId === t.peer.id && r.messageId === p.messageId)
+      if (!known) {
+        return fail(`Not edited: message #${p.messageId} in ${t.label} was not sent by this daemon (or too long ago). Only messages Claude sent through telegram_send_message can be edited.`)
+      }
+      if (looksLikeReplyCommand(visibleText(p.text, p.parseMode))) return fail('Not edited: a message starting with /reply would start a takeover. Reword it.')
+      // The chat sees the new text, so it needs the same yes as a send. There is no approval step
+      // for an edit, so anything but an outright "send" is refused.
+      const decision = decideSend(config, t.peer, {
+        isWatching: this.d.hub.isWatching(sid, t.peer.id),
+        takenOver: this.d.hub.isTakenOverBy(sid, t.peer.id),
+      })
+      if (decision.action === 'block') return fail(`Not edited in ${t.label}: ${decision.reason}.`)
+      if (decision.action !== 'send') {
+        return fail(`Not edited in ${t.label}: ${decision.reason}. An edit changes what the chat already sees, so it only works where sending needs no approval. Send a new message instead.`)
+      }
+      const text = withFooter(p.text, config.footer)
+      const edited = await this.d.tg.editMessage(t.peer.id, p.messageId, text, { parseMode: p.parseMode })
+      this.#recent = this.#recent.map(r => (r.chatId === t.peer.id && r.messageId === p.messageId ? { ...r, text } : r))
+      this.#saveRecent()
+      return { text: `Edited message #${edited.id} in ${t.label}. Allowed because ${decision.reason}.` }
+    },
 
     telegram_page: async (sid, p) => {
       const { pager, hub } = this.d

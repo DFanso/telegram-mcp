@@ -105,6 +105,23 @@ export class FakeTelegram implements TelegramPort {
     this.deleted.push({ chatId, messageId })
   }
 
+  edits: { chatId: number; messageId: number; text: string; parseMode?: SendOptions['parseMode'] }[] = []
+
+  async editMessage(chatId: number, messageId: number, text: string, opts: { parseMode?: SendOptions['parseMode'] } = {}): Promise<MessageInfo> {
+    this.edits.push({ chatId, messageId, text, parseMode: opts.parseMode })
+    return {
+      id: messageId,
+      chatId,
+      date: new Date().toISOString(),
+      from: this.me,
+      outgoing: true,
+      text,
+      media: null,
+      replyToId: null,
+      topicId: null,
+    }
+  }
+
   async sendSticker(chatId: number, from: StickerRef, opts: SendOptions = {}): Promise<MessageInfo> {
     if (!this.stickers.has(`${from.chatId}:${from.messageId}`)) throw new Error(`Message #${from.messageId} has no attachment, not a sticker.`)
     this.sentStickers.push({ chatId, from, opts })
