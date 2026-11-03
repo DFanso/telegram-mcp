@@ -48,10 +48,10 @@ public sealed record PollResult(UiState? State, string? Problem)
 /// </summary>
 public sealed record Decision(bool Approve, string? Remember = null, string? Nickname = null);
 
-/// <summary>A Contacts-page edit; null fields stay as they are.</summary>
-/// <summary>POST /ui/away: only the fields that are set go in the body.</summary>
+/// <summary>An Away-page edit for POST /ui/away: only the fields that are set go in the body.</summary>
 public sealed record AwayChange(bool? Enabled = null, string? From = null, string? Until = null, string? Message = null, int? QuietMinutes = null);
 
+/// <summary>A Contacts-page edit; null fields stay as they are.</summary>
 public sealed record ContactChange(string Nickname, string? SendMode = null, bool? AutoReply = null, string? Rename = null, bool? PageFrom = null);
 
 /// <summary>The daemon's answer to an action, in words. <see cref="Nickname"/>: a contact's name after the edit.</summary>

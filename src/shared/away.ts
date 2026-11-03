@@ -28,7 +28,7 @@ export const AwaySchema = z
       .refine(m => m.trim() !== '', "The message can't be empty.")
       .refine(m => m.length <= AWAY_MESSAGE_MAX, `The message is too long (${AWAY_MESSAGE_MAX} characters at most).`)
       .default(AWAY_DEFAULT_MESSAGE),
-    /** Minutes of silence after you last wrote in a chat before an away reply is allowed; 0 turns that off. */
+    /** Minutes after anything sent from your account in a chat (you or Claude; not the Page button) before an away reply is allowed; 0 turns that off. */
     quietMinutes: z.number({ error: QUIET_MSG }).int(QUIET_MSG).min(0, QUIET_MSG).max(1440, QUIET_MSG).default(30),
   })
   .refine(a => a.from !== a.until, { message: "From and until can't be the same time." })

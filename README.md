@@ -209,7 +209,7 @@ When you're off for the night, friends who write get one reply saying so. It's *
 
 - Only private chats with people: not groups, bots, Saved Messages or blocked chats.
 - Once per chat per night. A restart in the middle of the night doesn't repeat it.
-- Not for 30 minutes after you last wrote in that chat (`quietMinutes`; 0 turns this off).
+- Not for 30 minutes after anything was sent from your account in that chat, whether you typed it or Claude sent it (`quietMinutes`; 0 turns this off). The Page button's message and the away reply itself don't count.
 - Not while a Claude session is handling the chat (watching it, or after `/reply`).
 - Not to someone who is paging you, or whose page is still waiting.
 - Only for messages less than 10 minutes old, so catching up after the laptop sleeps doesn't send night-time replies in the morning.

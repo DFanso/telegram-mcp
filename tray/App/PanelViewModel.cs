@@ -211,13 +211,16 @@ public sealed class PanelViewModel : Observable
     async Task SaveAwayAsync()
     {
         if (_awaySaved is not { } saved || AwayError is not null) return;
-        var from = _awayFrom.Trim();
-        var until = _awayUntil.Trim();
+        // What goes out, captured before the await: typing during the round trip must not
+        // become the new baseline, or that edit would look already saved.
+        var typedFrom = _awayFrom;
+        var typedUntil = _awayUntil;
+        var sent = (Enabled: _awayEnabled, From: typedFrom.Trim(), Until: typedUntil.Trim(), Message: _awayMessage);
         var change = new AwayChange(
-            _awayEnabled != saved.Enabled ? _awayEnabled : null,
-            from != saved.From ? from : null,
-            until != saved.Until ? until : null,
-            _awayMessage != saved.Message ? _awayMessage : null);
+            sent.Enabled != saved.Enabled ? sent.Enabled : null,
+            sent.From != saved.From ? sent.From : null,
+            sent.Until != saved.Until ? sent.Until : null,
+            sent.Message != saved.Message ? sent.Message : null);
         if (change == new AwayChange())
         {
             ShowFlash("Nothing changed.");
@@ -237,9 +240,10 @@ public sealed class PanelViewModel : Observable
         }
         if (r.Ok)
         {
-            _awaySaved = (_awayEnabled, from, until, _awayMessage);
-            AwayFrom = from;
-            AwayUntil = until;
+            _awaySaved = sent;
+            // Show the trimmed times, but only in fields left alone since the save started.
+            if (_awayFrom == typedFrom) AwayFrom = sent.From;
+            if (_awayUntil == typedUntil) AwayUntil = sent.Until;
         }
         ShowFlash(r.Text);
         await PollAsync();

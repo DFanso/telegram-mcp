@@ -97,7 +97,7 @@ async function away(args: string[]) {
   const { away: a } = store.get()
   console.log(`Away auto-reply: ${awaySummary(a, new Date())}`)
   console.log(`Hours: ${a.from}–${a.until}`)
-  console.log(`Quiet after you reply: ${a.quietMinutes} min`)
+  console.log(`Quiet after you or Claude write there: ${a.quietMinutes} min`)
   console.log('Preview:')
   console.log((await awayPreview(store.get())).replace(/^/gm, '  '))
 }

@@ -60,6 +60,19 @@ describe('the away reply in the daemon', () => {
     await daemon.stop()
   })
 
+  test('an old outgoing message replayed on catch-up counts at its own time', async () => {
+    const { tg, daemon } = await daemonAway()
+    tg.emit(LEO.id, 'yo', LEO.id, { outgoing: true, date: new Date(Date.now() - 2 * HOUR).toISOString() })
+    // No usable date: counts as now.
+    tg.emit(ANNA.id, 'yo', ANNA.id, { outgoing: true, date: 'not a date' })
+    await settle()
+    tg.emit(LEO.id, 'hi')
+    tg.emit(ANNA.id, 'hi')
+    await settle()
+    expect(tg.sent.map(s => s.chatId)).toEqual([LEO.id])
+    await daemon.stop()
+  })
+
   test('a failing away send leaves watch dispatch and paging working', async () => {
     const tg = new FakeTelegram().add(LEO, ANNA)
     const real = tg.sendText.bind(tg)
