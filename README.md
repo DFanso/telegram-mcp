@@ -238,41 +238,44 @@ An away reply shows under Recently sent as "away reply". No MCP tool can change 
 
 ## Menu bar app
 
-`tgmcp menubar` builds `menubar/build/Telegram MCP.app` (SwiftUI, no Dock icon) and starts it at login. Choosing Quit keeps it closed until your next login. It shows:
+`tgmcp menubar` builds `menubar/build/Telegram MCP.app` (SwiftUI, no Dock icon) and starts it at login. Choosing Quit keeps it closed until your next login. The panel has the tray app's look (smoked glass with frosted cards, following light or dark mode, [Lucide](https://lucide.dev) icons) and three tabs:
 
-- the connection, with a warning icon when the daemon or Telegram is down
-- **Waiting for approval**: the exact text, recipient, reason and asking session, with Approve / Deny. A new chat gets an editable nickname and Deny / Ask every time / Always allow instead.
-- **Listening**: each session that is watching chats, and whether its Monitor is connected
-- **Recently sent**: the last 5 chats you sent to. Click a chat to see its messages, when they went, how they were approved, and from which session; click again to close it.
-- **Contacts** (the button at the top right): every saved chat, to change its rules without editing `config.json`. See [Contacts](#contacts).
-- **Away** (next to Contacts): the [away auto-reply](#away-auto-reply). On / Off saves at once; the hours, quiet minutes and message save with **Save**, with a preview of the reply. The header says whether it's away now and until when, and while it is, Home shows a line saying so.
+- The header shows the connection as a status pill (green connected, yellow reconnecting, red logged out, grey offline) with the whole of your name, on two lines if it needs them, plus **Rules** and **Log** buttons.
+- **Home** has three tiles, **Waiting**, **Listening** and **Sent**. Each shows a count and a word ("needs you", "2 sessions", "1 paused"), and the one you click is the section shown below them, so the panel stays short. A new draft switches back to Waiting.
+  - **Waiting for approval**: the exact text, recipient, "Asked by …" and the reason on separate lines, and when it was asked ("just now", "5m ago"), with Deny / **Send**. A new chat says it's the first message, gets an editable nickname, and offers **Send, ask next time** / **Send, always allow** instead.
+  - **Listening now**: each session watching chats, whether its Monitor is connected, and a **switch on each chat** to pause or resume listening there. A session watching several saved chats also gets an **all** switch. A switch is the chat's auto-reply: off, the daemon stops passing that chat's messages to every session at once (the watches stay, so switching it back on resumes them). Under it, **Chats Claude may listen to** lists your saved chats, each with its switch, so you can choose who Claude may watch without opening Contacts.
+  - **Recently sent**: the last 5 chats you sent to. Click a chat to see its messages, when they went, how they were approved, and from which session; click again to close it.
+- **Contacts**: every saved chat, to change its rules without editing `config.json`. See [Contacts](#contacts).
+- **Away**: the [away auto-reply](#away-auto-reply). The switch saves at once; the hours, quiet minutes and message save with **Save** (⌘S), with a preview of the reply. It says whether it's away now and until when. While it is, the tab shows a green dot and Home shows a line saying so.
+
+Results flash under the header: a green check when it worked, a red warning when it didn't (VoiceOver reads them out). Esc clears a search, then closes the panel; ⌘1 to ⌘3 switch tabs and ⌘F searches contacts.
 
 <p>
-  <img src="docs/menubar-approvals.png" width="370" alt="The menu bar panel: two drafts waiting for approval (one to a saved group, one to a new chat with Deny, Ask every time and Always allow), two listening sessions, and the recently sent chats">
-  <img src="docs/menubar-history.png" width="370" alt="Recently sent, expanded: each chat lists the messages sent there, when, how they were approved and from which session">
+  <img src="docs/menubar-approvals.png" width="370" alt="The menu bar panel's Home tab: the status pill, the Home, Contacts and Away tabs, the Waiting, Listening and Sent tiles, and two drafts waiting for approval (one to a saved group with Deny and Send, one to a new chat with Send, ask next time and Send, always allow)">
+  <img src="docs/menubar-history.png" width="370" alt="Home with the Sent tile picked: recently sent, expanded, each chat listing the messages sent there, when, how they were approved and from which session">
 </p>
 
-Each new draft also posts a notification, so you can decide without opening the panel. Its **Options** menu has the same choices as the panel: **Approve** / **Deny** for a chat that is already on a list, and **Approve, ask next time** / **Approve, always allow** / **Deny** for the first message to a new chat.
+Each new draft also posts a notification, so you can decide without opening the panel. Its **Options** menu has the same choices as the panel: **Send** / **Deny** for a chat that is already on a list, and **Send, ask next time** / **Send, always allow** / **Deny** for the first message to a new chat.
 
 <img src="docs/notification-options.png" width="384" alt="Two draft notifications; the Options menu of a first message to a new chat shows Approve, ask next time; Approve, always allow; and Deny">
 
 A long draft shows its first 4 lines: click it (or **Show all**) to see all of it. Nothing in the panel opens on hover. The panel never runs past the bottom of the screen: when a long draft (or many of them) would, the middle scrolls and the header and footer stay put.
 
-The menu bar icon shows the number of drafts waiting. `tgmcp menubar uninstall` removes it.
+The menu bar icon is the app's paper plane in the same colours as the status pill (blue when connected), with a green dot while a session listens and a badge: the number of drafts waiting on amber, or "!" when the daemon or Telegram is down. `tgmcp menubar uninstall` removes it.
 
 ### Contacts
 
-**Contacts** at the top of the panel lists every saved chat (`chats` in the rules file) with tags for how it's set up. Search by nickname, name, @username or id. Click a chat to change it:
+**Contacts** lists every saved chat (`chats` in the rules file) with tags for how it's set up. Search by nickname, name, @username or id, and filter to **All**, **Listening** (Claude may listen) or **Not listening**. In the menu bar app each row has a **Listen** switch, which is the chat's auto-reply (below), so you can choose who Claude may listen to without opening the chat. Click a chat to change the rest. An open chat says what happens there in plain words first:
 
 - **Nickname**: type a new one and press Rename. Rules that used the old name are rewritten to the new one, so the chat keeps its lists. A name that already means another chat is refused, and so is a name the rules mention that matches no chat yet (taking it would quietly put this chat on those lists). One of the chat's own aliases can become its nickname.
 - **When Claude sends a message here**: **Always allow** (`autoSend`), **Ask every time** (`requireApproval`) or **Blocked** (`blocked`). The chat ends up on exactly that list: every other entry that means the same chat is taken out of the other two, whether it's a nickname, an alias, an id, an @username or `"me"`. A chat on none of them shows as *not set*.
-- **Auto-reply**: **On** puts it on `autoReply`, so sessions may watch it and reply without asking. **Off** takes out every entry that means the chat, and sessions watching it stop getting its messages at once. The text under the buttons says when the sending rule overrides this (Ask every time still asks; Blocked still refuses).
+- **Auto-reply** (the **Listen** switch in the menu bar app): **On** puts it on `autoReply`, so sessions may watch it and reply without asking. **Off** takes out every entry that means the chat, and sessions watching it stop getting its messages at once. The text under the buttons says when the sending rule overrides this (Ask every time still asks; Blocked still refuses).
 - **Can page me** (people only, not groups, bots or yourself): **On** puts their user id on `paging.pageFrom`, so their `/page <reason>` rings you (see [Pages](#pages)). **Off** takes it out. The row gets a *can page me* tag.
 - **Page *nickname***: type a reason (or none) and press **Page** or Return. The daemon sends `/page <reason>` to that person from your account, as one line of at most 200 characters and without the footer, since everything after `/page` is their reason. It shows under Recently sent. A chat whose sending rule blocks it (Blocked, or on no list with `defaultPolicy: "block"`) is refused.
 
 Each click saves to `config.json` at once, the same way an approval does: the file is read fresh first, so a hand edit made a moment ago is kept, and a broken file is reported, never overwritten. A click that changes nothing writes nothing. Each change is noted in `daemon.log`. Rules are per chat, so if two nicknames point to the same chat, changing one changes both; the details line under the buttons names the other.
 
-<img src="docs/menubar-contacts.png" width="370" alt="The Contacts page: four saved chats with their tags, and Team QA opened with its nickname, the sending choices (Ask every time selected) and auto-reply (Off)">
+<img src="docs/menubar-contacts.png" width="370" alt="The Contacts tab: search, the All, Listening and Not listening filter, four saved chats with their tags and Listen switches, and Team QA opened with its explanation, the sending choices (Ask every time selected) and its nickname">
 
 This page is the menu bar's own: it goes through the daemon's local API with the token (`POST /ui/contacts` and `POST /ui/contacts/page`, like approvals). No MCP tool offers the same, so sessions still can't change the rules through the server.
 
@@ -314,9 +317,11 @@ The screenshots above come from the demo daemon, rendered offscreen by the app i
 APP="menubar/build/Telegram MCP.app/Contents/MacOS/TelegramMCPBar"
 export TELEGRAM_MCP_HOME=/tmp/tgmcp-demo TELEGRAM_MCP_PORT=47901 TELEGRAM_MCP_SECRET_STORE=file SNAPSHOT_DARK=1
 "$APP" --snapshot docs/menubar-approvals.png
-SNAPSHOT_EXPAND=recent SNAPSHOT_SCREEN_HEIGHT=4000 "$APP" --snapshot /tmp/history-full.png   # SNAPSHOT_EXPAND: 1, approvals or recent
+SNAPSHOT_SECTION=sent SNAPSHOT_EXPAND=recent SNAPSHOT_SCREEN_HEIGHT=4000 "$APP" --snapshot docs/menubar-history.png   # SNAPSHOT_EXPAND: 1, approvals or recent
 SNAPSHOT_PAGE=contacts SNAPSHOT_OPEN=team-qa "$APP" --snapshot docs/menubar-contacts.png    # SNAPSHOT_OPEN: a nickname to open
 SNAPSHOT_PAGE=away "$APP" --snapshot /tmp/menubar-away.png
+SNAPSHOT_SECTION=listening "$APP" --snapshot /tmp/menubar-listening.png                      # SNAPSHOT_SECTION: listening or sent (Home)
+"$APP" --icons /tmp/menubar-icons.png                                                        # every menu bar icon state
 ```
 
 ### Releasing
