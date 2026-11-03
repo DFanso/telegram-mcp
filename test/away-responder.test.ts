@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AwayResponder, type AwayDeps } from '../src/daemon/away'
@@ -149,10 +149,21 @@ describe('AwayResponder', () => {
   })
 
   test('the away reply itself does not count as you speaking', async () => {
+    // A full day of quiet: if the reply at 20:00 counted as you writing, 19:00 tomorrow would be silenced.
+    config = cfg({ away: { quietMinutes: 1440 } })
     const r = make()
     expect(await r.onIncoming(msg(ANNA), false)).toBe('sent')
-    clock = at(4, 20).getTime()
+    clock = at(4, 19).getTime()
     expect(await r.onIncoming(msg(ANNA), false)).toBe('sent')
+  })
+
+  test('editing the hours mid-night does not reply again', async () => {
+    const r = make()
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('sent')
+    config = cfg({ away: { from: '17:00' } })
+    clock = at(3, 21).getTime()
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('skipped')
+    expect(tg.sent).toHaveLength(1)
   })
 
   test("yesterday's answered set does not block tonight", async () => {
@@ -171,6 +182,49 @@ describe('AwayResponder', () => {
       clock = at(3, 23).getTime()
       expect(await make({ statePath }).onIncoming(msg(ANNA), false)).toBe('skipped')
       expect(tg.sent).toHaveLength(1)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('an away.json from an earlier build still blocks that night', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'away-'))
+    try {
+      const statePath = join(dir, 'away.json')
+      writeFileSync(statePath, JSON.stringify({ window: '2026-11-03T18:00', chats: [ANNA.id] }))
+      const r = make({ statePath })
+      expect(await r.onIncoming(msg(ANNA), false)).toBe('skipped')
+      expect(await r.onIncoming(msg(LEO), false)).toBe('sent')
+      // Saved back in the new shape, ANNA kept.
+      const saved = JSON.parse(readFileSync(statePath, 'utf8'))
+      expect(Object.keys(saved.replied).map(Number).sort()).toEqual([ANNA.id, LEO.id].sort())
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('an unreadable away.json is ignored', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'away-'))
+    try {
+      const statePath = join(dir, 'away.json')
+      for (const junk of ['not json', 'null', '[]', '{"replied": 5}', '{"window": 3, "chats": "x"}', '{"window": "soon", "chats": [1]}']) {
+        writeFileSync(statePath, junk)
+        tg.sent = []
+        expect(await make({ statePath }).onIncoming(msg(ANNA), false)).toBe('sent')
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('old entries are dropped from away.json', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'away-'))
+    try {
+      const statePath = join(dir, 'away.json')
+      await make({ statePath }).onIncoming(msg(ANNA), false)
+      clock = at(6, 20).getTime()
+      await make({ statePath }).onIncoming(msg(LEO), false)
+      expect(Object.keys(JSON.parse(readFileSync(statePath, 'utf8')).replied)).toEqual([String(LEO.id)])
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
