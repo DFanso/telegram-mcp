@@ -59,6 +59,11 @@ static class Theme
         return b;
     }
 
+    /// <summary>
+    /// Every colour used for text is at least 4.5:1 (WCAG AA) against a card in its theme, and against
+    /// the faint wash of a chip in its own colour; status colours double as text, so they're checked
+    /// as text.
+    /// </summary>
     public static void Apply(ResourceDictionary res)
     {
         var dark = AppsDark;
@@ -70,21 +75,21 @@ static class Theme
             Put("PanelBorder", 0x33FFFFFF);
             Put("Fg", 0xFFF7F5F3);
             Put("Fg2", 0xFFC9C3BE);
-            Put("Fg3", 0xFF8F8883);
+            Put("Fg3", 0xFFB8B1AC);
             Put("Card", 0x14FFFFFF);
             Put("CardBorder", 0x1CFFFFFF);
             Put("CardHover", 0x1FFFFFFF);
             Put("Subtle", 0x0FFFFFFF);
             Put("Subtle2", 0x1AFFFFFF);
             Put("Divider", 0x1AFFFFFF);
-            Put("Accent", 0xFFFF6A3D);
+            Put("Accent", 0xFFFF8A63);
             Put("AccentSoft", 0x2EFF6A3D);
-            Put("Green", 0xFF3DD68C);   // online, active, allowed
-            Put("Orange", 0xFFFFB020);  // pending: waiting for you, ask every time
+            Put("Green", 0xFF5BE3A0);   // online, active, allowed
+            Put("Orange", 0xFFFFBE4D);  // pending: waiting for you, ask every time
             Put("Yellow", 0xFFF5D547);  // reconnecting
-            Put("Red", 0xFFFF7A7A);     // logged out, blocked, errors (light enough for red text on the glass)
-            Put("Blue", 0xFF4FB8F2);    // listening, auto-reply (the icon's Telegram blue)
-            Put("Gray", 0xFF9A938E);    // offline, idle, not set
+            Put("Red", 0xFFFFB0B0);     // logged out, blocked, errors
+            Put("Blue", 0xFF7CCBF7);    // listening, auto-reply (the icon's Telegram blue)
+            Put("Gray", 0xFFC2BBB6);    // offline, idle, not set
             Washes(res, 0x26);
             Put("AccentFill", 0xFFE0501F); // white on it: 4.8:1
         }
@@ -94,21 +99,21 @@ static class Theme
             Put("PanelBorder", 0x26000000);
             Put("Fg", 0xFF1E1A17);
             Put("Fg2", 0xFF5B544F);
-            Put("Fg3", 0xFF8C847E);
+            Put("Fg3", 0xFF6B635D);
             Put("Card", 0x8CFFFFFF);
             Put("CardBorder", 0x14000000);
             Put("CardHover", 0xCCFFFFFF);
             Put("Subtle", 0x0A000000);
             Put("Subtle2", 0x12000000);
             Put("Divider", 0x14000000);
-            Put("Accent", 0xFFEE4F22);
+            Put("Accent", 0xFFC23A12);
             Put("AccentSoft", 0x24EE4F22);
-            Put("Green", 0xFF16944F);
-            Put("Orange", 0xFFC27803);
-            Put("Yellow", 0xFFA88A00);
-            Put("Red", 0xFFD1302B);
-            Put("Blue", 0xFF1B85C4);
-            Put("Gray", 0xFF7D756F);
+            Put("Green", 0xFF0F6B37);
+            Put("Orange", 0xFF8A5200);
+            Put("Yellow", 0xFF7A6200);
+            Put("Red", 0xFFA61F15);
+            Put("Blue", 0xFF0D5C99);
+            Put("Gray", 0xFF5F5852);
             Washes(res, 0x22);
             Put("AccentFill", 0xFFC93C14); // white on it: 5.1:1
         }

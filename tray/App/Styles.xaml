@@ -302,7 +302,7 @@
     <!-- A small coloured chip ("Monitor on", "always allow"...), like the +11% chips on a dashboard. -->
     <DataTemplate DataType="{x:Type core:Tag}">
         <Grid VerticalAlignment="Center" Margin="4,0,0,0">
-            <Border x:Name="Bg" CornerRadius="9" Opacity="0.2" Background="{DynamicResource Gray}" />
+            <Border x:Name="Bg" CornerRadius="9" Opacity="0.14" Background="{DynamicResource Gray}" />
             <TextBlock x:Name="Label" Text="{Binding Text}" Margin="8,2,8,3" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource Gray}" />
         </Grid>
         <DataTemplate.Triggers>
