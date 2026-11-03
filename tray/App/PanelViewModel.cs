@@ -37,6 +37,8 @@ public sealed class PanelViewModel : Observable
     bool _awayPage, _awayLoaded, _awaySaving;
     bool _awayEnabled;
     string _awayFrom = "", _awayUntil = "", _awayMessage = "";
+    /// <summary>What the daemon has saved as far as this page knows: the fields as loaded, then as last sent. Save diffs against it.</summary>
+    (bool Enabled, string From, string Until, string Message)? _awaySaved;
     string _search = "";
     string? _openNickname;
 
@@ -188,6 +190,7 @@ public sealed class PanelViewModel : Observable
     {
         if (!Set(ref field, value ?? "")) return false;
         Raise(nameof(AwayError));
+        CommandManager.InvalidateRequerySuggested();
         return true;
     }
 
@@ -196,6 +199,7 @@ public sealed class PanelViewModel : Observable
     {
         if (State?.Away is not { } a) return;
         _awayLoaded = true;
+        _awaySaved = (a.Enabled, a.From, a.Until, a.Message);
         AwayEnabled = a.Enabled;
         AwayFrom = a.From;
         AwayUntil = a.Until;
@@ -203,10 +207,10 @@ public sealed class PanelViewModel : Observable
         Raise(nameof(AwayPreview));
     }
 
-    /// <summary>Sends only what differs from the saved state.</summary>
+    /// <summary>Sends only what differs from what was loaded or last saved. After a save the fields stay as typed.</summary>
     async Task SaveAwayAsync()
     {
-        if (State?.Away is not { } saved || AwayError is not null) return;
+        if (_awaySaved is not { } saved || AwayError is not null) return;
         var from = _awayFrom.Trim();
         var until = _awayUntil.Trim();
         var change = new AwayChange(
@@ -219,12 +223,26 @@ public sealed class PanelViewModel : Observable
             ShowFlash("Nothing changed.");
             return;
         }
+        ActionResult r;
         _awaySaving = true;
-        var r = await _api.SaveAwayAsync(change);
-        _awaySaving = false;
+        CommandManager.InvalidateRequerySuggested();
+        try
+        {
+            r = await _api.SaveAwayAsync(change);
+        }
+        finally
+        {
+            _awaySaving = false;
+            CommandManager.InvalidateRequerySuggested();
+        }
+        if (r.Ok)
+        {
+            _awaySaved = (_awayEnabled, from, until, _awayMessage);
+            AwayFrom = from;
+            AwayUntil = until;
+        }
         ShowFlash(r.Text);
         await PollAsync();
-        if (r.Ok) LoadAway();
     }
 
     public string Search
