@@ -54,6 +54,7 @@ const VIA_TEXT: Record<SentRecord['via'], string> = {
   menubar: 'in the menu bar',
   dialog: 'in the Claude Code dialog',
   chat: 'in chat',
+  away: 'as an away reply',
 }
 
 interface Target {
