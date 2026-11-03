@@ -34,6 +34,7 @@ public sealed class PanelViewModel : Observable
     string? _problem;
     string? _flash;
     bool _flashOk = true;
+    IReadOnlyList<Stat> _stats = [];
     bool _contactsPage;
     string _search = "";
     string? _openNickname;
@@ -77,8 +78,8 @@ public sealed class PanelViewModel : Observable
     public string? ShownProblem => ShowContent ? null : Problem;
     public string? ConfigError => ShowContent ? State?.ConfigError : null;
 
-    /// <summary>Home's tiles: waiting, listening, contacts.</summary>
-    public IReadOnlyList<Stat> Stats => ShowContent ? Presenter.Stats(State!) : [];
+    /// <summary>Home's tiles: waiting, listening, contacts. Replaced only when a number changes, so the tiles aren't rebuilt every poll.</summary>
+    public IReadOnlyList<Stat> Stats => _stats;
 
     public ObservableCollection<ApprovalVM> Approvals { get; } = [];
     public ObservableCollection<SessionVM> Listening { get; } = [];
@@ -275,9 +276,16 @@ public sealed class PanelViewModel : Observable
         }
         SyncContacts();
 
+        IReadOnlyList<Stat> stats = s is null ? [] : Presenter.Stats(s);
+        if (!stats.SequenceEqual(_stats))
+        {
+            _stats = stats;
+            Raise(nameof(Stats));
+        }
+
         foreach (var name in new[]
                  {
-                     nameof(Header), nameof(Stats), nameof(ShowContent), nameof(ShownProblem), nameof(ConfigError), nameof(ApprovalCount),
+                     nameof(Header), nameof(ShowContent), nameof(ShownProblem), nameof(ConfigError), nameof(ApprovalCount),
                      nameof(NoApprovals), nameof(NoListening), nameof(NoRecent), nameof(ContactsSummary), nameof(WaitingBanner),
                  })
         {
