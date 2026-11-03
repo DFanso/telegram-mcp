@@ -197,6 +197,38 @@ public class DaemonApiTests
     }
 
     [Fact]
+    public async Task Save_away_posts_only_what_changes()
+    {
+        _net.Answer(HttpStatusCode.OK, """{"ok":true,"text":"Away hours: 18:00 to 07:30."}""");
+
+        var r = await Api(new FakeTokens(Good)).SaveAwayAsync(new AwayChange(Until: "07:30"), Ct);
+
+        Assert.Equal(new ActionResult(true, "Away hours: 18:00 to 07:30."), r);
+        Assert.Equal("http://127.0.0.1:47901/ui/away", _net.Requests[0].Uri.ToString());
+        Assert.Equal("""{"until":"07:30"}""", _net.Requests[0].Body);
+    }
+
+    [Fact]
+    public async Task Save_away_sends_every_field_that_is_set()
+    {
+        _net.Answer(HttpStatusCode.OK, """{"ok":true,"text":"done"}""");
+
+        await Api(new FakeTokens(Good)).SaveAwayAsync(new AwayChange(true, "18:00", "09:00", "hi", 0), Ct);
+
+        Assert.Equal("""{"enabled":true,"from":"18:00","until":"09:00","message":"hi","quietMinutes":0}""", _net.Requests[0].Body);
+    }
+
+    [Fact]
+    public async Task Save_away_on_an_older_daemon_asks_for_a_restart()
+    {
+        _net.Answer(HttpStatusCode.NotFound, "not found\n");
+
+        var r = await Api(new FakeTokens(Good)).SaveAwayAsync(new AwayChange(Enabled: true), Ct);
+
+        Assert.Equal(new ActionResult(false, Away.OlderDaemon), r);
+    }
+
+    [Fact]
     public async Task Page_contact_posts_the_nickname_and_reason()
     {
         _net.Answer(HttpStatusCode.OK, """{"ok":true,"text":"Paged leo."}""")
