@@ -35,6 +35,8 @@
     <SolidColorBrush x:Key="Brand" Color="#FF1B92D1" />
     <!-- Solid fills behind white text: each at least 4.5:1 with white (WCAG AA). -->
     <SolidColorBrush x:Key="AccentFill" Color="#FFE0501F" />
+    <SolidColorBrush x:Key="BadgeBg" Color="#FFFFBE4D" />
+    <SolidColorBrush x:Key="BadgeFg" Color="#FF1E1A17" />
     <SolidColorBrush x:Key="GreenFill" Color="#FF157A41" />
     <SolidColorBrush x:Key="OrangeFill" Color="#FFA85A00" />
     <SolidColorBrush x:Key="RedFill" Color="#FFC42B2B" />

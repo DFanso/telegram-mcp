@@ -439,9 +439,9 @@
                             <StackPanel Orientation="Horizontal">
                                 <local:SvgIcon Kind="house" Width="15" Height="15" Margin="0,0,7,0" />
                                 <TextBlock Text="Home" />
-                                <Border CornerRadius="8" Background="{DynamicResource Orange}" Padding="6,0" Margin="7,0,0,0" MinWidth="16"
+                                <Border CornerRadius="8" Background="{DynamicResource BadgeBg}" Padding="6,0" Margin="7,0,0,0" MinWidth="16"
                                         Visibility="{Binding ApprovalCount, Converter={StaticResource IfSet}}">
-                                    <TextBlock Text="{Binding ApprovalCount}" FontSize="10" FontWeight="Bold" Foreground="#FF1E1A17" HorizontalAlignment="Center" />
+                                    <TextBlock Text="{Binding ApprovalCount}" FontSize="10" FontWeight="Bold" Foreground="{DynamicResource BadgeFg}" HorizontalAlignment="Center" />
                                 </Border>
                             </StackPanel>
                         </local:PillButton>
@@ -527,9 +527,9 @@
                             <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
                                 <StackPanel>
                                     <DockPanel>
-                                        <Border DockPanel.Dock="Right" CornerRadius="9" Background="{DynamicResource Orange}" Padding="7,1" VerticalAlignment="Center"
+                                        <Border DockPanel.Dock="Right" CornerRadius="9" Background="{DynamicResource BadgeBg}" Padding="7,1" VerticalAlignment="Center"
                                                 Visibility="{Binding ApprovalCount, Converter={StaticResource IfSet}}">
-                                            <TextBlock Text="{Binding ApprovalCount}" FontSize="11" FontWeight="Bold" Foreground="#FF1E1A17" />
+                                            <TextBlock Text="{Binding ApprovalCount}" FontSize="11" FontWeight="Bold" Foreground="{DynamicResource BadgeFg}" />
                                         </Border>
                                         <TextBlock Style="{StaticResource CardTitle}" Text="Waiting for approval" />
                                     </DockPanel>

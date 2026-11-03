@@ -93,6 +93,8 @@ static class Theme
             Put("Gray", 0xFFC2BBB6);    // offline, idle, not set
             Washes(res, 0x26);
             Put("AccentFill", 0xFFE0501F); // white on it: 4.8:1
+            Put("BadgeBg", 0xFFFFBE4D); // count badges: dark text on amber, 10:1
+            Put("BadgeFg", 0xFF1E1A17);
         }
         else
         {
@@ -118,6 +120,8 @@ static class Theme
             Put("Gray", 0xFF5F5852);
             Washes(res, 0x22);
             Put("AccentFill", 0xFFC93C14); // white on it: 5.1:1
+            Put("BadgeBg", 0xFF8A5200); // count badges: white on deep amber, 6.6:1
+            Put("BadgeFg", 0xFFFFFFFF);
         }
         Put("OnAccent", 0xFFFFFFFF);
         // Solid fills behind white text (Send, Always allow, the chosen segment...): each at least
