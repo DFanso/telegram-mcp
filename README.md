@@ -85,6 +85,7 @@ All in `~/.config/telegram-mcp/` (folder mode 0700; override with `TELEGRAM_MCP_
 | `session.db` | mtcute's session: peer cache, update state, and the auth key sealed with `session-key` |
 | `daemon.log` | The daemon log (`tgmcp logs`) |
 | `recent.json` | The last 20 sent messages (shown in the menu bar) |
+| `avatars/` | Small (160×160) profile photos for the menu bar and tray avatars, `<chat id>.jpg` (or `.none` when the chat has none) |
 | `token`, `credentials.json`, `session.key` | Only with `TELEGRAM_MCP_SECRET_STORE=file` |
 
 The daemon listens on `127.0.0.1:47823` (`TELEGRAM_MCP_PORT`).
@@ -248,6 +249,8 @@ An away reply shows under Recently sent as "away reply". No MCP tool can change 
 - **Contacts**: every saved chat, to change its rules without editing `config.json`. See [Contacts](#contacts).
 - **Away**: the [away auto-reply](#away-auto-reply). The switch saves at once; the hours, quiet minutes and message save with **Save** (⌘S), with a preview of the reply. It says whether it's away now and until when. While it is, the tab shows a green dot and Home shows a line saying so.
 
+Avatars show each chat's Telegram profile photo, with initials (or a glyph for groups, channels and bots) until it loads and when there's none. See [Avatars](#avatars).
+
 Results flash under the header: a green check when it worked, a red warning when it didn't (VoiceOver reads them out). Esc clears a search, then closes the panel; ⌘1 to ⌘3 switch tabs and ⌘F searches contacts.
 
 <p>
@@ -278,6 +281,10 @@ Each click saves to `config.json` at once, the same way an approval does: the fi
 <img src="docs/menubar-contacts.png" width="370" alt="The Contacts tab: search, the All, Listening and Not listening filter, four saved chats with their tags and Listen switches, and Team QA opened with its explanation, the sending choices (Ask every time selected) and its nickname">
 
 This page is the menu bar's own: it goes through the daemon's local API with the token (`POST /ui/contacts` and `POST /ui/contacts/page`, like approvals). No MCP tool offers the same, so sessions still can't change the rules through the server.
+
+### Avatars
+
+In both apps the avatars on Home's cards, in Contacts and on a page's alarm window show the chat's real Telegram profile photo. The daemon fetches the small (160×160) photo the first time an app asks for it (`GET /ui/avatars/<chat id>`, with the token, like `/ui/state`), keeps it in `avatars/` in the home folder, and fetches it again at most once a day. Each app asks once per chat when the avatar first shows and again every 6 hours, never on each poll. Only chats the panel shows (saved chats, drafts, watched chats, recent sends and pages) are fetched. A chat with no photo, or one that hides it from you, keeps its initials, and so does every avatar while Telegram can't be reached. The demo daemon and the screenshots use made-up gradient pictures, never real photos.
 
 ## Tray app (Windows)
 
