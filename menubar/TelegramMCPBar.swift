@@ -1393,10 +1393,28 @@ final class PageAlarm {
         }
         let panel = self.panel ?? makePanel(store: store)
         self.panel = panel
-        if !panel.isVisible {
-            panel.center()
-            panel.orderFrontRegardless()
+        let showing = panel.isVisible
+        // SwiftUI lays the new pages out on the next pass; size the panel to them after that.
+        DispatchQueue.main.async {
+            Self.fit(panel)
+            if !showing {
+                panel.center()
+                panel.orderFrontRegardless()
+            }
         }
+    }
+
+    /// The panel follows its content: taller for another page, shorter when one is acked, and
+    /// never taller than the screen. The top edge stays put, so the buttons don't jump.
+    static func fit(_ panel: NSPanel) {
+        guard let content = panel.contentView else { return }
+        let screen = (panel.screen ?? NSScreen.main)?.visibleFrame.height ?? 800
+        let size = NSSize(width: PageAlarmView.width, height: min(content.fittingSize.height, screen - 40))
+        let current = panel.contentRect(forFrameRect: panel.frame).size
+        guard abs(current.height - size.height) > 0.5 || abs(current.width - size.width) > 0.5 else { return }
+        var frame = panel.frameRect(forContentRect: NSRect(origin: .zero, size: size))
+        frame.origin = NSPoint(x: panel.frame.minX, y: panel.frame.maxY - frame.height)
+        panel.setFrame(frame, display: true)
     }
 
     /// Your own sound if there is one (alarm.mp3, .m4a, .wav, .aiff or .caf in the home folder),
@@ -1411,7 +1429,7 @@ final class PageAlarm {
 
     private func makePanel(store: Store) -> NSPanel {
         let panel = NSPanel(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 220),
+            contentRect: NSRect(x: 0, y: 0, width: PageAlarmView.width, height: 220),
             styleMask: [.titled, .fullSizeContentView, .nonactivatingPanel],
             backing: .buffered, defer: false)
         panel.titleVisibility = .hidden
@@ -1421,8 +1439,9 @@ final class PageAlarm {
         panel.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         panel.hidesOnDeactivate = false
         panel.isMovableByWindowBackground = true
+        // The panel is sized by fit(), not by the hosting view, which would only ever grow it.
         let host = NSHostingView(rootView: PageAlarmView().environmentObject(store))
-        host.sizingOptions = [.preferredContentSize]
+        host.sizingOptions = []
         panel.contentView = host
         return panel
     }
@@ -1457,24 +1476,34 @@ enum AlarmTone {
 }
 
 struct PageAlarmView: View {
+    static let width: CGFloat = 420
+    /// More than this and the rest wait behind "+N more": the panel has to fit a laptop screen.
+    static let maxCards = 3
+
     @EnvironmentObject var store: Store
 
     var body: some View {
+        let ringing = store.pages.filter(\.ringing)
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
                 Image(systemName: "bell.and.waves.left.and.right.fill")
                     .font(.system(size: 18, weight: .semibold))
                     .foregroundStyle(.red)
-                Text(store.pages.filter(\.ringing).count > 1 ? "\(store.pages.filter(\.ringing).count) pages" : "Page")
+                Text(ringing.count > 1 ? "\(ringing.count) pages" : "Page")
                     .font(.system(size: 17, weight: .bold))
                 Spacer()
             }
-            ForEach(store.pages.filter(\.ringing)) { page in
+            ForEach(ringing.prefix(Self.maxCards)) { page in
                 PageCard(page: page)
+            }
+            if ringing.count > Self.maxCards {
+                Text("+\(ringing.count - Self.maxCards) more: ack these to see them")
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
             }
         }
         .padding(18)
-        .frame(width: 420)
+        .frame(width: Self.width)
+        .fixedSize(horizontal: false, vertical: true)
     }
 }
 

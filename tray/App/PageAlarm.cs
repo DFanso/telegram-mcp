@@ -26,6 +26,7 @@ sealed class PageAlarm
     readonly string _home;
     SoundPlayer _sound = new(new MemoryStream(Pages.AlarmWav()));
     readonly HashSet<string> _toasts = [];
+    HashSet<string> _shown = [];
     PageWindow? _window;
     bool _playing;
 
@@ -61,7 +62,7 @@ sealed class PageAlarm
             {
                 if (what == "ack") Act?.Invoke(id, true, 0);
                 else if (what is "s15" or "s60") Act?.Invoke(id, false, what == "s60" ? 60 : 15);
-                else ShowWindow(null);
+                else ShowWindow(null, bringForward: true);
             });
         };
     }
@@ -78,6 +79,7 @@ sealed class PageAlarm
         {
             if (_playing) _sound.Stop();
             _playing = false;
+            _shown.Clear();
             _window?.Hide();
             return;
         }
@@ -89,14 +91,21 @@ sealed class PageAlarm
             _playing = true;
         }
         foreach (var p in ringing.Where(p => _toasts.Add(p.Id))) ShowToast(p);
-        ShowWindow(ringing);
+        var fresh = Pages.HasNew(_shown, ringing);
+        _shown = ringing.Select(p => p.Id).ToHashSet();
+        ShowWindow(ringing, bringForward: fresh);
     }
 
-    void ShowWindow(IReadOnlyList<UiPage>? ringing)
+    /// <summary>
+    /// Keeps the window's pages current; only a new page (or a click on the toast) brings it forward.
+    /// A window you closed stays closed until then: the sound and the toast keep going.
+    /// </summary>
+    void ShowWindow(IReadOnlyList<UiPage>? ringing, bool bringForward)
     {
         _window ??= new PageWindow(this);
-        if (ringing is not null) _window.Show(ringing);
-        else _window.Show();
+        if (ringing is not null) _window.Refresh(ringing);
+        if (!bringForward) return;
+        _window.Show();
         _window.Topmost = true;
         _window.Activate();
     }
@@ -135,6 +144,7 @@ sealed class PageWindow : Window
 {
     readonly PageAlarm _alarm;
     readonly StackPanel _list = new() { Margin = new Thickness(18) };
+    string _signature = "";
 
     public PageWindow(PageAlarm alarm)
     {
@@ -157,8 +167,12 @@ sealed class PageWindow : Window
         };
     }
 
-    public void Show(IReadOnlyList<UiPage> ringing)
+    /// <summary>Rebuilds the cards only when the pages changed, so a poll never resets a button mid-click.</summary>
+    public void Refresh(IReadOnlyList<UiPage> ringing)
     {
+        var signature = Pages.Signature(ringing);
+        if (signature == _signature) return;
+        _signature = signature;
         _list.Children.Clear();
         _list.Children.Add(new TextBlock
         {
@@ -169,7 +183,6 @@ sealed class PageWindow : Window
             Margin = new Thickness(0, 0, 0, 10),
         });
         foreach (var p in ringing) _list.Children.Add(Card(p));
-        Show();
     }
 
     UIElement Card(UiPage p)
