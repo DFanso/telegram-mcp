@@ -15,7 +15,9 @@ public sealed record UiSession(
 
 public sealed record UiApproval(
     string Id, string To, string Detail, string Text, string Reason, string SessionLabel,
-    DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, bool FirstTime, string? Nickname, string SuggestedNickname);
+    DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, bool FirstTime, string? Nickname, string SuggestedNickname,
+    /// <summary>The chat it goes to, for its avatar. Null from a daemon older than avatars.</summary>
+    long? ChatId = null);
 
 public sealed record SentRecord(
     DateTimeOffset At, long ChatId, string ChatLabel, string Text, long MessageId, string Via, string? SessionLabel,

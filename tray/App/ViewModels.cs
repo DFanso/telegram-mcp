@@ -8,11 +8,87 @@ using TelegramMCPTray.Core;
 
 namespace TelegramMCPTray;
 
-/// <summary>A round avatar: initials on a colour picked by name, the same name always the same colour.</summary>
-public sealed record Avatar(string Initials, Brush Fill)
+/// <summary>
+/// A round avatar: the chat's Telegram profile photo once it has loaded, and until then (or when
+/// it has none) initials on a colour picked by name, the same name always the same colour.
+/// </summary>
+public sealed record Avatar(string Initials, Brush Fill, AvatarPhoto? Photo)
 {
-    public static Avatar For(string name) =>
-        new(Format.Initials(name), Theme.Avatars[Format.AvatarIndex(name, Theme.Avatars.Length)]);
+    public static Avatar For(string name, long? chatId = null) =>
+        new(Format.Initials(name), Theme.Avatars[Format.AvatarIndex(name, Theme.Avatars.Length)],
+            chatId is { } id ? AvatarPhotos.For(id) : null);
+}
+
+/// <summary>One chat's photo. Null until it loads, and stays null when the chat has none.</summary>
+public sealed class AvatarPhoto : Observable
+{
+    ImageSource? _image;
+    public ImageSource? Image { get => _image; internal set { if (Set(ref _image, value)) Raise(nameof(HasImage)); } }
+    public bool HasImage => _image is not null;
+    internal DateTimeOffset LoadedAt { get; set; } = DateTimeOffset.MinValue;
+    internal bool Loading { get; set; }
+}
+
+/// <summary>
+/// The panel's photo cache: each chat's photo is asked for once when its avatar first shows (the
+/// daemon fetches it from Telegram and keeps it on disk), and again at most every 6 hours, never per poll.
+/// </summary>
+public static class AvatarPhotos
+{
+    static readonly TimeSpan Refresh = TimeSpan.FromHours(6);
+    static readonly Dictionary<long, AvatarPhoto> Photos = [];
+    static Func<long, System.Threading.Tasks.Task<byte[]?>>? _load;
+
+    /// <summary>Set once by the panel: how to get a photo's bytes from the daemon.</summary>
+    public static void Use(Func<long, System.Threading.Tasks.Task<byte[]?>> load) => _load = load;
+
+    public static AvatarPhoto For(long chatId)
+    {
+        if (!Photos.TryGetValue(chatId, out var photo)) Photos[chatId] = photo = new AvatarPhoto();
+        if (_load is { } load && !photo.Loading && DateTimeOffset.UtcNow - photo.LoadedAt > Refresh) _ = LoadAsync(chatId, photo, load);
+        return photo;
+    }
+
+    static async System.Threading.Tasks.Task LoadAsync(long chatId, AvatarPhoto photo, Func<long, System.Threading.Tasks.Task<byte[]?>> load)
+    {
+        photo.Loading = true;
+        try
+        {
+            var bytes = await load(chatId);
+            photo.LoadedAt = DateTimeOffset.UtcNow;
+            // No photo, or the daemon couldn't be reached: keep what's shown (the old photo or the initials).
+            if (bytes is null) return;
+            photo.Image = Decode(bytes) ?? photo.Image;
+        }
+        catch
+        {
+            photo.LoadedAt = DateTimeOffset.UtcNow;
+        }
+        finally
+        {
+            photo.Loading = false;
+        }
+    }
+
+    /// <summary>Decoded at 2× the 34 px avatar, so it stays sharp at 200% scaling and small in memory.</summary>
+    static ImageSource? Decode(byte[] bytes)
+    {
+        try
+        {
+            var image = new System.Windows.Media.Imaging.BitmapImage();
+            image.BeginInit();
+            image.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+            image.DecodePixelWidth = 68;
+            image.StreamSource = new System.IO.MemoryStream(bytes);
+            image.EndInit();
+            image.Freeze();
+            return image;
+        }
+        catch
+        {
+            return null; // not a picture WPF can read: the initials stay
+        }
+    }
 }
 
 /// <summary>A draft waiting for approval. Kept across polls, so a nickname being typed survives.</summary>
@@ -39,7 +115,7 @@ public sealed class ApprovalVM : Observable
     public UiApproval Item { get; }
     public string Id => Item.Id;
     public string To => Item.To;
-    public Avatar Avatar => Avatar.For(Item.Nickname ?? Item.To);
+    public Avatar Avatar => Avatar.For(Item.Nickname ?? Item.To, Item.ChatId);
     public string Text => Item.Text;
     public string Detail => Item.Detail;
     public string ReasonLine => $"{Item.Reason} · {Item.SessionLabel}";
@@ -149,7 +225,7 @@ public sealed class RecentChatVM : Observable
 
     public long ChatId { get; }
     public string Label { get; }
-    public Avatar Avatar => Avatar.For(Label);
+    public Avatar Avatar => Avatar.For(Label, ChatId);
     /// <summary>"3 messages · 5m": how many were sent there lately, and when the last one went.</summary>
     public string Summary => $"{(Count is null ? "1 message" : $"{Count} messages")} · last sent {ApprovalVM.AgoWords(Ago)}";
     public string? Count { get; }
@@ -214,7 +290,7 @@ public sealed class ContactVM : Observable
     }
 
     public string Nickname => _c.Nickname;
-    public Avatar Avatar => Avatar.For(_c.Name ?? _c.Nickname);
+    public Avatar Avatar => Avatar.For(_c.Name ?? _c.Nickname, _c.ChatId);
     /// <summary>Groups, channels and bots get a glyph on their avatar instead of initials.</summary>
     public bool ShowsGlyph => Kind is ContactKind.Group or ContactKind.Channel or ContactKind.Bot;
     public string Subtitle => Contacts.Subtitle(_c);

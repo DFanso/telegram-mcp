@@ -37,4 +37,5 @@
     <Geometry x:Key="icon.user">M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2 M8,7 A4,4 0 1 0 16,7 A4,4 0 1 0 8,7 Z</Geometry>
     <Geometry x:Key="icon.users">M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2 M5,7 A4,4 0 1 0 13,7 A4,4 0 1 0 5,7 Z M22 21v-2a4 4 0 0 0-3-3.87 M16 3.13a4 4 0 0 1 0 7.75</Geometry>
     <Geometry x:Key="icon.x">M18 6 6 18 M6 6 l12 12</Geometry>
+    <Geometry x:Key="icon.external-link">M15 3h6v6 M10 14 21 3 M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6</Geometry>
 </ResourceDictionary>

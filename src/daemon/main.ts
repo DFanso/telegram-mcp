@@ -5,6 +5,7 @@ import { ensureHome, makeLogger } from '../shared/files'
 import { getPaths, getPort, type Paths } from '../shared/paths'
 import { ensureToken, loadCredentials, openSecretStore, type SecretStore } from '../shared/secrets'
 import { Approvals } from './approvals'
+import { AvatarCache } from './avatars'
 import { AwayResponder } from './away'
 import { PageBot } from './page-bot'
 import { Pager, pageTrigger } from './pager'
@@ -106,6 +107,7 @@ export async function createDaemon(o: DaemonOptions) {
     hub,
     tg,
     store,
+    avatars: new AvatarCache({ dir: o.paths.avatars, fetch: chatId => tg.profilePhoto(chatId), log }),
     log,
     startedAt,
   })

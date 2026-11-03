@@ -71,6 +71,9 @@ public class FormatTests
     [InlineData("✨ Zuse Gaming Club", "ZC")]
     [InlineData("✨", "?")]
     [InlineData("", "?")]
+    [InlineData("Leo Perera [leo]", "LP")]
+    [InlineData("Anna [anna k]", "A")]
+    [InlineData("[leo]", "L")]
     public void Initials_are_one_or_two_letters(string name, string expected)
     {
         Assert.Equal(expected, Format.Initials(name));
