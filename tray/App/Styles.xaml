@@ -6,6 +6,7 @@
     <!-- Colours. Theme.cs replaces these for light/dark (and opaque where there's no acrylic); these are the dark defaults. -->
     <SolidColorBrush x:Key="PanelBg" Color="#FF2E2A28" />
     <SolidColorBrush x:Key="PanelBorder" Color="#33FFFFFF" />
+    <SolidColorBrush x:Key="Surface" Color="#FF2B2725" />
     <SolidColorBrush x:Key="Fg" Color="#FFF7F5F3" />
     <SolidColorBrush x:Key="Fg2" Color="#FFC9C3BE" />
     <SolidColorBrush x:Key="Fg3" Color="#FF8F8883" />

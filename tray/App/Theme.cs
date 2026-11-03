@@ -73,6 +73,7 @@ static class Theme
         {
             res["PanelBg"] = Smoke(0xC83A3532, 0xD8262322, Translucent);
             Put("PanelBorder", 0x33FFFFFF);
+            Put("Surface", 0xFF2B2725); // an ordinary window (the page alarm): opaque, no acrylic
             Put("Fg", 0xFFF7F5F3);
             Put("Fg2", 0xFFC9C3BE);
             Put("Fg3", 0xFFB8B1AC);
@@ -97,6 +98,7 @@ static class Theme
         {
             res["PanelBg"] = Smoke(0xD9F6F2EE, 0xE6ECE7E2, Translucent);
             Put("PanelBorder", 0x26000000);
+            Put("Surface", 0xFFF6F2EE);
             Put("Fg", 0xFF1E1A17);
             Put("Fg2", 0xFF5B544F);
             Put("Fg3", 0xFF6B635D);

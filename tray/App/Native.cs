@@ -101,6 +101,14 @@ static class Native
         _ = DwmSetWindowAttribute(hwnd, DwmwaWindowCornerPreference, ref round, sizeof(int));
     }
 
+    /// <summary>A dark or light title bar for an ordinary window, to match the app mode.</summary>
+    public static void DarkTitleBar(IntPtr hwnd, bool dark)
+    {
+        const int DwmwaUseImmersiveDarkMode = 20;
+        var on = dark ? 1 : 0;
+        _ = DwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkMode, ref on, sizeof(int));
+    }
+
     [StructLayout(LayoutKind.Sequential)]
     struct Margins
     {
