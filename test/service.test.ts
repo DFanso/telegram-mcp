@@ -731,6 +731,56 @@ describe('editing a sent message', () => {
   })
 })
 
+describe('who has read a message', () => {
+  beforeEach(() => setup(baseConfig))
+
+  test('a private chat says whether the other person has read it', async () => {
+    tg.readStatuses.set(`${LEO.id}:10`, { kind: 'private', seen: true })
+    tg.readStatuses.set(`${LEO.id}:11`, { kind: 'private', seen: false })
+    const read = await svc.call('s1', 'telegram_message_readers', { chat: 'leo', messageId: 10 })
+    expect(read.isError).toBeFalsy()
+    expect(read.text).toContain(`read by ${LEO.name}`)
+    expect(read.text).not.toContain('not read')
+    const unread = await svc.call('s1', 'telegram_message_readers', { chat: 'leo', messageId: 11 })
+    expect(unread.text).toContain('not read by')
+    expect(unread.text).toContain('hides read receipts')
+  })
+
+  test('a group lists who read it and when', async () => {
+    tg.readStatuses.set(`${TEAM_QA.id}:5`, {
+      kind: 'group',
+      readers: [
+        { id: 1, name: 'Anna', username: 'anna_k', at: '2026-11-03T10:00:00.000Z' },
+        { id: 2, name: 'Bo', username: null, at: '2026-11-03T10:05:00.000Z' },
+      ],
+    })
+    const r = await svc.call('s1', 'telegram_message_readers', { chat: 'qa', messageId: 5 })
+    expect(r.text).toContain('read by 2')
+    expect(r.text).toContain('Anna (@anna_k) · 2026-11-03T10:00:00.000Z')
+    expect(r.text).toContain('• Bo · 2026-11-03T10:05:00.000Z')
+  })
+
+  test('a group nobody has read says so, and that hidden receipts are not listed', async () => {
+    tg.readStatuses.set(`${TEAM_QA.id}:6`, { kind: 'group', readers: [] })
+    const r = await svc.call('s1', 'telegram_message_readers', { chat: 'qa', messageId: 6 })
+    expect(r.text).toContain('nobody is shown as having read it')
+  })
+
+  test("a message that isn't yours, or isn't there, is an error", async () => {
+    const r = await svc.call('s1', 'telegram_message_readers', { chat: 'leo', messageId: 999 })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('only your own messages have read receipts')
+  })
+
+  test('it only reads: nothing is sent, edited or deleted', async () => {
+    tg.readStatuses.set(`${LEO.id}:10`, { kind: 'private', seen: true })
+    await svc.call('s1', 'telegram_message_readers', { chat: 'leo', messageId: 10 })
+    expect(tg.sent).toEqual([])
+    expect(tg.deleted).toEqual([])
+    expect(tg.edits).toEqual([])
+  })
+})
+
 describe('listing chats by kind', () => {
   const BOT = { id: 77, type: 'bot' as const, name: 'Helper Bot', username: 'helper_bot' }
   const NEWS = { id: -1009990001111, type: 'channel' as const, name: 'Acme News', username: 'acme_news' }
