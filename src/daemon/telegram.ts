@@ -64,6 +64,21 @@ export interface TelegramPort {
 
 // ---- conversions ----------------------------------------------------------------
 
+/**
+ * Pairs each reader Telegram reports with their user by id, never by position, so a name can't land
+ * on the wrong person. A reader whose user couldn't be looked up shows as their id.
+ */
+export function readersOf(
+  parts: readonly { userId: number; date: number }[],
+  users: readonly ({ id: number; displayName: string; username: string | null } | null)[],
+): { id: number; name: string; username: string | null; at: string }[] {
+  const byId = new Map(users.flatMap(u => (u ? [[u.id, u] as const] : [])))
+  return parts.map(x => {
+    const u = byId.get(Number(x.userId))
+    return { id: Number(x.userId), name: u?.displayName ?? String(x.userId), username: u?.username ?? null, at: new Date(x.date * 1000).toISOString() }
+  })
+}
+
 export function peerInfo(p: Peer): PeerInfo {
   if (p.type === 'user') {
     return {
@@ -503,12 +518,10 @@ export class MtcuteTelegram implements TelegramPort {
       if (/MSG_TOO_OLD/.test(text)) throw new Error('Telegram only tells who read a message for about a week after it was sent.')
       throw e
     }
-    const users = parts.length ? await c.getUsers(parts.map(x => x.userId)) : []
-    const readers = parts.map((x, i) => {
-      const u = users[i]
-      return { id: Number(x.userId), name: u?.displayName ?? String(x.userId), username: u?.username ?? null, at: new Date(x.date * 1000).toISOString() }
-    })
-    return { kind: 'group', readers }
+    // One lookup per reader (mtcute batches them). getUsers with a list silently drops anyone missing
+    // from the peer cache (e.g. a member who never posts), which would shift names onto the wrong people.
+    const users = await Promise.all(parts.map(x => c.getUsers(x.userId).then(([u]) => u ?? null, () => null)))
+    return { kind: 'group', readers: readersOf(parts, users) }
   }
 
   async downloadMedia(chatId: number, messageId: number, dir: string, maxBytes: number): Promise<DownloadedFile> {

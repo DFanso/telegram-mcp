@@ -64,7 +64,7 @@ export const TOOLS = {
   },
   telegram_message_readers: {
     description:
-      'Find out whether one of the user\'s own sent messages has been read (find its id with telegram_read_messages). In a private chat: whether the other person has read it. In a group of up to 100 people: who has read it and when, for about a week after it was sent. It only reports what Telegram tells the account: people who hide their read receipts, or messages in bigger groups and channels, are not shown. It reads nothing and sends nothing.',
+      'Find out whether one of the user\'s own sent messages has been read (find its id with telegram_read_messages). In a private chat: whether the other person has read it. In a group of up to 100 people: who has read it and when, for about a week after it was sent. It only reports what Telegram tells the account: people who hide their read receipts, or messages in bigger groups and channels, are not shown. It changes nothing and sends nothing.',
     input: z.object({
       chat: chatRef,
       messageId: z.number().int().describe('Id of a message sent from the user\'s account.'),
