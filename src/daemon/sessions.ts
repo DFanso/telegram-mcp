@@ -169,6 +169,12 @@ export class SessionHub {
     return [...this.#sessions.values()].filter(s => [...s.watches.values()].some(w => w.chatId === chatId)).map(s => s.id)
   }
 
+  /** True when a Claude session would see a message on this chat now: it is taken over, or a watching session is reachable. */
+  handledLive(chatId: number): boolean {
+    if (this.takeoverOf(chatId) !== null) return true
+    return [...this.#sessions.values()].some(s => this.#reachable(s) && [...s.watches.values()].some(w => w.chatId === chatId))
+  }
+
   isWatching(id: string, chatId: number): boolean {
     for (const w of this.#sessions.get(id)?.watches.values() ?? []) if (w.chatId === chatId) return true
     return false
@@ -204,11 +210,16 @@ export class SessionHub {
     return this.#handlers.includes(id)
   }
 
+  /** Someone is listening: a channel session with its proxy, or any Monitor. */
+  #reachable(s: Session): boolean {
+    return Boolean((s.channel && s.proxy) || s.monitors.size > 0)
+  }
+
   /** The newest handler that still has someone listening, so a takeover never lands in a dead session. */
   #liveHandler(): Session | null {
     for (let i = this.#handlers.length - 1; i >= 0; i--) {
       const s = this.#sessions.get(this.#handlers[i]!)
-      if (s && ((s.channel && s.proxy) || s.monitors.size > 0)) return s
+      if (s && this.#reachable(s)) return s
     }
     return null
   }
