@@ -21,9 +21,21 @@ export interface AwayDeps {
   log?: (msg: string) => void
 }
 
-interface Answered {
-  window: string
-  chats: number[]
+/** Entries older than this are dropped on save: no away window is longer than a day. */
+const REPLIED_KEEP_MS = 48 * 3_600_000
+
+/**
+ * away.json as an earlier build wrote it: `{ window: "YYYY-MM-DDTHH:MM", chats: [...] }`, the window
+ * named by its local start. Read back as "answered at the window's start", which still blocks that night.
+ */
+function fromOldFormat(raw: { window: string; chats: unknown[] }): Map<number, number> {
+  const out = new Map<number, number>()
+  const m = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(raw.window)
+  if (!m) return out
+  const [, y, mo, d, h, mi] = m.map(Number) as [number, number, number, number, number, number]
+  const start = new Date(y, mo - 1, d, h, mi).getTime()
+  for (const c of raw.chats) if (typeof c === 'number') out.set(c, start)
+  return out
 }
 
 /** What a sender gets: the message with {name} filled in, plus the footer. */
@@ -48,7 +60,8 @@ export function uiAway(config: Config, me: { name: string } | null | undefined, 
 
 /** Sends at most one away reply per chat per away window, to people only, and never over a live Claude or page. */
 export class AwayResponder {
-  #answered: Answered | null = null
+  /** chat id -> when it last got an away reply (epoch ms). Loaded lazily from away.json. */
+  #replied: Map<number, number> | null = null
   #lastOutgoing = new Map<number, number>()
 
   constructor(private d: AwayDeps) {}
@@ -60,25 +73,34 @@ export class AwayResponder {
     return awayText(config, this.d.tg.state().me)
   }
 
-  /** The answered set for `window`: loaded lazily from disk, reset when the window differs. */
-  #stateFor(window: string): Answered {
-    if (!this.#answered && this.d.statePath) {
-      try {
-        const raw = JSON.parse(readFileSync(this.d.statePath, 'utf8'))
-        if (typeof raw?.window === 'string' && Array.isArray(raw.chats)) {
-          this.#answered = { window: raw.window, chats: raw.chats.filter((c: unknown) => typeof c === 'number') }
+  /** Who got an away reply when. Keyed by time, not by window, so editing the hours mid-night can't reset it. */
+  #repliedMap(): Map<number, number> {
+    if (this.#replied) return this.#replied
+    this.#replied = new Map()
+    if (!this.d.statePath) return this.#replied
+    try {
+      const raw = JSON.parse(readFileSync(this.d.statePath, 'utf8'))
+      if (raw && typeof raw.replied === 'object' && !Array.isArray(raw.replied)) {
+        for (const [k, v] of Object.entries(raw.replied as Record<string, unknown>)) {
+          const id = Number(k)
+          if (Number.isFinite(id) && typeof v === 'number' && Number.isFinite(v)) this.#replied.set(id, v)
         }
-      } catch {}
-    }
-    if (!this.#answered || this.#answered.window !== window) this.#answered = { window, chats: [] }
-    return this.#answered
+      } else if (typeof raw?.window === 'string' && Array.isArray(raw.chats)) {
+        this.#replied = fromOldFormat(raw)
+      }
+    } catch {}
+    return this.#replied
   }
 
   #save() {
-    if (!this.d.statePath || !this.#answered) return
+    const replied = this.#replied
+    if (!replied) return
+    const cutoff = this.#now() - REPLIED_KEEP_MS
+    for (const [id, t] of replied) if (t < cutoff) replied.delete(id)
+    if (!this.d.statePath) return
     try {
       const tmp = `${this.d.statePath}.tmp`
-      writeFileSync(tmp, JSON.stringify(this.#answered), { mode: 0o600 })
+      writeFileSync(tmp, JSON.stringify({ replied: Object.fromEntries(replied) }), { mode: 0o600 })
       renameSync(tmp, this.d.statePath)
     } catch (e) {
       this.#log(`away: could not save state: ${e instanceof Error ? e.message : String(e)}`)
@@ -100,8 +122,9 @@ export class AwayResponder {
       if (!window) return 'skipped'
       const now = this.#now()
       if (now - at > AWAY_MAX_AGE_MS) return 'skipped'
-      const state = this.#stateFor(window.id)
-      if (state.chats.includes(chat.id)) return 'skipped' // R6
+      const replied = this.#repliedMap()
+      const prev = replied.get(chat.id)
+      if (prev !== undefined && prev >= window.start.getTime()) return 'skipped' // R6
       const lastOut = this.#lastOutgoing.get(chat.id)
       if (away.quietMinutes > 0 && lastOut !== undefined && now - lastOut < away.quietMinutes * 60_000) return 'skipped' // R7
       if (this.d.hub.takeoverOf(chat.id) !== null) return 'skipped' // R8
@@ -109,7 +132,7 @@ export class AwayResponder {
       if (paged || this.d.pages().some(p => p.senderKey === String(msg.from?.id ?? chat.id))) return 'skipped' // R9
 
       // Mark before the first await so a second message arriving meanwhile sees it.
-      state.chats.push(chat.id)
+      replied.set(chat.id, now)
       this.#save()
       const text = this.#text(config)
       try {
@@ -118,8 +141,10 @@ export class AwayResponder {
         this.#log(`away reply to ${chat.id}`)
         return 'sent'
       } catch (e) {
-        if (this.#answered === state) {
-          state.chats = state.chats.filter(c => c !== chat.id)
+        // Restore what was there, unless something else has written this chat since.
+        if (replied.get(chat.id) === now) {
+          if (prev === undefined) replied.delete(chat.id)
+          else replied.set(chat.id, prev)
           this.#save()
         }
         throw e
