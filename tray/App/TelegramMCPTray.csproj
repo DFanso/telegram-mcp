@@ -10,6 +10,8 @@
     <!-- WPF and WinForms share type names (Application, Button...): every file says what it uses. -->
     <ImplicitUsings>disable</ImplicitUsings>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <!-- The paper plane from docs/icon.svg on a blue disc, 16 to 256 px. -->
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <!-- WFO0003 wants DPI awareness set through WinForms' API; this is a WPF app (WinForms only draws
          the tray icon), and WPF reads it from the manifest. -->
     <NoWarn>$(NoWarn);WFO0003</NoWarn>
