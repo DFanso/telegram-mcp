@@ -50,6 +50,7 @@ public sealed class PanelViewModel : Observable
     {
         _api = api;
         _settings = settings;
+        AvatarPhotos.Use(chatId => _api.AvatarAsync(chatId));
         _timer = new DispatcherTimer(DispatcherPriority.Background) { Interval = TimeSpan.FromSeconds(2) };
         _timer.Tick += async (_, _) => await PollAsync();
         _flashTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(6) };

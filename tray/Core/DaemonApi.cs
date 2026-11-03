@@ -157,6 +157,28 @@ public sealed class DaemonApi(HttpClient http, int port, ITokenSource tokens, Ti
         return PostAsync($"/ui/pages/{Uri.EscapeDataString(id)}", body, ok => ok ? (ack ? "Acked." : "Snoozed.") : "That page is gone.", ct);
     }
 
+    /// <summary>
+    /// A chat's small profile photo (GET /ui/avatars/:chatId, JPEG or PNG), or null when it has none,
+    /// the daemon is older than avatars, or it can't be reached: the avatar then keeps its initials.
+    /// </summary>
+    public async Task<byte[]?> AvatarAsync(long chatId, CancellationToken ct = default)
+    {
+        if (Token() is not { } token) return null;
+        try
+        {
+            using var cts = WithTimeout(ct);
+            using var res = await http.SendAsync(Request(HttpMethod.Get, $"/ui/avatars/{chatId}", token), cts.Token);
+            if (res.StatusCode == HttpStatusCode.Unauthorized) _token = null;
+            if (!res.IsSuccessStatusCode) return null;
+            var bytes = await res.Content.ReadAsByteArrayAsync(cts.Token);
+            return bytes.Length > 0 ? bytes : null;
+        }
+        catch (Exception e) when (Unreachable(e, ct))
+        {
+            return null;
+        }
+    }
+
     sealed record Answer(bool? Ok, string? Text, string? Nickname);
 
     /// <param name="fallback">The text when the daemon gave none, by whether it worked.</param>

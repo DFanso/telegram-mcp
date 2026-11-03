@@ -89,6 +89,30 @@ public class DaemonApiTests
     }
 
     [Fact]
+    public async Task Avatar_asks_for_that_chat_with_the_token()
+    {
+        _net.Answer(HttpStatusCode.OK, "PHOTO");
+
+        var bytes = await Api(new FakeTokens(Good)).AvatarAsync(-1001234567890, Ct);
+
+        Assert.Equal("PHOTO"u8.ToArray(), bytes);
+        var req = Assert.Single(_net.Requests);
+        Assert.Equal("http://127.0.0.1:47901/ui/avatars/-1001234567890", req.Uri.ToString());
+        Assert.Equal("Bearer secret-token", req.Auth);
+    }
+
+    [Fact]
+    public async Task No_photo_an_older_daemon_or_no_daemon_keep_the_initials()
+    {
+        _net.Answer(HttpStatusCode.NotFound, "no photo");
+        var api = Api(new FakeTokens(Good));
+        Assert.Null(await api.AvatarAsync(10, Ct));
+        _net.Refuse();
+        Assert.Null(await api.AvatarAsync(10, Ct));
+        Assert.Null(await Api(new FakeTokens(Missing)).AvatarAsync(10, Ct));
+    }
+
+    [Fact]
     public async Task No_daemon_says_how_to_start_it()
     {
         _net.Refuse();

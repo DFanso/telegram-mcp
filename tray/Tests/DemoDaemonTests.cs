@@ -11,6 +11,21 @@ public class DemoDaemonTests(DemoDaemon demo) : IClassFixture<DemoDaemon>
     DaemonApi Api() => new(new HttpClient(), demo.Port, new FileTokenSource(Path.Combine(demo.Home, "token")));
 
     [Fact]
+    public async Task Avatars_are_the_demo_photos_or_nothing()
+    {
+        var api = Api();
+        var state = (await api.PollAsync(Ct)).State!;
+        long Id(string nick) => state.Contacts!.Single(c => c.Nickname == nick).ChatId;
+
+        var leo = await api.AvatarAsync(Id("leo"), Ct);
+        Assert.NotNull(leo);
+        Assert.Equal(new byte[] { 0x89, 0x50, 0x4E, 0x47 }, leo[..4]); // the demo's made-up PNG, never a real photo
+        Assert.Null(await api.AvatarAsync(Id("anna"), Ct)); // no photo: the initials stay
+        Assert.Null(await api.AvatarAsync(424242, Ct)); // not a chat the panel shows
+        Assert.All(state.Approvals, a => Assert.NotNull(a.ChatId));
+    }
+
+    [Fact]
     public async Task Approving_a_draft_sends_it()
     {
         var api = Api();

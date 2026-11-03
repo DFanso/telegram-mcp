@@ -203,13 +203,21 @@ sealed class PageWindow : Window
         var border = new Border { Child = card, CornerRadius = new CornerRadius(14), Padding = new Thickness(14), Margin = new Thickness(0, 0, 0, 12), BorderThickness = new Thickness(1) };
         border.SetResourceReference(Border.BackgroundProperty, "Subtle2");
         border.SetResourceReference(Border.BorderBrushProperty, "CardBorder");
-        card.Children.Add(new TextBlock { Text = p.From, FontWeight = FontWeights.SemiBold, FontSize = 15 });
+        // Who paged, with their avatar (the chat's photo once loaded, else initials), as on the panel's cards.
+        var who = new DockPanel();
+        var avatar = AvatarView(Avatar.For(p.From, p.ChatId));
+        DockPanel.SetDock(avatar, Dock.Left);
+        who.Children.Add(avatar);
+        var names = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        names.Children.Add(new TextBlock { Text = p.From, FontWeight = FontWeights.SemiBold, FontSize = 15 });
         if (p.Chat is { } chat)
         {
             var c = new TextBlock { Text = chat, FontSize = 12 };
             c.SetResourceReference(TextBlock.ForegroundProperty, "Fg3");
-            card.Children.Add(c);
+            names.Children.Add(c);
         }
+        who.Children.Add(names);
+        card.Children.Add(who);
         card.Children.Add(new TextBlock
         {
             Text = string.IsNullOrEmpty(p.Reason) ? "No reason given" : p.Reason,
@@ -239,6 +247,35 @@ sealed class PageWindow : Window
         }
         card.Children.Add(buttons);
         return border;
+    }
+
+    /// <summary>The panel's avatar template, in code: this window doesn't share the panel's resources.</summary>
+    static FrameworkElement AvatarView(Avatar a)
+    {
+        var grid = new Grid { Width = 40, Height = 40, Margin = new Thickness(0, 0, 12, 0), VerticalAlignment = VerticalAlignment.Top };
+        grid.Children.Add(new System.Windows.Shapes.Ellipse { Fill = a.Fill });
+        grid.Children.Add(new TextBlock
+        {
+            Text = a.Initials,
+            FontSize = 14,
+            FontWeight = FontWeights.SemiBold,
+            Foreground = Brushes.White,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        });
+        if (a.Photo is { } photo)
+        {
+            var brush = new ImageBrush { Stretch = Stretch.UniformToFill };
+            System.Windows.Data.BindingOperations.SetBinding(brush, ImageBrush.ImageSourceProperty, new System.Windows.Data.Binding(nameof(AvatarPhoto.Image)) { Source = photo });
+            var image = new System.Windows.Shapes.Ellipse { Fill = brush };
+            image.SetBinding(VisibilityProperty, new System.Windows.Data.Binding(nameof(AvatarPhoto.HasImage))
+            {
+                Source = photo,
+                Converter = new BooleanToVisibilityConverter(),
+            });
+            grid.Children.Add(image);
+        }
+        return grid;
     }
 
     static PillButton Btn(string text, string tint, Action click, bool filled = false)
