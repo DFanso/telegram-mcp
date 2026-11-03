@@ -26,12 +26,19 @@ public partial class PanelWindow : Window
     Edge _edge;
     const double Gap = 12;
 
+    /// <summary>The panel's width in DIPs (also in PanelWindow.xaml).</summary>
+    const double PanelWidth = 404;
+
     public PanelWindow()
     {
         InitializeComponent();
         Deactivated += (_, _) => HidePanel();
         DpiChanged += (_, _) =>
         {
+            // Moving the hidden panel to a monitor with other scaling makes WPF measure it there and
+            // write the result back into Width (only the height sizes to content), which left a 2 px
+            // wide panel on a second monitor. The width is fixed: put it back.
+            Width = PanelWidth;
             FitHeight();
             Reposition();
         };
@@ -116,6 +123,12 @@ public partial class PanelWindow : Window
             w = r.Right - r.Left;
             h = r.Bottom - r.Top;
         }
+        else
+        {
+            // Never narrower than the panel: a resize mid-DPI-change can ask for a sliver.
+            var min = (int)Math.Round(PanelWidth * Scale);
+            if (w < min) pos.Cx = w = min;
+        }
         (pos.X, pos.Y) = Place(w, h);
         pos.Flags &= ~Native.SwpNoMove;
         Marshal.StructureToPtr(pos, lParam, false);
@@ -134,7 +147,11 @@ public partial class PanelWindow : Window
             : Edge.Bottom; // an auto-hidden taskbar: assume the bottom
 
         // Lay it out and place it while still hidden, so it doesn't flash somewhere else first.
-        new WindowInteropHelper(this).EnsureHandle();
+        // Move it onto that monitor first, so a change of scaling happens before it's measured.
+        var hwnd = new WindowInteropHelper(this).EnsureHandle();
+        Native.SetWindowPos(hwnd, IntPtr.Zero, _workArea.Left, _workArea.Top, 0, 0,
+            Native.SwpNoSize | Native.SwpNoZOrder | Native.SwpNoActivate);
+        Width = PanelWidth;
         FitHeight();
         UpdateLayout();
         Reposition();
