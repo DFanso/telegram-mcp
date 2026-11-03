@@ -300,6 +300,8 @@ export class Service {
     file: OutgoingFile | undefined,
     opts: SendFileOptions,
     sticker?: StickerRef,
+    /** False for the Page button: a page is not you speaking, so it must not silence the away reply (R7). */
+    countsAsSpeaking = true,
   ): Promise<MessageInfo> {
     const { tg } = this.d
     const sending = sticker
@@ -312,7 +314,7 @@ export class Service {
     void sending
       .then(m => {
         this.#ownSent.add(`${chatId}:${m.id}`)
-        this.d.away?.noteOutgoing(chatId)
+        if (countsAsSpeaking) this.d.away?.noteOutgoing(chatId)
         if (this.#ownSent.size > 1000) this.#ownSent.delete(this.#ownSent.values().next().value!)
       })
       .catch(() => {})
@@ -490,7 +492,7 @@ export class Service {
       const { peer } = await this.#verifyEntry(key, entry, true)
       const rule = decideSend(config, peer, { isWatching: false })
       if (rule.action === 'block') return { ok: false, text: `Not paged: "${key}" is blocked (${rule.reason}).` }
-      const sent = await this.#deliver(peer.id, text, undefined, { parseMode: 'plain' })
+      const sent = await this.#deliver(peer.id, text, undefined, { parseMode: 'plain' }, undefined, false)
       this.#record({ chatId: entry.id, chatLabel: key, text, messageId: sent.id, via: 'menubar', sessionLabel: null })
       return { ok: true, text: `Paged ${key}. If you're on their pageFrom, their desktop rings and you'll hear back here.` }
     } catch (e) {
@@ -525,10 +527,14 @@ export class Service {
   editAway(patch: unknown): { ok: boolean; text: string } {
     const r = applyAwayPatch(this.d.store.get().away, patch)
     if (!r.ok) return { ok: false, text: r.error }
-    const saved = this.d.store.update(c => {
-      c.away = r.away
-    })
-    return { ok: true, text: `Saved. Away is ${awaySummary(saved.away, new Date())}.` }
+    try {
+      const saved = this.d.store.update(c => {
+        c.away = r.away
+      })
+      return { ok: true, text: `Saved. Away is ${awaySummary(saved.away, new Date())}.` }
+    } catch (e) {
+      return { ok: false, text: errText(e) }
+    }
   }
 
   uiState(): UiState {
