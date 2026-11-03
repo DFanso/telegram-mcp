@@ -250,8 +250,8 @@ An away reply shows under Recently sent as "away reply". No MCP tool can change 
 Results flash under the header: a green check when it worked, a red warning when it didn't (VoiceOver reads them out). Esc clears a search, then closes the panel; ⌘1 to ⌘3 switch tabs and ⌘F searches contacts.
 
 <p>
-  <img src="docs/menubar-approvals.png" width="370" alt="The menu bar panel: two drafts waiting for approval (one to a saved group, one to a new chat with Deny, Ask every time and Always allow), two listening sessions, and the recently sent chats">
-  <img src="docs/menubar-history.png" width="370" alt="Recently sent, expanded: each chat lists the messages sent there, when, how they were approved and from which session">
+  <img src="docs/menubar-approvals.png" width="370" alt="The menu bar panel's Home tab: the status pill, the Home, Contacts and Away tabs, the Waiting, Listening and Sent tiles, and two drafts waiting for approval (one to a saved group with Deny and Send, one to a new chat with Send, ask next time and Send, always allow)">
+  <img src="docs/menubar-history.png" width="370" alt="Home with the Sent tile picked: recently sent, expanded, each chat listing the messages sent there, when, how they were approved and from which session">
 </p>
 
 Each new draft also posts a notification, so you can decide without opening the panel. Its **Options** menu has the same choices as the panel: **Send** / **Deny** for a chat that is already on a list, and **Send, ask next time** / **Send, always allow** / **Deny** for the first message to a new chat.
@@ -274,7 +274,7 @@ The menu bar icon is the app's paper plane in the same colours as the status pil
 
 Each click saves to `config.json` at once, the same way an approval does: the file is read fresh first, so a hand edit made a moment ago is kept, and a broken file is reported, never overwritten. A click that changes nothing writes nothing. Each change is noted in `daemon.log`. Rules are per chat, so if two nicknames point to the same chat, changing one changes both; the details line under the buttons names the other.
 
-<img src="docs/menubar-contacts.png" width="370" alt="The Contacts page: four saved chats with their tags, and Team QA opened with its nickname, the sending choices (Ask every time selected) and auto-reply (Off)">
+<img src="docs/menubar-contacts.png" width="370" alt="The Contacts tab: search, the All, Listening and Not listening filter, four saved chats with their tags and Listen switches, and Team QA opened with its explanation, the sending choices (Ask every time selected) and its nickname">
 
 This page is the menu bar's own: it goes through the daemon's local API with the token (`POST /ui/contacts` and `POST /ui/contacts/page`, like approvals). No MCP tool offers the same, so sessions still can't change the rules through the server.
 
@@ -316,7 +316,7 @@ The screenshots above come from the demo daemon, rendered offscreen by the app i
 APP="menubar/build/Telegram MCP.app/Contents/MacOS/TelegramMCPBar"
 export TELEGRAM_MCP_HOME=/tmp/tgmcp-demo TELEGRAM_MCP_PORT=47901 TELEGRAM_MCP_SECRET_STORE=file SNAPSHOT_DARK=1
 "$APP" --snapshot docs/menubar-approvals.png
-SNAPSHOT_EXPAND=recent SNAPSHOT_SCREEN_HEIGHT=4000 "$APP" --snapshot /tmp/history-full.png   # SNAPSHOT_EXPAND: 1, approvals or recent
+SNAPSHOT_SECTION=sent SNAPSHOT_EXPAND=recent SNAPSHOT_SCREEN_HEIGHT=4000 "$APP" --snapshot docs/menubar-history.png   # SNAPSHOT_EXPAND: 1, approvals or recent
 SNAPSHOT_PAGE=contacts SNAPSHOT_OPEN=team-qa "$APP" --snapshot docs/menubar-contacts.png    # SNAPSHOT_OPEN: a nickname to open
 SNAPSHOT_PAGE=away "$APP" --snapshot /tmp/menubar-away.png
 SNAPSHOT_SECTION=listening "$APP" --snapshot /tmp/menubar-listening.png                      # SNAPSHOT_SECTION: listening or sent (Home)
