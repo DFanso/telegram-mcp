@@ -143,7 +143,7 @@ public sealed class RecentChatVM : Observable
         Format.Ago(c.Messages[0].At, now),
         c.Messages.Take(3).Select(m => new RecentMessageVM(
             Format.StripFooter(m.Text, footer),
-            $"{Format.Ago(m.At, now)} · {Format.ViaLabel(m.Via)}{(m.SessionLabel is null ? "" : $" · {m.SessionLabel}")}")).ToList(),
+            $"{Format.Ago(m.At, now)} · {Format.ViaLabel(m.Via)}{(m.SessionLabel is null ? "" : $" · {m.SessionLabel}")}{(m.Edited is null ? "" : $" · edited {Format.Ago(m.Edited.At, now)}")}")).ToList(),
         open,
         toggle);
 

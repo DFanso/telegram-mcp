@@ -58,6 +58,16 @@ export const TOOLS = {
       parseMode: z.enum(['plain', 'markdown', 'html']).default('plain'),
     }),
   },
+  telegram_edit_message: {
+    description:
+      'Edit the text of a text message this session sent recently (its telegram_send_message, a /reply answer, or a draft of its the user approved; the message id is in the send result). Only works where sending needs no approval (auto-send, a watched autoReply chat, or a /reply takeover), because the chat sees the new text. It cannot edit another session\'s messages, messages the user typed (including the Page button\'s), the pager\'s or away replies, other people\'s messages, files or stickers. The footer is added again, and the menu bar marks the message as edited. Telegram only allows edits for 48 hours.',
+    input: z.object({
+      chat: chatRef,
+      messageId: z.number().int().describe('Id of the message to edit.'),
+      text: z.string().min(1).describe('The new text, replacing the old one.'),
+      parseMode: z.enum(['plain', 'markdown', 'html']).default('plain'),
+    }),
+  },
   telegram_send_file: {
     description:
       'Send a local file (any type) with an optional caption. Same rules as telegram_send_message: auto-send chats get it now, others ask the user first, blocked chats are refused; the footer goes on the caption. A file to a chat this session is watching always asks the user first, even on auto-send. Credentials (SSH keys, .env files, cloud logins, this tool\'s own session) are always refused.',
