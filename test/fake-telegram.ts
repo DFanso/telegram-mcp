@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import type { SendFileOptions, SendOptions, StickerRef, TelegramPort } from '../src/daemon/telegram'
 import type { DialogInfo, DownloadedFile, IncomingMessage, MessageInfo, PeerInfo, TelegramState } from '../src/shared/protocol'
 import { downloadFileName, type OutgoingFile } from '../src/shared/media'
+import { matchesChatKind, type ChatKind } from '../src/shared/tools'
 
 /** In-memory stand-in for Telegram. Never touches the network. */
 export class FakeTelegram implements TelegramPort {
@@ -142,9 +143,16 @@ export class FakeTelegram implements TelegramPort {
     return (this.history.get(chatId) ?? []).slice(-opts.limit)
   }
 
-  async listDialogs(opts: { limit: number }): Promise<DialogInfo[]> {
+  /** Unread counts by chat id, for list_chats tests. */
+  unread = new Map<number, number>()
+
+  async listDialogs(opts: { limit: number; unreadOnly?: boolean; type?: ChatKind }): Promise<DialogInfo[]> {
     for (const id of this.uncached) this.uncached.delete(id)
-    return [...this.peers.values()].slice(0, opts.limit).map(peer => ({ peer, unread: 0, pinned: false, lastMessage: null }))
+    return [...this.peers.values()]
+      .filter(peer => matchesChatKind(peer.type, opts.type ?? 'all'))
+      .map(peer => ({ peer, unread: this.unread.get(peer.id) ?? 0, pinned: false, lastMessage: null }))
+      .filter(d => !opts.unreadOnly || d.unread > 0)
+      .slice(0, opts.limit)
   }
 
   async searchChats(query: string): Promise<(PeerInfo & { global: boolean })[]> {

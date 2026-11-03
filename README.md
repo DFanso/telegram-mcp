@@ -141,7 +141,7 @@ Nothing is sent unless you accept. Drafts expire after 20 minutes. The rules are
 | --- | --- |
 | `telegram_status` | connection, account, config errors, this session's watches |
 | `telegram_get_rules` | guides, footer, lists, saved nicknames |
-| `telegram_list_chats` | recent chats with unread counts and what sending there would do |
+| `telegram_list_chats` | recent chats with unread counts and what sending there would do; filter by kind (`type`: private, groups, channels, bots), sort by `recent` / `unread` / `name`, and `categorize` under a heading per kind |
 | `telegram_search_chats` | find a person or group to save |
 | `telegram_read_messages` | read a chat or forum topic |
 | `telegram_send_message` | send, following the rules |

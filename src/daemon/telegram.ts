@@ -12,6 +12,7 @@ import type {
 } from '../shared/protocol'
 import { downloadFileName, fmtBytes, type OutgoingFile } from '../shared/media'
 import type { Credentials } from '../shared/secrets'
+import { matchesChatKind, type ChatKind } from '../shared/tools'
 import { SessionLockedError } from './session-store'
 
 export interface SendOptions {
@@ -48,7 +49,8 @@ export interface TelegramPort {
   /** Replace the text of one of your own text messages. */
   editMessage(chatId: number, messageId: number, text: string, opts?: { parseMode?: SendOptions['parseMode'] }): Promise<MessageInfo>
   getHistory(chatId: number, opts: { limit: number; beforeId?: number; topicId?: number }): Promise<MessageInfo[]>
-  listDialogs(opts: { limit: number; unreadOnly: boolean }): Promise<DialogInfo[]>
+  /** Recent dialogs, newest first; `type` keeps only one kind (private chats, groups, channels or bots). */
+  listDialogs(opts: { limit: number; unreadOnly: boolean; type?: ChatKind }): Promise<DialogInfo[]>
   searchChats(query: string, limit: number): Promise<(PeerInfo & { global: boolean })[]>
   markRead(chatId: number): Promise<void>
   /** Save the file attached to a message into `dir`. Refuses files over `maxBytes`. */
@@ -510,14 +512,19 @@ export class MtcuteTelegram implements TelegramPort {
     return photo ? c.downloadAsBuffer(photo.small) : null
   }
 
-  async listDialogs(opts: { limit: number; unreadOnly: boolean }): Promise<DialogInfo[]> {
+  async listDialogs(opts: { limit: number; unreadOnly: boolean; type?: ChatKind }): Promise<DialogInfo[]> {
     const c = await this.#ready()
+    const kind = opts.type ?? 'all'
+    // Filtering skips dialogs, so look further back to still fill the limit.
+    const filtered = opts.unreadOnly || kind !== 'all'
     const out: DialogInfo[] = []
-    for await (const d of c.iterDialogs({ limit: opts.unreadOnly ? Math.max(opts.limit * 5, 200) : opts.limit })) {
+    for await (const d of c.iterDialogs({ limit: filtered ? Math.max(opts.limit * 5, 200) : opts.limit })) {
       if (opts.unreadOnly && d.unreadCount === 0) continue
+      const peer = peerInfo(d.peer)
+      if (!matchesChatKind(peer.type, kind)) continue
       const last = d.lastMessage
       out.push({
-        peer: peerInfo(d.peer),
+        peer,
         unread: d.unreadCount,
         pinned: d.isPinned,
         lastMessage: last ? { id: last.id, date: last.date.toISOString(), text: last.text, outgoing: last.isOutgoing } : null,
