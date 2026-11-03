@@ -499,6 +499,35 @@ export class Service {
     }
   }
 
+  /**
+   * The pager's fixed replies to whoever paged ("Paging Leo now", "Leo saw it."). They go out from
+   * your account like any other send: the rules are checked against the live chat, the footer goes
+   * on, and they show under Recent. A chat that is blocked, or on requireApproval, hears nothing:
+   * a fixed reply is never worth an approval prompt while you're being paged.
+   */
+  async tellPageSender(chatId: number, text: string, replyTo: number | null): Promise<void> {
+    const config = this.d.store.get()
+    const peer = await this.#peerById(chatId)
+    const rule = decideSend(config, peer, { isWatching: false })
+    if (rule.action === 'block' || isListed(config, 'requireApproval', peer)) return
+    const footed = withFooter(text, config.footer)
+    const sent = await this.#deliver(peer.id, footed, undefined, { replyTo: replyTo ?? undefined, parseMode: 'plain' })
+    const nickname = nicknameFor(config, peer.id)
+    this.#record({ chatId: peer.id, chatLabel: nickname ? `${peer.name} [${nickname}]` : peer.name, text: footed, messageId: sent.id, via: 'auto', sessionLabel: 'pager' })
+  }
+
+  /** How a page reached the phone, for the texts that answer telegram_page and page test. */
+  #phoneStatus(page: Page): string {
+    if (page.botMessages.length) return 'the phone got a push'
+    if (this.d.pager?.hasChannel()) return 'the pager bot could not reach the phone (see tgmcp logs); it retries'
+    return 'no pager bot is set up, so the phone was not reached (tgmcp page setup)'
+  }
+
+  /** Whether anything on the desktop will ring: the menu bar or tray polls /ui/state. */
+  #desktopStatus(): string {
+    return this.uiActive() ? 'the desktop rings until it is acked' : 'no menu bar or tray app is running, so nothing rings on the desktop'
+  }
+
   /** `tgmcp page test`: rings everything, ignoring the rate limit, so you can check the volume. */
   async testPage(): Promise<{ ok: boolean; text: string }> {
     const { pager } = this.d
@@ -513,8 +542,7 @@ export class Service {
       reason: 'Test page: ack it in the menu bar, the tray or on your phone.',
     })
     if (!r.ok) return { ok: false, text: r.error }
-    const phone = r.page.botMessages.length ? 'and your phone got a push' : 'but no pager bot reached your phone (tgmcp page setup)'
-    return { ok: true, text: `Ringing (${r.page.id}): the menu bar or tray should sound within a few seconds, ${phone}.` }
+    return { ok: true, text: `Test page ${r.page.id}: ${this.#desktopStatus()}; ${this.#phoneStatus(r.page)}.` }
   }
 
   /** Ack or snooze from the menu bar or the tray. */
@@ -798,19 +826,31 @@ export class Service {
     telegram_page: async (sid, p) => {
       const { pager, hub } = this.d
       if (!pager) return fail('Paging is not available in this daemon.')
-      const t = p.chat === undefined ? null : await this.#resolve(p.chat, false)
+      // The chat is context for the user, never a reason not to page: one that doesn't resolve is
+      // shown as Claude gave it.
+      let chatId: number | null = null
+      let chatLabel: string | null = null
+      if (p.chat !== undefined) {
+        try {
+          const t = await this.#resolve(p.chat, false)
+          chatId = t.peer.id
+          chatLabel = t.label
+        } catch {
+          chatLabel = `${String(p.chat)} (not a saved chat)`
+        }
+      }
       const r = await pager.page({
         source: 'claude',
         senderKey: 'claude',
         senderName: hub.label(sid),
-        chatId: t?.peer.id ?? null,
-        chatLabel: t?.label ?? null,
+        chatId,
+        chatLabel,
         messageId: p.messageId ?? null,
         reason: p.reason,
       })
       if (!r.ok) return fail(`Not paged: ${r.error}`)
       return {
-        text: `Paged the user (${r.page.id}). Their desktop rings until they ack${r.page.botMessages.length ? ', and their phone got a push' : '; no pager bot is set up, so the phone was not reached (tgmcp page setup)'}.`,
+        text: `Paged the user (${r.page.id}): ${this.#desktopStatus()}; ${this.#phoneStatus(r.page)}.`,
       }
     },
 

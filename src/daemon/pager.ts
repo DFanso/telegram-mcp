@@ -40,10 +40,17 @@ export interface Page extends PageInput {
   /** Bot messages for this page, so an ack anywhere can update them all. */
   botMessages: number[]
   settledBy?: PageActor
+  /** The last try on the phone failed (the bot is set up but could not reach it). */
+  deliveryFailed?: boolean
+  /** Acked or snoozed at least once: the sender has heard "saw it", and never hears "hasn't seen it". */
+  seen: boolean
+  /** A try is on its way to the phone, so tick() leaves the page alone. */
+  sending: boolean
 }
 
 /** Where pages reach the phone: the user's own bot. */
 export interface PageChannel {
+  /** The bot message id. Throws when the phone can't be reached. */
   send(page: Page, text: string): Promise<number>
   settle(botMessageId: number, text: string): Promise<void>
 }
@@ -68,6 +75,8 @@ export type PageResult = { ok: true; page: Page } | { ok: false; error: string }
 export class Pager {
   #pages = new Map<string, Page>()
   #lastBySender = new Map<string, number>()
+  /** When a rate-limited sender was last told so, to answer each window once rather than every message. */
+  #toldLimited = new Map<string, number>()
   #seq = 0
 
   constructor(private readonly d: PagerDeps) {}
@@ -90,13 +99,24 @@ export class Pager {
     return this.active().some(p => p.state === 'ringing' || p.state === 'unanswered')
   }
 
+  /** Whether a pager bot is set up, so "the phone wasn't reached" can say why. */
+  hasChannel(): boolean {
+    return this.d.channel() !== null
+  }
+
   async page(input: PageInput): Promise<PageResult> {
     const now = this.#now
     const limits = this.d.paging()
+    const window = limits.perSenderMinutes * 60_000
     const last = this.#lastBySender.get(input.senderKey)
-    if (input.source !== 'test' && last !== undefined && now - last < limits.perSenderMinutes * 60_000) {
+    if (input.source !== 'test' && last !== undefined && now - last < window) {
       this.#audit({ event: 'rate_limited', source: input.source, sender: input.senderKey, chatId: input.chatId })
-      const wait = Math.ceil((last + limits.perSenderMinutes * 60_000 - now) / 60_000)
+      const wait = Math.max(1, Math.ceil((last + window - now) / 60_000))
+      const told = this.#toldLimited.get(input.senderKey)
+      if (input.chatId !== null && isChatSource(input.source) && (told === undefined || told < last)) {
+        this.#toldLimited.set(input.senderKey, now)
+        await this.#tellChat(input.chatId, input.messageId, `Already paged ${this.d.ownerName()} in the last ${limits.perSenderMinutes} min. Try again in ${wait} min.`)
+      }
       return { ok: false, error: `Already paged in the last ${limits.perSenderMinutes} min; try again in ${wait} min.` }
     }
     this.#lastBySender.set(input.senderKey, now)
@@ -107,8 +127,11 @@ export class Pager {
       createdAt: now,
       state: 'ringing',
       tries: 0,
-      nextAt: now,
+      // Nothing is due until the first try below has gone out, so tick() can't push it twice.
+      nextAt: Number.POSITIVE_INFINITY,
       botMessages: [],
+      seen: false,
+      sending: false,
     }
     this.#pages.set(page.id, page)
     this.#prune()
@@ -124,19 +147,24 @@ export class Pager {
   async act(id: string, action: PageAction, by: PageActor): Promise<boolean> {
     const page = this.#pages.get(id)
     if (!page || page.state === 'acked') return false
+    const firstSeen = !page.seen
+    page.seen = true
     if (action.kind === 'ack') {
       page.state = 'acked'
       page.settledBy = by
+      // Seen and handled: the sender may page again for the next thing straight away.
+      this.#lastBySender.delete(page.senderKey)
       this.#audit({ event: 'ack', id, by })
       await this.#settleBot(page, `✅ Acked from the ${by}.`)
-      if (this.#fromChat(page)) await this.#tell(page, `${this.d.ownerName()} saw it.`)
-      return true
+    } else {
+      const minutes = SNOOZE_MINUTES.includes(action.minutes as 15 | 60) ? action.minutes : 15
+      page.state = 'snoozed'
+      page.nextAt = this.#now + minutes * 60_000
+      this.#audit({ event: 'snooze', id, by, minutes })
+      await this.#settleBot(page, `💤 Snoozed for ${minutes} min from the ${by}.`)
     }
-    const minutes = SNOOZE_MINUTES.includes(action.minutes as 15 | 60) ? action.minutes : 15
-    page.state = 'snoozed'
-    page.nextAt = this.#now + minutes * 60_000
-    this.#audit({ event: 'snooze', id, by, minutes })
-    await this.#settleBot(page, `💤 Snoozed for ${minutes} min from the ${by}.`)
+    // A snooze counts as seen too: the sender hears it once, whichever comes first.
+    if (firstSeen && this.#fromChat(page)) await this.#tell(page, `${this.d.ownerName()} saw it.`)
     return true
   }
 
@@ -145,7 +173,7 @@ export class Pager {
     const now = this.#now
     const { tries } = this.d.paging()
     for (const page of this.active()) {
-      if (page.nextAt > now) continue
+      if (page.sending || page.nextAt > now) continue
       if (page.state === 'snoozed') {
         page.state = 'ringing'
         page.tries = 0
@@ -158,24 +186,35 @@ export class Pager {
           // The desktop keeps ringing; the sender learns nobody has it yet.
           page.state = 'unanswered'
           this.#audit({ event: 'unanswered', id: page.id, tries: page.tries })
-          if (this.#fromChat(page)) await this.#tell(page, `${this.d.ownerName()} hasn't seen it yet. Try calling.`)
+          if (!page.seen && this.#fromChat(page)) await this.#tell(page, `${this.d.ownerName()} hasn't seen it yet. Try calling.`)
         }
       }
     }
   }
 
   async #try(page: Page) {
+    if (page.sending || page.state !== 'ringing') return
     const { tries, retryMinutes } = this.d.paging()
     page.tries++
     page.nextAt = this.#now + retryMinutes * 60_000
     const channel = this.d.channel()
     if (!channel) return
+    page.sending = true
     try {
-      page.botMessages.push(await channel.send(page, phoneText(page, tries)))
+      const sent = await channel.send(page, phoneText(page, tries))
+      page.botMessages.push(sent)
+      page.deliveryFailed = false
       this.#audit({ event: 'delivered', id: page.id, try: page.tries })
+      // Acked or snoozed while it was on its way (the await above lets act() run): settle this one too.
+      const after = page.state as PageState
+      if (after === 'acked') await channel.settle(sent, `✅ Acked from the ${page.settledBy ?? 'desk'}.`).catch(() => {})
+      else if (after === 'snoozed') await channel.settle(sent, '💤 Snoozed.').catch(() => {})
     } catch (e) {
+      page.deliveryFailed = true
       this.#audit({ event: 'delivery_failed', id: page.id, try: page.tries })
       this.d.log?.(`page ${page.id}: the bot could not reach the phone: ${e instanceof Error ? e.message : e}`)
+    } finally {
+      page.sending = false
     }
   }
 
@@ -186,14 +225,18 @@ export class Pager {
   }
 
   #fromChat(page: Page): page is Page & { chatId: number } {
-    return (page.source === 'command' || page.source === 'keyword') && page.chatId !== null
+    return isChatSource(page.source) && page.chatId !== null
   }
 
-  async #tell(page: Page & { chatId: number }, text: string) {
+  #tell(page: Page & { chatId: number }, text: string) {
+    return this.#tellChat(page.chatId, page.messageId, text)
+  }
+
+  async #tellChat(chatId: number, replyTo: number | null, text: string) {
     try {
-      await this.d.tellSender(page.chatId, text, page.messageId)
+      await this.d.tellSender(chatId, text, replyTo)
     } catch (e) {
-      this.d.log?.(`page ${page.id}: could not answer the sender: ${e instanceof Error ? e.message : e}`)
+      this.d.log?.(`page: could not answer the sender in ${chatId}: ${e instanceof Error ? e.message : e}`)
     }
   }
 
@@ -210,6 +253,10 @@ export class Pager {
   }
 }
 
+function isChatSource(source: PageSource): boolean {
+  return source === 'command' || source === 'keyword'
+}
+
 /** What reaches the phone. Plain text: the bot sends it with no parse mode. */
 export function phoneText(page: Page, tries: number): string {
   const from = page.source === 'claude' ? `Claude (${page.senderName})` : page.senderName
@@ -223,10 +270,17 @@ export function phoneText(page: Page, tries: number): string {
     .join('\n')
 }
 
-/** The reason is shown, never acted on: one paragraph of plain text, bounded. */
+/**
+ * The reason is shown, never acted on: one line of plain text, bounded. Controls, newlines and
+ * direction marks go; it is cut on whole characters, so an emoji is never split in half.
+ */
 export function cleanReason(text: string): string {
-  const flat = text.replace(/[\u0000-\u0008\u000b-\u001f\u007f‪-‮⁦-⁩]/g, '').trim()
-  return flat.length > MAX_REASON ? `${flat.slice(0, MAX_REASON - 1)}…` : flat
+  const flat = text
+    .replace(/[\u0000-\u0008\u000b-\u001f\u007f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+  const chars = Array.from(flat)
+  return chars.length > MAX_REASON ? `${chars.slice(0, MAX_REASON - 1).join('')}…` : flat
 }
 
 /**
@@ -237,10 +291,17 @@ export function pageTrigger(config: Config, msg: IncomingMessage): { source: 'co
   if (msg.outgoing || !msg.from) return null
   const paging = config.paging
   const cmd = /^\/page(?:@\S+)?(?:\s+([\s\S]*))?$/i.exec(msg.text.trim())
-  if (cmd) return paging.pageFrom.includes(msg.from.id) ? { source: 'command', reason: cmd[1] ?? '' } : null
+  if (cmd && paging.pageFrom.includes(msg.from.id)) return { source: 'command', reason: cmd[1] ?? '' }
+  // Anyone else's /page is just a message: in a VIP chat its keywords still count.
   if (!paging.keywords.length || !inRefs(config, paging.vip, msg.chat)) return null
-  const words = paging.keywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
-  return new RegExp(`(^|[^\\p{L}\\p{N}])(${words.join('|')})(?![\\p{L}\\p{N}])`, 'iu').test(msg.text)
-    ? { source: 'keyword', reason: msg.text }
-    : null
+  return hasKeyword(msg.text, paging.keywords) ? { source: 'keyword', reason: msg.text } : null
+}
+
+/**
+ * A keyword as a word of its own: "prod is down" and "URGENT:" page, but "non-urgent", "pre-prod",
+ * "prod.example.com" and "prod_db" don't. A full stop only ends a word when nothing follows it.
+ */
+export function hasKeyword(text: string, keywords: readonly string[]): boolean {
+  const words = keywords.map(k => k.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+  return new RegExp(`(?<![\\p{L}\\p{N}_\\-./@])(${words.join('|')})(?![\\p{L}\\p{N}_\\-/@]|\\.[\\p{L}\\p{N}])`, 'iu').test(text)
 }

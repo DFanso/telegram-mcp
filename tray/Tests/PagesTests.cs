@@ -17,6 +17,30 @@ public class PagesTests
     }
 
     [Fact]
+    public void Only_a_new_page_brings_the_window_forward()
+    {
+        HashSet<string> shown = [];
+        IReadOnlyList<UiPage> first = [Page("pg_1", "ringing")];
+        Assert.True(Pages.HasNew(shown, first));
+        shown = first.Select(p => p.Id).ToHashSet();
+        // The next polls: same page, even once it is unanswered.
+        Assert.False(Pages.HasNew(shown, first));
+        Assert.False(Pages.HasNew(shown, [Page("pg_1", "unanswered")]));
+        Assert.True(Pages.HasNew(shown, [Page("pg_1", "ringing"), Page("pg_2", "ringing")]));
+        // A page that was snoozed (so left the list) and rings again counts as new.
+        Assert.True(Pages.HasNew([], first));
+    }
+
+    [Fact]
+    public void The_window_is_rebuilt_only_when_its_pages_change()
+    {
+        var a = Pages.Signature([Page("pg_1", "ringing")]);
+        Assert.Equal(a, Pages.Signature([Page("pg_1", "ringing")]));
+        Assert.NotEqual(a, Pages.Signature([Page("pg_1", "unanswered")]));
+        Assert.NotEqual(a, Pages.Signature([Page("pg_1", "ringing"), Page("pg_2", "ringing")]));
+    }
+
+    [Fact]
     public void Message_links()
     {
         Assert.Equal("tg://openmessage?user_id=12&message_id=7", Pages.MessageUri(12, 7)!.OriginalString);
