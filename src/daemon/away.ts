@@ -1,7 +1,7 @@
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { AWAY_MAX_AGE_MS, awaySummary, awayWindowAt, firstName, nextAwayChange, renderAwayMessage } from '../shared/away'
+import { AWAY_MAX_AGE_MS, AWAY_MAX_PER_WINDOW, awaySummary, awayWindowAt, firstName, nextAwayChange, renderAwayMessage } from '../shared/away'
 import { isListed, type Config } from '../shared/config'
-import { withFooter } from '../shared/policy'
+import { decideSend, withFooter } from '../shared/policy'
 import type { IncomingMessage, SentRecord, UiAway } from '../shared/protocol'
 import type { SessionHub } from './sessions'
 import type { TelegramPort } from './telegram'
@@ -66,6 +66,8 @@ export class AwayResponder {
   /** chat id -> when it last got an away reply (epoch ms). Loaded lazily from away.json. */
   #replied: Map<number, number> | null = null
   #lastOutgoing = new Map<number, number>()
+  /** The window whose nightly limit was last logged, so it's logged once a night. */
+  #limitLogged: string | null = null
 
   constructor(private d: AwayDeps) {}
 
@@ -119,12 +121,17 @@ export class AwayResponder {
       const chat = msg.chat
       // R3: bots are type 'bot'; Telegram's service account and support staff are users but not people to answer.
       if (chat.type !== 'user' || chat.isSelf || chat.isSupport || chat.id === TELEGRAM_SERVICE_ID) return 'skipped'
-      if (isListed(config, 'blocked', chat)) return 'skipped' // R4
+      // R4: the chat's rules, as for the pager's fixed replies. Blocked (listed, or unlisted under
+      // defaultPolicy "block") and Ask every time chats never get a message nobody approved.
+      const rule = decideSend(config, chat, { isWatching: false })
+      if (rule.action === 'block' || isListed(config, 'requireApproval', chat)) return 'skipped'
       const at = Date.parse(msg.date)
       if (Number.isNaN(at)) return 'skipped'
-      const window = awayWindowAt(away, new Date(at)) // R5
-      if (!window) return 'skipped'
+      // R5: away now, not just when it was sent (a catch-up at 09:05 of a message from 08:58 is too late),
+      // and the message came in during this same window.
       const now = this.#now()
+      const window = awayWindowAt(away, new Date(now))
+      if (!window || at < window.start.getTime()) return 'skipped'
       if (now - at > AWAY_MAX_AGE_MS) return 'skipped'
       const replied = this.#repliedMap()
       const prev = replied.get(chat.id)
@@ -134,6 +141,17 @@ export class AwayResponder {
       if (this.d.hub.takeoverOf(chat.id) !== null) return 'skipped' // R8
       if (this.d.hub.handledLive(chat.id) && isListed(config, 'autoReply', chat)) return 'skipped'
       if (paged || this.d.pages().some(p => p.senderKey === String(msg.from?.id ?? chat.id))) return 'skipped' // R9
+      // R10: a nightly limit, whoever writes. Counted from the saved replies, so a restart doesn't reset it.
+      const start = window.start.getTime()
+      let tonight = 0
+      for (const t of replied.values()) if (t >= start) tonight++
+      if (tonight >= AWAY_MAX_PER_WINDOW) {
+        if (this.#limitLogged !== window.id) {
+          this.#limitLogged = window.id
+          this.#log(`away: reached the limit of ${AWAY_MAX_PER_WINDOW} replies tonight; no more until the next away window`)
+        }
+        return 'skipped'
+      }
 
       // Mark before the first await so a second message arriving meanwhile sees it.
       replied.set(chat.id, now)
