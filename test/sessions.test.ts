@@ -110,4 +110,44 @@ describe('SessionHub', () => {
     expect(events.map(e => e.text)).toEqual(['b', 'c'])
     expect(dropped).toBe(1)
   })
+
+  describe('handledLive', () => {
+    const ANNA_ID = 4242
+    const watch = { chatId: ANNA_ID, chatLabel: 'Anna' }
+
+    test('a watch with a Monitor is live', () => {
+      const hub = new SessionHub()
+      hub.attachProxy('s1', { label: 'a', channel: false, watches: [] }, sink())
+      hub.addWatch('s1', watch)
+      hub.attachMonitor('s1', sink())
+      expect(hub.handledLive(ANNA_ID)).toBe(true)
+    })
+
+    test('a watch without a Monitor is not live', () => {
+      const hub = new SessionHub()
+      hub.attachProxy('s1', { label: 'a', channel: false, watches: [] }, sink())
+      hub.addWatch('s1', watch)
+      expect(hub.handledLive(ANNA_ID)).toBe(false)
+    })
+
+    test('a channel session with its proxy is live', () => {
+      const hub = new SessionHub()
+      const proxy = sink()
+      hub.attachProxy('s1', { label: 'a', channel: true, watches: [] }, proxy)
+      hub.addWatch('s1', watch)
+      expect(hub.handledLive(ANNA_ID)).toBe(true)
+      hub.detachProxy('s1', proxy)
+      expect(hub.handledLive(ANNA_ID)).toBe(false)
+    })
+
+    test('a takeover is live', () => {
+      const hub = new SessionHub()
+      hub.attachProxy('s1', { label: 'a', channel: false, watches: [] }, sink())
+      hub.attachMonitor('s1', sink())
+      hub.setReplyHandler('s1', true)
+      const base = { chatId: ANNA_ID, chatLabel: 'Anna', fromId: 1, fromName: 'me', fromUsername: null, messageId: 1, topicId: null, replyToId: null, text: '', media: null, date: '' }
+      expect(hub.startTakeover(ANNA_ID, 60_000, base)).toBe('s1')
+      expect(hub.handledLive(ANNA_ID)).toBe(true)
+    })
+  })
 })
