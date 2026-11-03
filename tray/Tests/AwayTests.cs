@@ -47,7 +47,24 @@ public class AwayTests
         Assert.Equal("The message can't be empty.", Away.Check("18:00", "09:00", "  "));
         Assert.Null(Away.Check("18:00", "09:00", new string('x', 1000)));
         Assert.Equal("The message is too long (1000 characters at most).", Away.Check("18:00", "09:00", new string('x', 1001)));
+        Assert.Null(Away.Check("18:00", "09:00", "hi", "0"));
+        Assert.Equal("quietMinutes must be a whole number from 0 to 1440", Away.Check("18:00", "09:00", "hi", "1441"));
+        Assert.Equal("quietMinutes must be a whole number from 0 to 1440", Away.Check("18:00", "09:00", "hi", ""));
     }
+
+    [Theory]
+    [InlineData("30", 30)]
+    [InlineData(" 45 ", 45)]
+    [InlineData("0", 0)]
+    [InlineData("1440", 1440)]
+    [InlineData("1441", null)]
+    [InlineData("-5", null)]
+    [InlineData("+5", null)]
+    [InlineData("1.5", null)]
+    [InlineData("1e3", null)]
+    [InlineData("", null)]
+    [InlineData("half an hour", null)]
+    public void Quiet_is_a_whole_number_of_minutes_up_to_a_day(string s, int? expected) => Assert.Equal(expected, Away.Quiet(s));
 
     [Fact]
     public void Preview_fills_in_the_first_name_and_adds_the_footer_once()

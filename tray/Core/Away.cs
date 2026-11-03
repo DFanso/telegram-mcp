@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 
 namespace TelegramMCPTray.Core;
@@ -23,14 +24,21 @@ public static class Away
 
     public static bool IsTime(string s) => TimeRe.IsMatch(s);
 
-    /// <summary>The first problem, in the daemon's words, or null when the three fields are fine.</summary>
-    public static string? Check(string from, string until, string message)
+    public const int QuietMax = 1440;
+
+    /// <summary>Quiet minutes as typed: a whole number from 0 to a day, or null. No sign, decimals or exponent.</summary>
+    public static int? Quiet(string s) =>
+        int.TryParse(s.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var n) && n <= QuietMax ? n : null;
+
+    /// <summary>The first problem, in the daemon's words, or null when the fields are fine.</summary>
+    public static string? Check(string from, string until, string message, string quiet = "30")
     {
         if (!IsTime(from)) return "from must be a time like 18:00";
         if (!IsTime(until)) return "until must be a time like 18:00";
         if (from == until) return "From and until can't be the same time.";
         if (message.Trim() == "") return "The message can't be empty.";
         if (message.Length > MessageMax) return $"The message is too long ({MessageMax} characters at most).";
+        if (Quiet(quiet) is null) return $"quietMinutes must be a whole number from 0 to {QuietMax}";
         return null;
     }
 

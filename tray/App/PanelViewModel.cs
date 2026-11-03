@@ -2,8 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
+using System.Runtime.CompilerServices;
 using System.Text.Json;
 using System.Threading.Tasks;
 using System.Windows.Input;
@@ -38,9 +40,9 @@ public sealed class PanelViewModel : Observable
     bool _contactsPage;
     bool _awayPage, _awayLoaded, _awaySaving;
     bool _awayEnabled;
-    string _awayFrom = "", _awayUntil = "", _awayMessage = "";
+    string _awayFrom = "", _awayUntil = "", _awayMessage = "", _awayQuiet = "";
     /// <summary>What the daemon has saved as far as this page knows: the fields as loaded, then as last sent. Save diffs against it.</summary>
-    (bool Enabled, string From, string Until, string Message)? _awaySaved;
+    (bool Enabled, string From, string Until, string Message, int Quiet)? _awaySaved;
     string _search = "";
     string? _openNickname;
 
@@ -173,6 +175,13 @@ public sealed class PanelViewModel : Observable
         set => EditAway(ref _awayUntil, value);
     }
 
+    /// <summary>Quiet minutes as typed (a whole number, 0 to 1440).</summary>
+    public string AwayQuiet
+    {
+        get => _awayQuiet;
+        set => EditAway(ref _awayQuiet, value);
+    }
+
     public string AwayMessage
     {
         get => _awayMessage;
@@ -183,14 +192,15 @@ public sealed class PanelViewModel : Observable
     }
 
     /// <summary>The first problem with what is typed, or null. Live, so Save stays off until it is fixed.</summary>
-    public string? AwayError => Away.Check(_awayFrom.Trim(), _awayUntil.Trim(), _awayMessage);
+    public string? AwayError => Away.Check(_awayFrom.Trim(), _awayUntil.Trim(), _awayMessage, _awayQuiet);
 
     /// <summary>What the typed message would send. The daemon's own preview shows only the saved one.</summary>
     public string AwayPreview => Away.Preview(_awayMessage, State?.Telegram.Me?.Name, State?.Footer ?? "");
 
-    bool EditAway(ref string field, string? value)
+    /// <summary>Sets one of the typed fields. The caller's name goes to Set, or the box bound to it would never hear of the change.</summary>
+    bool EditAway(ref string field, string? value, [CallerMemberName] string? name = null)
     {
-        if (!Set(ref field, value ?? "")) return false;
+        if (!Set(ref field, value ?? "", name)) return false;
         Raise(nameof(AwayError));
         CommandManager.InvalidateRequerySuggested();
         return true;
@@ -201,11 +211,12 @@ public sealed class PanelViewModel : Observable
     {
         if (State?.Away is not { } a) return;
         _awayLoaded = true;
-        _awaySaved = (a.Enabled, a.From, a.Until, a.Message);
+        _awaySaved = (a.Enabled, a.From, a.Until, a.Message, a.QuietMinutes);
         AwayEnabled = a.Enabled;
         AwayFrom = a.From;
         AwayUntil = a.Until;
         AwayMessage = a.Message;
+        AwayQuiet = a.QuietMinutes.ToString(CultureInfo.InvariantCulture);
         Raise(nameof(AwayPreview));
     }
 
@@ -237,7 +248,7 @@ public sealed class PanelViewModel : Observable
         await PollAsync();
     }
 
-    /// <summary>Sends only what differs from what was loaded or last saved. After a save the fields stay as typed.</summary>
+    /// <summary>Sends only what differs from what was loaded or last saved. After a save the fields stay as typed (trimmed).</summary>
     async Task SaveAwayAsync()
     {
         if (_awaySaved is not { } saved || AwayError is not null) return;
@@ -245,12 +256,15 @@ public sealed class PanelViewModel : Observable
         // become the new baseline, or that edit would look already saved.
         var typedFrom = _awayFrom;
         var typedUntil = _awayUntil;
-        var sent = (Enabled: _awayEnabled, From: typedFrom.Trim(), Until: typedUntil.Trim(), Message: _awayMessage);
+        var typedQuiet = _awayQuiet;
+        // AwayError is null, so the quiet minutes parse.
+        var sent = (Enabled: _awayEnabled, From: typedFrom.Trim(), Until: typedUntil.Trim(), Message: _awayMessage, Quiet: Away.Quiet(typedQuiet)!.Value);
         var change = new AwayChange(
             sent.Enabled != saved.Enabled ? sent.Enabled : null,
             sent.From != saved.From ? sent.From : null,
             sent.Until != saved.Until ? sent.Until : null,
-            sent.Message != saved.Message ? sent.Message : null);
+            sent.Message != saved.Message ? sent.Message : null,
+            sent.Quiet != saved.Quiet ? sent.Quiet : null);
         if (change == new AwayChange())
         {
             ShowFlash("Nothing changed.");
@@ -274,6 +288,7 @@ public sealed class PanelViewModel : Observable
             // Show the trimmed times, but only in fields left alone since the save started.
             if (_awayFrom == typedFrom) AwayFrom = sent.From;
             if (_awayUntil == typedUntil) AwayUntil = sent.Until;
+            if (_awayQuiet == typedQuiet) AwayQuiet = sent.Quiet.ToString(CultureInfo.InvariantCulture);
         }
         ShowFlash(r.Text, r.Ok);
         await PollAsync();
