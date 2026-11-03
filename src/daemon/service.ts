@@ -51,6 +51,8 @@ export interface ServiceDeps {
   pager?: Pager
   /** The away auto-reply. Absent in tests that do not need it. */
   away?: AwayResponder
+  /** daemon.log (edits are logged). Absent in tests that do not need it. */
+  log?: (msg: string) => void
 }
 
 const VIA_TEXT: Record<SentRecord['via'], string> = {
@@ -409,7 +411,16 @@ export class Service {
             item.sticker,
           )
           const shown = item.sticker ? STICKER_TEXT : describeOutgoing(item.text, file)
-          this.#record({ chatId: item.chatId, chatLabel: item.chatLabel, text: shown, messageId: sent.id, via, sessionLabel: item.sessionLabel })
+          this.#record({
+            chatId: item.chatId,
+            chatLabel: item.chatLabel,
+            text: shown,
+            messageId: sent.id,
+            via,
+            sessionLabel: item.sessionLabel,
+            sessionId: item.sessionId,
+            kind: item.sticker ? 'sticker' : file ? 'file' : 'text',
+          })
           let saved = ''
           if (item.firstTime) {
             try {
@@ -632,7 +643,16 @@ export class Service {
         { replyTo: p.replyTo, topicId, parseMode: p.parseMode, asPhoto: draft.asPhoto },
         draft.sticker,
       )
-      this.#record({ chatId: t.peer.id, chatLabel: t.label, text: shown, messageId: sent.id, via: 'auto', sessionLabel: this.d.hub.label(sid) })
+      this.#record({
+        chatId: t.peer.id,
+        chatLabel: t.label,
+        text: shown,
+        messageId: sent.id,
+        via: 'auto',
+        sessionLabel: this.d.hub.label(sid),
+        sessionId: sid,
+        kind: draft.sticker ? 'sticker' : file ? 'file' : 'text',
+      })
       return { text: `Sent to ${t.label} (message #${sent.id}${topicId ? `, topic ${topicId}` : ''}). Allowed because ${decision.reason}.` }
     }
     const uiActive = this.uiActive()
@@ -831,10 +851,18 @@ export class Service {
     telegram_edit_message: async (sid, p) => {
       const config = this.d.store.get()
       const t = await this.#resolve(p.chat, true)
-      const key = `${t.peer.id}:${p.messageId}`
-      const known = this.#ownSent.has(key) || this.#recent.some(r => r.chatId === t.peer.id && r.messageId === p.messageId)
-      if (!known) {
-        return fail(`Not edited: message #${p.messageId} in ${t.label} was not sent by this daemon (or too long ago). Only messages Claude sent through telegram_send_message can be edited.`)
+      // Only a message this very session wrote: its own send, or a draft of its that was approved.
+      // The pager's replies, away replies and the Page button (the user's own words) carry no
+      // session, so no session can rewrite them. recent.json keeps the last 20, across restarts.
+      const rec = this.#recent.find(r => r.chatId === t.peer.id && r.messageId === p.messageId)
+      if (!rec?.sessionId) {
+        return fail(`Not edited: message #${p.messageId} in ${t.label} is not one a Claude session sent there recently. Only a session's own recent messages can be edited, never the user's, the pager's or an away reply.`)
+      }
+      if (rec.sessionId !== sid) {
+        return fail(`Not edited: message #${p.messageId} in ${t.label} was sent by another session (${rec.sessionLabel ?? 'unknown'}). Only the session that sent a message can edit it.`)
+      }
+      if (rec.kind !== 'text') {
+        return fail(`Not edited: message #${p.messageId} in ${t.label} is a ${rec.kind ?? 'message of unknown kind'}. Only text messages can be edited.`)
       }
       if (looksLikeReplyCommand(visibleText(p.text, p.parseMode))) return fail('Not edited: a message starting with /reply would start a takeover. Reword it.')
       // The chat sees the new text, so it needs the same yes as a send. There is no approval step
@@ -849,8 +877,15 @@ export class Service {
       }
       const text = withFooter(p.text, config.footer)
       const edited = await this.d.tg.editMessage(t.peer.id, p.messageId, text, { parseMode: p.parseMode })
-      this.#recent = this.#recent.map(r => (r.chatId === t.peer.id && r.messageId === p.messageId ? { ...r, text } : r))
+      // Recently sent keeps the text as first sent and says who edited it when, so an edit is never
+      // mistaken for what went out; daemon.log has a line for each one.
+      const by = this.d.hub.label(sid)
+      const at = new Date().toISOString()
+      this.#recent = this.#recent.map(r =>
+        r.chatId === t.peer.id && r.messageId === p.messageId ? { ...r, text, edited: { at, by, original: r.edited?.original ?? r.text } } : r,
+      )
       this.#saveRecent()
+      this.d.log?.(`edit: message #${p.messageId} in ${t.label} (${t.peer.id}) by ${by ?? sid}`)
       return { text: `Edited message #${edited.id} in ${t.label}. Allowed because ${decision.reason}.` }
     },
 

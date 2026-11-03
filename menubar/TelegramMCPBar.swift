@@ -71,6 +71,14 @@ struct SentRecord: Decodable, Identifiable {
     let messageId: Int
     let via: String
     let sessionLabel: String?
+    /// Set once a session edited it (telegram_edit_message); absent from older daemons.
+    let edited: SentEdit?
+}
+
+struct SentEdit: Decodable {
+    let at: String
+    let by: String?
+    let original: String
 }
 
 /// A saved chat and the rules that apply to it (the Contacts page).
@@ -2763,7 +2771,7 @@ struct RecentChatRow: View {
                     ForEach(chat.messages.prefix(3)) { m in
                         VStack(alignment: .leading, spacing: 3) {
                             Text(verbatim: store.body(m.text)).font(.system(size: 12)).fixedSize(horizontal: false, vertical: true)
-                            Text(verbatim: "\(agoWords(m.at)) \u{00B7} \(viaLabel(m.via))\(m.sessionLabel.map { " \u{00B7} \($0)" } ?? "")")
+                            Text(verbatim: "\(agoWords(m.at)) \u{00B7} \(viaLabel(m.via))\(m.sessionLabel.map { " \u{00B7} \($0)" } ?? "")\(m.edited.map { " \u{00B7} edited \(agoWords($0.at))" } ?? "")")
                                 .font(.system(size: 10)).foregroundStyle(p.fg3)
                                 .fixedSize(horizontal: false, vertical: true)
                         }

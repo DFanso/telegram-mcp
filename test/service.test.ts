@@ -638,16 +638,67 @@ describe('editing a sent message', () => {
     expect(tg.edits).toEqual([{ chatId: LEO.id, messageId: id, text: `fixed${FOOTER}`, parseMode: 'plain' }])
   })
 
-  test('a chat that needs approval is refused, and nothing is edited', async () => {
-    const r = await svc.call('s1', 'telegram_edit_message', { chat: 'qa', messageId: 1, text: 'fixed' })
+  // The rule is checked at edit time: a chat that moved to Ask every time or Blocked after the send is refused.
+  test('a chat moved to ask every time after the send is refused by its rule', async () => {
+    const id = await sentId('leo')
+    svc.editContact({ nickname: 'leo', sendMode: 'requireApproval' })
+    const r = await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: id, text: 'fixed' })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('requireApproval list')
+    expect(tg.edits).toEqual([])
+  })
+
+  test('a chat moved to blocked after the send is refused by its rule', async () => {
+    const id = await sentId('leo')
+    svc.editContact({ nickname: 'leo', sendMode: 'blocked' })
+    const r = await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: id, text: 'fixed' })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('blocked list')
+    expect(tg.edits).toEqual([])
+  })
+
+  test('a message no session sent is refused', async () => {
+    const r = await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: 99999, text: 'fixed' })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('not one a Claude session sent there')
+    expect(tg.edits).toEqual([])
+  })
+
+  test("the Page button's message is the user's own words and can't be edited", async () => {
+    expect((await svc.pageContact('leo', 'prod is down, call me')).ok).toBe(true)
+    const id = svc.uiState().recent[0]!.messageId
+    const r = await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: id, text: 'never mind, all good' })
     expect(r.isError).toBe(true)
     expect(tg.edits).toEqual([])
   })
 
-  test('a message this daemon did not send is refused', async () => {
-    const r = await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: 99999, text: 'fixed' })
+  test("the pager's fixed reply and an away reply can't be edited", async () => {
+    await svc.tellPageSender(LEO.id, 'Paging Iddhi now.', null)
+    const pager = svc.uiState().recent[0]!.messageId
+    svc.recordSent({ chatId: LEO.id, chatLabel: 'Leo', text: 'away', messageId: 4242, via: 'away', sessionLabel: null })
+    for (const messageId of [pager, 4242]) {
+      const r = await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId, text: 'x' })
+      expect(r.isError).toBe(true)
+    }
+    expect(tg.edits).toEqual([])
+  })
+
+  test("another session's message is refused", async () => {
+    const id = await sentId('leo')
+    const r = await svc.call('s2', 'telegram_edit_message', { chat: 'leo', messageId: id, text: 'rewritten' })
     expect(r.isError).toBe(true)
-    expect(r.text).toContain('was not sent by this daemon')
+    expect(r.text).toContain('sent by another session (one)')
+    expect(tg.edits).toEqual([])
+  })
+
+  test('a file is refused: only text messages can be edited', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'tgmcp-')), 'report.pdf')
+    writeFileSync(file, '%PDF-1.7 hello')
+    const sent = await svc.call('s1', 'telegram_send_file', { to: 'leo', path: file, caption: 'Q3' })
+    const id = Number(/message #(\d+)/.exec(sent.text)![1])
+    const r = await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: id, text: 'new caption' })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('Only text messages')
     expect(tg.edits).toEqual([])
   })
 
@@ -658,8 +709,24 @@ describe('editing a sent message', () => {
     expect(tg.edits).toEqual([])
   })
 
-  test('a blocked chat is refused', async () => {
-    const r = await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: 1, text: 'x' })
-    expect(r.isError).toBe(true)
+  test('Recently sent marks the edit and keeps the original; the log has a line', async () => {
+    const logs: string[] = []
+    svc = new Service({ store, tg, hub, approvals: new Approvals(), eventsUrl: () => 'ws://x', log: m => logs.push(m) })
+    const id = await sentId('leo', 'first')
+    await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: id, text: 'second' })
+    await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: id, text: 'third' })
+    const rec = svc.uiState().recent[0]!
+    expect(rec.text).toBe(`third${FOOTER}`)
+    expect(rec.edited).toMatchObject({ by: 'one', original: `first${FOOTER}` })
+    expect(logs.filter(l => l.startsWith(`edit: message #${id}`))).toHaveLength(2)
+  })
+
+  test("after a restart, the session can still edit its message (recent.json keeps who sent it)", async () => {
+    const recentPath = join(mkdtempSync(join(tmpdir(), 'tgmcp-')), 'recent.json')
+    svc = new Service({ store, tg, hub, approvals: new Approvals(), eventsUrl: () => 'ws://x', recentPath })
+    const id = await sentId('leo')
+    svc = new Service({ store, tg, hub, approvals: new Approvals(), eventsUrl: () => 'ws://x', recentPath })
+    expect((await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: id, text: 'fixed' })).isError).toBeFalsy()
+    expect((await svc.call('s2', 'telegram_edit_message', { chat: 'leo', messageId: id, text: 'nope' })).isError).toBe(true)
   })
 })
