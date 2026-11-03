@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Approvals } from '../src/daemon/approvals'
+import { AwayResponder } from '../src/daemon/away'
 import { PAGE_REASON_MAX, Service, describeMessage, pageReason } from '../src/daemon/service'
 import { SessionHub } from '../src/daemon/sessions'
 import { ConfigStore } from '../src/shared/config'
@@ -537,5 +538,51 @@ describe('paging from the Contacts page', () => {
     expect(Array.from(cut)).toHaveLength(PAGE_REASON_MAX)
     expect(cut.endsWith('🔥…')).toBe(true)
     expect(pageReason('a\u202eb\u200fc')).toBe('a b c')
+  })
+})
+
+describe('away in the service', () => {
+  const hhmm = (offsetMs: number) => {
+    const d = new Date(Date.now() + offsetMs)
+    return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+  }
+  const awayOn = { enabled: true, from: hhmm(-3_600_000), until: hhmm(3_600_000) }
+  const onDisk = () => JSON.parse(readFileSync(path, 'utf8'))
+
+  function withAway(config: object) {
+    setup(config)
+    const away: AwayResponder = new AwayResponder({
+      config: () => store.get(),
+      tg,
+      hub,
+      pages: () => [],
+      record: r => svc.recordSent(r),
+    })
+    svc = new Service({ store, tg, hub, approvals: new Approvals(), eventsUrl: sid => `ws://x/events?session=${sid}`, away })
+    hub.attachProxy('s1', { label: 'one', channel: false, watches: [] }, { send() {} })
+    return away
+  }
+
+  test('a Claude send counts as you speaking', async () => {
+    const away = withAway({ ...baseConfig, away: awayOn })
+    await svc.call('s1', 'telegram_send_message', { to: 'leo', text: 'on it' })
+    const m = { ...tg.emit(LEO.id, 'hi'), outgoing: false }
+    expect(await away.onIncoming(m, false)).toBe('skipped')
+  })
+
+  test('editAway saves and validates', () => {
+    setup(baseConfig)
+    expect(svc.editAway({ enabled: true })).toMatchObject({ ok: true })
+    expect(onDisk().away.enabled).toBe(true)
+    const before = readFileSync(path, 'utf8')
+    expect(svc.editAway({ from: 'x' }).ok).toBe(false)
+    expect(readFileSync(path, 'utf8')).toBe(before)
+  })
+
+  test('get_rules shows the away line', async () => {
+    setup(baseConfig)
+    const r = await svc.call('s1', 'telegram_get_rules', {})
+    expect(r.text).toContain('Away auto-reply: off')
+    expect(svc.uiState().away).toMatchObject({ enabled: false, active: false, nextChange: null })
   })
 })

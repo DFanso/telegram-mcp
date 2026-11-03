@@ -177,6 +177,7 @@ export interface UiState {
   contacts: UiContact[]
   /** Pages still waiting for someone: the menu bar and tray ring while any is ringing or unanswered. */
   pages: UiPage[]
+  away: UiAway
 }
 
 /** The away auto-reply as the tray shows it. `preview` is the text a sender would get. */

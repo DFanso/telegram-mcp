@@ -16,6 +16,7 @@ import {
   type ConfigStore,
 } from '../shared/config'
 import { listContacts, pageTarget, renameContact, setAutoReply, setPageFrom, setSendMode } from '../shared/contacts'
+import { applyAwayPatch, awaySummary } from '../shared/away'
 import { decideSend, policyLabel, withFooter } from '../shared/policy'
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -24,6 +25,8 @@ import { checkSendable, describeOutgoing, fileDigest, fmtBytes, safeFileName, ty
 import { looksLikeReplyCommand, parseReplyCommand } from '../shared/takeover'
 import type { IncomingMessage, MessageInfo, PeerInfo, SendMode, SentRecord, TgEvent, ToolResult, UiContact, UiPage, UiState } from '../shared/protocol'
 import { TOOLS, isToolName, type ToolInput, type ToolName } from '../shared/tools'
+import type { AwayResponder } from './away'
+import { uiAway } from './away'
 import type { Approvals, DecideOptions, PendingSend } from './approvals'
 import { visibleText } from './formatting'
 import type { Page, PageAction, PageActor, Pager } from './pager'
@@ -47,6 +50,8 @@ export interface ServiceDeps {
   mcpHome?: string
   /** Pages (telegram_page, the menu bar's Ack). Absent in tests that do not need them. */
   pager?: Pager
+  /** The away auto-reply. Absent in tests that do not need it. */
+  away?: AwayResponder
 }
 
 const VIA_TEXT: Record<SentRecord['via'], string> = {
@@ -307,6 +312,7 @@ export class Service {
     void sending
       .then(m => {
         this.#ownSent.add(`${chatId}:${m.id}`)
+        this.d.away?.noteOutgoing(chatId)
         if (this.#ownSent.size > 1000) this.#ownSent.delete(this.#ownSent.values().next().value!)
       })
       .catch(() => {})
@@ -315,6 +321,11 @@ export class Service {
         if (inflight.size === 0) this.#inflight.delete(chatId)
       })
     return sending
+  }
+
+  /** For the away responder, whose replies show in Recent like any other send. */
+  recordSent(r: Omit<SentRecord, 'at'>): void {
+    this.#record(r)
   }
 
   #record(r: Omit<SentRecord, 'at'>) {
@@ -510,6 +521,16 @@ export class Service {
     return (await this.d.pager?.act(id, action, by)) ?? false
   }
 
+  /** The tray's / CLI's away edit: validates, then saves to the rules file. */
+  editAway(patch: unknown): { ok: boolean; text: string } {
+    const r = applyAwayPatch(this.d.store.get().away, patch)
+    if (!r.ok) return { ok: false, text: r.error }
+    const saved = this.d.store.update(c => {
+      c.away = r.away
+    })
+    return { ok: true, text: `Saved. Away is ${awaySummary(saved.away, new Date())}.` }
+  }
+
   uiState(): UiState {
     const ttl = this.d.approvals.ttlMs
     const config = this.d.store.get()
@@ -520,6 +541,7 @@ export class Service {
       defaultPolicy: config.defaultPolicy,
       contacts: listContacts(config, this.d.tg.state().me?.id),
       pages: (this.d.pager?.active() ?? []).map(uiPage),
+      away: this.d.away?.ui() ?? uiAway(config, this.d.tg.state().me, new Date()),
       approvals: this.d.approvals.list().map(a => ({
         id: a.id,
         to: a.chatLabel,
@@ -689,6 +711,7 @@ export class Service {
       const out = ['Guides:', ...(c.guides.length ? c.guides.map(g => `- ${g}`) : ['- (none)'])]
       out.push('', `Footer added to every message: ${c.footer.trim() ? JSON.stringify(c.footer) : '(none)'}`)
       out.push(`Chats in no list: ${c.defaultPolicy === 'block' ? 'blocked' : 'need approval'}`)
+      out.push(`Away auto-reply: ${this.d.away?.summary() ?? awaySummary(c.away, new Date())}`)
       for (const list of RULE_LISTS) {
         out.push(`${list}: ${c.rules[list].length ? c.rules[list].map(name).join(', ') : '(empty)'}`)
       }
