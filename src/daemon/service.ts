@@ -583,6 +583,21 @@ export class Service {
     }
   }
 
+  /**
+   * The chats the apps show an avatar for: saved contacts, drafts waiting, watched chats, recent
+   * sends and pages. GET /ui/avatars only fetches photos for these, so nothing else reaches Telegram.
+   */
+  uiChatIds(): Set<number> {
+    const s = this.uiState()
+    return new Set([
+      ...s.contacts.map(c => c.chatId),
+      ...s.approvals.map(a => a.chatId),
+      ...s.sessions.flatMap(x => x.watches.map(w => w.chatId)),
+      ...s.recent.map(r => r.chatId),
+      ...s.pages.flatMap(p => (p.chatId === null ? [] : [p.chatId])),
+    ])
+  }
+
   uiState(): UiState {
     const ttl = this.d.approvals.ttlMs
     const config = this.d.store.get()
@@ -596,6 +611,7 @@ export class Service {
       away: this.d.away?.ui() ?? uiAway(config, this.d.tg.state().me, new Date()),
       approvals: this.d.approvals.list().map(a => ({
         id: a.id,
+        chatId: a.chatId,
         to: a.chatLabel,
         detail: a.chatDetail,
         text: a.sticker ? STICKER_TEXT : describeOutgoing(a.text, a.file, true),

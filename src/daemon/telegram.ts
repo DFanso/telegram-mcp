@@ -53,6 +53,8 @@ export interface TelegramPort {
   markRead(chatId: number): Promise<void>
   /** Save the file attached to a message into `dir`. Refuses files over `maxBytes`. */
   downloadMedia(chatId: number, messageId: number, dir: string, maxBytes: number): Promise<DownloadedFile>
+  /** The chat's small (160×160 JPEG) profile photo, or null when it has none or hides it. */
+  profilePhoto(chatId: number): Promise<Uint8Array | null>
 }
 
 // ---- conversions ----------------------------------------------------------------
@@ -500,6 +502,12 @@ export class MtcuteTelegram implements TelegramPort {
       throw e
     }
     return { path, name: fileName, size: statSync(path).size, mime }
+  }
+
+  async profilePhoto(chatId: number): Promise<Uint8Array | null> {
+    const c = await this.#ready()
+    const photo = (await c.getPeer(chatId)).photo
+    return photo ? c.downloadAsBuffer(photo.small) : null
   }
 
   async listDialogs(opts: { limit: number; unreadOnly: boolean }): Promise<DialogInfo[]> {

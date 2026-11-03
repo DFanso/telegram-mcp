@@ -156,6 +156,16 @@ export class FakeTelegram implements TelegramPort {
 
   async markRead() {}
 
+  /** Profile photos by chat id; `photoCalls` counts the fetches. Throws for ids in `photoFails`. */
+  photos = new Map<number, Uint8Array>()
+  photoFails = new Set<number>()
+  photoCalls: number[] = []
+  async profilePhoto(chatId: number): Promise<Uint8Array | null> {
+    this.photoCalls.push(chatId)
+    if (this.photoFails.has(chatId)) throw new Error('Telegram is reconnecting')
+    return this.photos.get(chatId) ?? null
+  }
+
   async downloadMedia(chatId: number, messageId: number, dir: string, maxBytes: number): Promise<DownloadedFile> {
     const f = this.files.get(`${chatId}:${messageId}`)
     if (!f) throw new Error(`Message #${messageId} has no attachment, nothing to download.`)

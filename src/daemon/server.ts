@@ -1,4 +1,5 @@
 import { createHmac, timingSafeEqual } from 'node:crypto'
+import type { AvatarCache } from './avatars'
 import type { PageAction } from './pager'
 import type { ServerWebSocket } from 'bun'
 import type { ConfigStore } from '../shared/config'
@@ -22,6 +23,8 @@ export interface ServerOptions {
   hub: SessionHub
   tg: TelegramPort
   store: ConfigStore
+  /** Contacts' profile photos (GET /ui/avatars/:chatId). */
+  avatars: AvatarCache
   log: (msg: string) => void
   startedAt: number
 }
@@ -50,6 +53,8 @@ export function eventsKey(token: string, sessionId: string): string {
  *   GET  /status                 JSON status
  *   POST /admin/reconnect        rebuild the Telegram client (used after `tgmcp login`)
  *   GET  /ui/state               what the menu bar app shows
+ *   GET  /ui/avatars/:chatId     that chat's small profile photo (JPEG), 404 when it has none; only
+ *                                chats in /ui/state, fetched once and cached on disk for a day
  *   POST /ui/approvals/:id       {"decision": "approve" | "deny", "remember"?: "autoSend" | "requireApproval", "nickname"?: "…"}
  *   POST /ui/contacts            {"nickname": "…", "sendMode"?: "autoSend" | "requireApproval" | "blocked" | "none",
  *                                 "autoReply"?: true | false, "pageFrom"?: true | false, "rename"?: "…"}
@@ -96,6 +101,20 @@ export function startServer(o: ServerOptions) {
       if (url.pathname === '/ui/state' && req.method === 'GET') {
         o.service.touchUi()
         return Response.json(o.service.uiState())
+      }
+      const avatarFor = /^\/ui\/avatars\/(-?\d{1,20})$/.exec(url.pathname)
+      if (avatarFor && req.method === 'GET') {
+        const chatId = Number(avatarFor[1])
+        const none = () => new Response('no photo\n', { status: 404, headers: { 'cache-control': 'private, max-age=3600' } })
+        if (!Number.isSafeInteger(chatId) || !o.service.uiChatIds().has(chatId)) return none()
+        return (async () => {
+          const a = await o.avatars.get(chatId)
+          if (!a) return none()
+          const etag = `"${a.tag}"`
+          const headers = { etag, 'content-type': a.type, 'cache-control': 'private, max-age=3600' }
+          if (req.headers.get('if-none-match') === etag) return new Response(null, { status: 304, headers })
+          return new Response(a.bytes, { headers })
+        })()
       }
       const decision = /^\/ui\/approvals\/([\w-]+)$/.exec(url.pathname)
       if (decision && req.method === 'POST') {

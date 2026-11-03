@@ -7,6 +7,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { createDaemon } from '../src/daemon/main'
 import { DaemonClient } from '../src/mcp/daemon-client'
 import { getPaths } from '../src/shared/paths'
+import { demoAvatar } from '../test/demo-avatars'
 import { ALL_HANDS, ANNA, FakeTelegram, TEAM_QA, LEO, LEONARDO } from '../test/fake-telegram'
 
 process.env.TELEGRAM_MCP_SECRET_STORE = 'file'
@@ -29,6 +30,9 @@ writeFileSync(
   }),
 )
 const tg = new FakeTelegram().add(LEO, ANNA, TEAM_QA, LEONARDO, ALL_HANDS)
+// Made-up "photos" (no real ones in screenshots): Leo and Team QA have one, the rest keep their initials.
+tg.photos.set(LEO.id, demoAvatar(0x0ea5e9, 0x6366f1))
+tg.photos.set(TEAM_QA.id, demoAvatar(0xf59e0b, 0xdb2777))
 const daemon = await createDaemon({ paths, port, telegram: tg, log: () => {} })
 
 function session(label: string) {

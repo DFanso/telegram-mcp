@@ -18,6 +18,8 @@ export interface Paths {
   pages: string
   /** Where telegram_download_media saves files, one folder per chat. */
   downloads: string
+  /** Contacts' small profile photos for the menu bar and tray avatars (see AvatarCache). */
+  avatars: string
 }
 
 export const defaultHome = () => join(homedir(), '.config', 'telegram-mcp')
@@ -34,6 +36,7 @@ export function getPaths(home = process.env.TELEGRAM_MCP_HOME || defaultHome()):
     session: join(home, 'session.db'),
     log: join(home, 'daemon.log'),
     pages: join(home, 'pages.jsonl'),
+    avatars: join(home, 'avatars'),
     downloads: process.env.TELEGRAM_MCP_DOWNLOADS ?? join(homedir(), 'Downloads', 'telegram-mcp'),
   }
 }
