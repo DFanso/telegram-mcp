@@ -523,7 +523,7 @@
             </DockPanel>
 
             <!-- The middle scrolls when it would run past the screen; header and footer stay put. -->
-            <ScrollViewer x:Name="Middle" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,14,0,10" Focusable="False"
+            <ScrollViewer x:Name="Middle" Style="{StaticResource OverlayScroll}" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Margin="0,14,0,10" Focusable="False"
                           PreviewMouseWheel="Middle_PreviewMouseWheel">
                 <Grid Margin="18,0">
                     <!-- Home -->

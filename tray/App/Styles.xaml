@@ -264,6 +264,24 @@
         </Setter>
     </Style>
 
+    <!-- The panel's scrolling middle: the scroll bar floats in the right margin instead of taking
+         width from the content, so the cards line up with the header whether it shows or not. -->
+    <Style x:Key="OverlayScroll" TargetType="ScrollViewer">
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ScrollViewer">
+                    <Grid>
+                        <ScrollContentPresenter x:Name="PART_ScrollContentPresenter" CanContentScroll="{TemplateBinding CanContentScroll}" />
+                        <ScrollBar x:Name="PART_VerticalScrollBar" HorizontalAlignment="Right" Margin="0,0,5,0"
+                                   Orientation="Vertical" Minimum="0" Maximum="{TemplateBinding ScrollableHeight}"
+                                   Value="{TemplateBinding VerticalOffset}" ViewportSize="{TemplateBinding ViewportHeight}"
+                                   Visibility="{TemplateBinding ComputedVerticalScrollBarVisibility}" />
+                    </Grid>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <Style TargetType="TextBox">
         <Setter Property="Foreground" Value="{DynamicResource Fg}" />
         <Setter Property="CaretBrush" Value="{DynamicResource Fg}" />
