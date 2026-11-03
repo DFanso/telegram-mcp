@@ -5,7 +5,7 @@ import { ensureHome } from './shared/files'
 import { getPaths, getPort } from './shared/paths'
 import { FileSecretStore, loadCredentials, openSecretStore, readToken, saveCredentials } from './shared/secrets'
 import { ConfigStore, type Config } from './shared/config'
-import { applyAwayPatch, awaySummary, parseAwayArgs, renderAwayMessage } from './shared/away'
+import { applyAwayPatch, awaySummary, firstName, parseAwayArgs, renderAwayMessage } from './shared/away'
 import { withFooter } from './shared/policy'
 import { VERSION, isCompiled, selfCommand, shellJoin } from './shared/runtime'
 
@@ -43,18 +43,23 @@ async function daemonFetch(path: string, init?: RequestInit): Promise<Response> 
   })
 }
 
-/** The reply as it would go out: the daemon's own rendering when it answers, else rendered here without a name. */
+/**
+ * The reply as it would go out, rendered here from the config just read or saved. Only the name
+ * comes from the daemon: its own preview lags a save by its 150 ms reload. No daemon keeps {name}.
+ */
 async function awayPreview(config: Config): Promise<string> {
+  let name: string | null = null
   try {
     const res = await daemonFetch('/ui/state')
     if (res.ok) {
-      const body = (await res.json()) as { away?: { preview?: unknown } }
-      if (typeof body.away?.preview === 'string') return body.away.preview
+      const body = (await res.json()) as { telegram?: { me?: { name?: unknown } | null } }
+      const me = body.telegram?.me
+      if (typeof me?.name === 'string') name = firstName({ name: me.name })
     }
   } catch {
-    // daemon not running: the local preview below is good enough
+    // daemon not running: render without a name
   }
-  return withFooter(renderAwayMessage(config.away.message, null), config.footer)
+  return withFooter(renderAwayMessage(config.away.message, name), config.footer)
 }
 
 async function away(args: string[]) {
@@ -67,17 +72,19 @@ async function away(args: string[]) {
   const store = new ConfigStore(getPaths().config) // no watch(): nothing keeps the process alive
   try {
     if (parsed.kind === 'patch') {
-      let rejected: string | null = null
-      store.update(c => {
-        const r = applyAwayPatch(c.away, parsed.patch)
-        if (r.ok) c.away = r.away
-        else rejected = r.error
-      })
-      if (rejected !== null) {
-        console.log(rejected)
+      // Check first, so a rejected change never rewrites config.json.
+      const checked = applyAwayPatch(store.get().away, parsed.patch)
+      if (!checked.ok) {
+        console.log(checked.error)
         process.exitCode = 1
         return
       }
+      // Then apply to the file as it is now, so a hand edit made meanwhile survives.
+      store.update(c => {
+        const r = applyAwayPatch(c.away, parsed.patch)
+        if (!r.ok) throw new Error(r.error)
+        c.away = r.away
+      })
       console.log('Saved.')
     } else if (store.error()) {
       throw new Error(store.error()!)
