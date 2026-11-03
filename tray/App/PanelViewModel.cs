@@ -48,6 +48,10 @@ public sealed class PanelViewModel : Observable
     (bool Enabled, string From, string Until, string Message, int Quiet)? _awaySaved;
     string _search = "";
     string? _openNickname;
+    ListenFilter _filter = ListenFilter.All;
+    bool _showAllListen;
+    /// <summary>"Chats Claude may listen to" shows this many until Show all.</summary>
+    const int ShortList = 6;
 
     public PanelViewModel(DaemonApi api, Settings settings)
     {
@@ -76,7 +80,16 @@ public sealed class PanelViewModel : Observable
         OpenRules = new Command(_ => OpenFile("config.json"));
         OpenLog = new Command(_ => OpenFile("daemon.log"));
         Quit = new Command(_ => QuitRequested?.Invoke());
-        ToggleListening = Command.Async(p => p is WatchVM w ? ToggleListeningAsync(w) : Task.CompletedTask);
+        ToggleListening = Command.Async(p => p is WatchVM { Nickname: { } n } w ? SetListeningAsync([n], w.Paused, w.ChatLabel) : Task.CompletedTask);
+        ToggleAllListening = Command.Async(p => p is SessionVM s
+            ? SetListeningAsync(s.Nicknames, !s.AnyOn, $"every chat {s.Label} listens to")
+            : Task.CompletedTask);
+        ToggleMayListen = new Command(_ =>
+        {
+            _showAllListen = !_showAllListen;
+            SyncContacts();
+        });
+        SetFilter = new Command(p => Filter = p switch { "on" => ListenFilter.On, "off" => ListenFilter.Off, _ => ListenFilter.All });
     }
 
     /// <summary>After every poll: the tray icon, tooltip and notifications follow.</summary>
@@ -351,15 +364,44 @@ public sealed class PanelViewModel : Observable
         }
     }
 
-    public string ContactsSummary => Contacts.Summary(State?.Contacts?.Count ?? 0);
+    public string ContactsSummary => Contacts.Summary(State?.Contacts?.Count ?? 0, State?.Contacts?.Count(c => c.AutoReply) ?? 0);
 
     /// <summary>Instead of rows: no contacts yet, none matching, or a daemon without the Contacts page.</summary>
     public string? ContactsPlaceholder =>
         !ShowContent ? null
         : State!.Contacts is null ? Contacts.OlderDaemon
         : State.Contacts.Count == 0 ? Contacts.Empty
-        : ContactRows.Count == 0 ? Contacts.NoMatch(_search)
+        : ContactRows.Count == 0 ? Contacts.NoneShown(_search, _filter)
         : null;
+
+    /// <summary>The Contacts tab's filter: all, those Claude may listen to, or the rest.</summary>
+    public ListenFilter Filter
+    {
+        get => _filter;
+        set
+        {
+            if (!Set(ref _filter, value)) return;
+            Raise(nameof(FilterAll));
+            Raise(nameof(FilterOn));
+            Raise(nameof(FilterOff));
+            SyncContacts();
+        }
+    }
+
+    public bool FilterAll => _filter == ListenFilter.All;
+    public bool FilterOn => _filter == ListenFilter.On;
+    public bool FilterOff => _filter == ListenFilter.Off;
+
+    /// <summary>Home → Listening: every saved chat with its listen switch, alphabetical so a row doesn't jump when switched.</summary>
+    public ObservableCollection<ContactVM> MayListen { get; } = [];
+
+    /// <summary>"Show all 9" / "Show fewer" under that list, or null when it's short.</summary>
+    public string? MayListenMore =>
+        (State?.Contacts?.Count ?? 0) <= ShortList ? null : _showAllListen ? "Show fewer" : $"Show all {State!.Contacts!.Count}";
+
+    /// <summary>Instead of that list: no saved chats yet, or a daemon without the Contacts page.</summary>
+    public string? MayListenPlaceholder =>
+        !ShowContent ? null : State!.Contacts is null ? Contacts.OlderDaemon : State.Contacts.Count == 0 ? Contacts.Empty : null;
 
     public string? WaitingBanner => Reachable && State is { Approvals.Count: > 0 } s ? Format.Waiting(s.Approvals.Count) : null;
 
@@ -373,8 +415,13 @@ public sealed class PanelViewModel : Observable
     public ICommand OpenLog { get; }
     public ICommand Quit { get; }
 
-    /// <summary>A listened chat's pause / resume button (Home → Listening).</summary>
+    /// <summary>A listened chat's pause / resume switch (Home → Listening).</summary>
     public ICommand ToggleListening { get; }
+
+    /// <summary>A session's "all" switch: every saved chat it listens to, together.</summary>
+    public ICommand ToggleAllListening { get; }
+    public ICommand ToggleMayListen { get; }
+    public ICommand SetFilter { get; }
 
     // ---- talking to the daemon ------------------------------------------------------------
 
@@ -449,14 +496,37 @@ public sealed class PanelViewModel : Observable
     }
 
     /// <summary>
-    /// Pause or resume listening to a chat by flipping its auto-reply: the daemon only passes a chat's
-    /// messages to sessions while it is on, and the sessions keep their watches either way.
+    /// The listen switches: turn auto-reply on or off for these saved chats. The daemon passes a chat's
+    /// messages to sessions only while it's on, so off pauses listening there (the watches stay) and on
+    /// resumes it. One flash for the lot; it stops at the first one the daemon refuses, and then the
+    /// switches go back to what is saved.
     /// </summary>
-    async Task ToggleListeningAsync(WatchVM watch)
+    public async Task SetListeningAsync(IReadOnlyList<string> nicknames, bool on, string label)
     {
-        if (watch.Nickname is null) return;
-        var r = await _api.EditContactAsync(new ContactChange(watch.Nickname, AutoReply: watch.Paused));
-        ShowFlash(r.Ok ? (watch.Paused ? $"Listening to {watch.ChatLabel} again." : $"Paused listening to {watch.ChatLabel}.") : r.Text, r.Ok);
+        if (nicknames.Count == 0) return;
+        ActionResult? failed = null;
+        foreach (var n in nicknames)
+        {
+            _contacts.TryGetValue(n, out var vm);
+            if (vm is not null) vm.Busy = true;
+            var r = await _api.EditContactAsync(new ContactChange(n, AutoReply: on));
+            if (vm is not null) vm.Busy = false;
+            if (!r.Ok)
+            {
+                failed = r;
+                break;
+            }
+        }
+        if (failed is { } f)
+        {
+            ShowFlash(f.Text, ok: false);
+            _sessionsKey = ""; // rebuild the session switches from what is saved
+            foreach (var vm in _contacts.Values) vm.Resync();
+        }
+        else
+        {
+            ShowFlash(Contacts.ListenFlash(on, label));
+        }
         await PollAsync();
     }
 
@@ -494,7 +564,7 @@ public sealed class PanelViewModel : Observable
         var switches = sessions.SelectMany(x => x.Watches).Select(w => Presenter.ListeningSwitch(s!, w.ChatId)).Select(c => c is null ? "-" : $"{c.Nickname}:{c.AutoReply}");
         if (Changed(ref _sessionsKey, JsonSerializer.Serialize(sessions) + string.Join(",", switches)))
         {
-            ListSync.Apply(Listening, sessions.Select(x => SessionVM.From(x, s!, ToggleListening)).ToList());
+            ListSync.Apply(Listening, sessions.Select(x => SessionVM.From(x, s!, ToggleListening, ToggleAllListening)).ToList());
         }
         IReadOnlyList<RecentChat> recent = s is null ? [] : Presenter.RecentChats(s.Recent);
         if (Changed(ref _recentKey, JsonSerializer.Serialize(recent) + now.ToString("yyyyMMddHHmm", System.Globalization.CultureInfo.InvariantCulture)))
@@ -540,9 +610,17 @@ public sealed class PanelViewModel : Observable
 
     void SyncContacts()
     {
-        var shown = Contacts.Filter(State?.Contacts ?? [], _search);
+        IReadOnlyList<UiContact> all = State?.Contacts ?? [];
+        var shown = Contacts.Filter(Contacts.FilterListening(all, _filter), _search);
         ListSync.Apply(ContactRows, shown.Where(c => _contacts.ContainsKey(c.Nickname)).Select(c => _contacts[c.Nickname]).ToList());
         Raise(nameof(ContactsPlaceholder));
+
+        var sorted = all.Where(c => _contacts.ContainsKey(c.Nickname))
+            .OrderBy(c => c.Nickname, StringComparer.CurrentCultureIgnoreCase)
+            .Select(c => _contacts[c.Nickname]);
+        ListSync.Apply(MayListen, (_showAllListen ? sorted : sorted.Take(ShortList)).ToList());
+        Raise(nameof(MayListenMore));
+        Raise(nameof(MayListenPlaceholder));
     }
 
     static bool Changed(ref string key, string now)

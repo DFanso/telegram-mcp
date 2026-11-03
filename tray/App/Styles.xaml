@@ -237,6 +237,43 @@
         </Setter>
     </Style>
 
+    <!-- An on/off switch (the listen switches): a track with a knob, blue (white knob, 6:1) when on,
+         a faint track with a grey knob when off. Bind IsChecked one-way to the state and give it a
+         Command: a click flips it at once and the next poll shows what the daemon saved. -->
+    <Style x:Key="Switch" TargetType="ToggleButton">
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="ToggleButton">
+                    <Grid x:Name="Root" Width="36" Height="20" Background="Transparent">
+                        <Border x:Name="Focus" Margin="-3" CornerRadius="13" BorderThickness="1.5" BorderBrush="{DynamicResource Fg}" Opacity="0" />
+                        <Border x:Name="Track" CornerRadius="10" Background="{DynamicResource Subtle2}" BorderBrush="{DynamicResource CardBorder}" BorderThickness="1" />
+                        <Ellipse x:Name="Knob" Width="14" Height="14" Margin="3,0" HorizontalAlignment="Left" Fill="{DynamicResource Fg2}" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="Track" Property="Background" Value="{DynamicResource BlueFill}" />
+                            <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource BlueFill}" />
+                            <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right" />
+                            <Setter TargetName="Knob" Property="Fill" Value="White" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Focus" Property="Opacity" Value="0.8" />
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Root" Property="Opacity" Value="0.88" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Root" Property="Opacity" Value="0.5" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
     <!-- A button that looks like its content (row headers, a long draft, clear search). It shows a
          focus ring when reached with the keyboard, since it has no other outline. -->
     <Style x:Key="Flat" TargetType="Button">

@@ -171,41 +171,37 @@
                 </Border>
                 <StackPanel Grid.Column="1">
                     <DockPanel MinHeight="20">
-                        <ContentControl DockPanel.Dock="Right" Content="{Binding Tag}" Focusable="False" />
-                        <TextBlock Text="{Binding Label}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" VerticalAlignment="Center" />
+                        <!-- Every saved chat this session listens to, together (other sessions on them pause too). -->
+                        <StackPanel DockPanel.Dock="Right" Margin="8,0,0,0" Visibility="{Binding HasAll, Converter={StaticResource Visible}}"
+                                    ToolTip="Pause or resume every chat this session listens to (other sessions on those chats pause too)">
+                            <ToggleButton Style="{StaticResource Switch}" IsChecked="{Binding AnyOn, Mode=OneWay}" Command="{Binding ToggleAll}"
+                                          CommandParameter="{Binding}" AutomationProperties.Name="{Binding AllName}" />
+                            <TextBlock Text="all" FontSize="9" Foreground="{DynamicResource Fg3}" HorizontalAlignment="Center" Margin="0,1,0,0" />
+                        </StackPanel>
+                        <StackPanel VerticalAlignment="Center">
+                            <TextBlock Text="{Binding Label}" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                            <ContentControl Content="{Binding Tag}" Focusable="False" HorizontalAlignment="Left" Margin="-4,3,0,0" />
+                        </StackPanel>
                     </DockPanel>
-                    <ItemsControl ItemsSource="{Binding Watches}" Margin="0,4,0,0" Focusable="False">
-                        <ItemsControl.ItemsPanel>
-                            <ItemsPanelTemplate>
-                                <WrapPanel />
-                            </ItemsPanelTemplate>
-                        </ItemsControl.ItemsPanel>
+                    <ItemsControl ItemsSource="{Binding Watches}" Margin="0,6,0,0" Focusable="False">
                         <ItemsControl.ItemTemplate>
+                            <!-- One chat it listens to, with the switch that pauses or resumes it (its auto-reply). -->
                             <DataTemplate DataType="{x:Type local:WatchVM}">
-                                <Border CornerRadius="11" Background="{DynamicResource Subtle2}" Padding="8,3" Margin="0,2,6,2" ToolTip="{Binding Tooltip}">
-                                    <StackPanel Orientation="Horizontal">
-                                        <Ellipse x:Name="Dot" Width="6" Height="6" Fill="{DynamicResource Blue}" Margin="0,0,6,0" VerticalAlignment="Center" />
-                                        <TextBlock x:Name="Name" Text="{Binding ChatLabel}" FontSize="11" TextTrimming="CharacterEllipsis" MaxWidth="160" />
-                                        <TextBlock x:Name="PausedText" Text="paused" FontSize="10" Foreground="{DynamicResource Fg3}" Margin="6,0,0,0"
-                                                   VerticalAlignment="Center" Visibility="Collapsed" />
-                                        <!-- Pause / resume: flips the chat's auto-reply, which gates its messages to sessions. -->
-                                        <Button Style="{StaticResource Flat}" Command="{Binding Toggle}" CommandParameter="{Binding}"
-                                                Margin="7,0,0,0" ToolTip="{Binding ToggleTip}" AutomationProperties.Name="{Binding ToggleName}"
-                                                Visibility="{Binding CanToggle, Converter={StaticResource Visible}}">
-                                            <local:SvgIcon x:Name="ToggleIcon" Kind="{Binding ToggleIcon}" Width="11" Height="11" Foreground="{DynamicResource Fg2}" />
-                                        </Button>
-                                        <TextBlock Text="{Binding From}" FontSize="10" Foreground="{DynamicResource Fg3}" Margin="6,0,0,0" VerticalAlignment="Center"
-                                                   Visibility="{Binding From, Converter={StaticResource IfSet}}" />
-                                        <TextBlock Text="{Binding Topic}" FontSize="10" Foreground="{DynamicResource Fg3}" Margin="6,0,0,0" VerticalAlignment="Center"
-                                                   Visibility="{Binding Topic, Converter={StaticResource IfSet}}" />
+                                <DockPanel Margin="0,4,0,0" ToolTip="{Binding Tooltip}">
+                                    <ToggleButton DockPanel.Dock="Right" Style="{StaticResource Switch}" Margin="8,0,0,0"
+                                                  IsChecked="{Binding Listening, Mode=OneWay}" Command="{Binding Toggle}" CommandParameter="{Binding}"
+                                                  ToolTip="{Binding ToggleTip}" AutomationProperties.Name="{Binding ToggleName}"
+                                                  Visibility="{Binding CanToggle, Converter={StaticResource Visible}}" />
+                                    <Ellipse x:Name="Dot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{DynamicResource Blue}" Margin="0,0,8,0" VerticalAlignment="Center" />
+                                    <StackPanel VerticalAlignment="Center">
+                                        <TextBlock x:Name="Name" Text="{Binding ChatLabel}" FontSize="12" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock Text="{Binding Detail}" FontSize="10" Foreground="{DynamicResource Fg3}" TextTrimming="CharacterEllipsis" />
                                     </StackPanel>
-                                </Border>
+                                </DockPanel>
                                 <DataTemplate.Triggers>
                                     <DataTrigger Binding="{Binding Paused}" Value="True">
                                         <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource Fg3}" />
                                         <Setter TargetName="Name" Property="Foreground" Value="{DynamicResource Fg2}" />
-                                        <Setter TargetName="PausedText" Property="Visibility" Value="Visible" />
-                                        <Setter TargetName="ToggleIcon" Property="Foreground" Value="{DynamicResource Green}" />
                                     </DataTrigger>
                                 </DataTemplate.Triggers>
                             </DataTemplate>
@@ -280,40 +276,54 @@
         <DataTemplate x:Key="ContactTemplate" DataType="{x:Type local:ContactVM}">
             <Border x:Name="Card" Margin="0,0,0,10" Style="{StaticResource CardStyle}" Padding="0">
                 <StackPanel>
-                    <Button Style="{StaticResource Flat}" Command="{Binding Toggle}" ToolTip="Show this chat's settings">
-                        <Grid Margin="12,10">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto" />
-                                <ColumnDefinition Width="*" />
-                                <ColumnDefinition Width="Auto" />
-                            </Grid.ColumnDefinitions>
-                            <Grid Margin="0,0,10,0" VerticalAlignment="Top">
-                                <ContentControl Content="{Binding Avatar}" Focusable="False" Visibility="{Binding ShowsGlyph, Converter={StaticResource Hidden}}" />
-                                <Border Width="34" Height="34" CornerRadius="17" Background="{Binding Avatar.Fill}"
-                                        Visibility="{Binding ShowsGlyph, Converter={StaticResource Visible}}">
-                                    <local:SvgIcon Kind="{Binding KindIcon}" Width="17" Height="17" Foreground="White" HorizontalAlignment="Center" />
-                                </Border>
-                                <!-- A group's, channel's or bot's own photo covers its glyph once it has loaded. -->
-                                <Ellipse Width="34" Height="34" DataContext="{Binding Avatar.Photo}"
-                                         Visibility="{Binding HasImage, Converter={StaticResource Visible}, FallbackValue=Collapsed}">
-                                    <Ellipse.Fill>
-                                        <ImageBrush ImageSource="{Binding Image}" Stretch="UniformToFill" />
-                                    </Ellipse.Fill>
-                                </Ellipse>
+                    <!-- The row: click the name (or the chevron) to open it; the Listen switch saves at once. -->
+                    <Grid Margin="12,10">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*" />
+                            <ColumnDefinition Width="Auto" />
+                            <ColumnDefinition Width="Auto" />
+                        </Grid.ColumnDefinitions>
+                        <Button Style="{StaticResource Flat}" Command="{Binding Toggle}" ToolTip="Show this chat's settings" AutomationProperties.Name="{Binding Nickname}">
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto" />
+                                    <ColumnDefinition Width="*" />
+                                </Grid.ColumnDefinitions>
+                                <Grid Margin="0,0,10,0" VerticalAlignment="Top">
+                                    <ContentControl Content="{Binding Avatar}" Focusable="False" Visibility="{Binding ShowsGlyph, Converter={StaticResource Hidden}}" />
+                                    <Border Width="34" Height="34" CornerRadius="17" Background="{Binding Avatar.Fill}"
+                                            Visibility="{Binding ShowsGlyph, Converter={StaticResource Visible}}">
+                                        <local:SvgIcon Kind="{Binding KindIcon}" Width="17" Height="17" Foreground="White" HorizontalAlignment="Center" />
+                                    </Border>
+                                    <!-- A group's, channel's or bot's own photo covers its glyph once it has loaded. -->
+                                    <Ellipse Width="34" Height="34" DataContext="{Binding Avatar.Photo}"
+                                             Visibility="{Binding HasImage, Converter={StaticResource Visible}, FallbackValue=Collapsed}">
+                                        <Ellipse.Fill>
+                                            <ImageBrush ImageSource="{Binding Image}" Stretch="UniformToFill" />
+                                        </Ellipse.Fill>
+                                    </Ellipse>
+                                </Grid>
+                                <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                    <TextBlock Text="{Binding Nickname}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                    <TextBlock Text="{Binding Subtitle}" FontSize="11" Foreground="{DynamicResource Fg3}" TextTrimming="CharacterEllipsis"
+                                               Visibility="{Binding Subtitle, Converter={StaticResource IfSet}}" />
+                                    <WrapPanel Margin="-4,5,0,0">
+                                        <ContentControl Content="{Binding ModeTag}" Focusable="False" Margin="0,0,0,2" />
+                                        <ContentControl Content="{Binding PageFromTag}" Focusable="False" Margin="0,0,0,2" />
+                                    </WrapPanel>
+                                </StackPanel>
                             </Grid>
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <TextBlock Text="{Binding Nickname}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
-                                <TextBlock Text="{Binding Subtitle}" FontSize="11" Foreground="{DynamicResource Fg3}" TextTrimming="CharacterEllipsis"
-                                           Visibility="{Binding Subtitle, Converter={StaticResource IfSet}}" />
-                                <WrapPanel Margin="-4,5,0,0">
-                                    <ContentControl Content="{Binding ModeTag}" Focusable="False" Margin="0,0,0,2" />
-                                    <ContentControl Content="{Binding AutoReplyTag}" Focusable="False" Margin="0,0,0,2" />
-                                    <ContentControl Content="{Binding PageFromTag}" Focusable="False" Margin="0,0,0,2" />
-                                </WrapPanel>
-                            </StackPanel>
-                            <local:SvgIcon Kind="{Binding Chevron}" Width="13" Height="13" Grid.Column="2" Foreground="{DynamicResource Fg3}" Margin="8,0,2,0" />
-                        </Grid>
-                    </Button>
+                        </Button>
+                        <StackPanel Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center"
+                                    ToolTip="Listen: a Claude session may watch this chat and answer new messages (auto-reply)">
+                            <ToggleButton Style="{StaticResource Switch}" IsChecked="{Binding Listens, Mode=OneWay}" Command="{Binding ToggleListen}"
+                                          IsEnabled="{Binding Idle}" AutomationProperties.Name="{Binding ListenName}" />
+                            <TextBlock Text="Listen" FontSize="9" Foreground="{DynamicResource Fg3}" HorizontalAlignment="Center" Margin="0,1,0,0" />
+                        </StackPanel>
+                        <Button Grid.Column="2" Style="{StaticResource Flat}" Command="{Binding Toggle}" Focusable="False" Margin="6,0,0,0">
+                            <local:SvgIcon Kind="{Binding Chevron}" Width="13" Height="13" Foreground="{DynamicResource Fg3}" Margin="2,0" />
+                        </Button>
+                    </Grid>
 
                     <StackPanel Margin="14,0,14,14" IsEnabled="{Binding Idle}" Visibility="{Binding IsOpen, Converter={StaticResource Visible}}">
                         <Border Height="1" Background="{DynamicResource Divider}" />
@@ -336,17 +346,6 @@
                                                   Command="{Binding SetMode}" CommandParameter="requireApproval" />
                                 <local:PillButton Content="Blocked" Choice="True" Tint="{DynamicResource RedFill}" Filled="{Binding IsBlocked, Mode=OneWay}"
                                                   Command="{Binding SetMode}" CommandParameter="blocked" />
-                            </StackPanel>
-                        </Border>
-
-                        <TextBlock Style="{StaticResource SettingTitle}" Text="Auto-reply" />
-                        <TextBlock Style="{StaticResource SettingHint}" Text="Lets a Claude session listen to this chat and answer new messages." />
-                        <Border Style="{StaticResource Segments}">
-                            <StackPanel Orientation="Horizontal">
-                                <local:PillButton Content="On" MinWidth="60" Choice="True" Tint="{DynamicResource BlueFill}" Filled="{Binding ReplyOn, Mode=OneWay}"
-                                                  Command="{Binding SetAutoReply}" CommandParameter="on" />
-                                <local:PillButton Content="Off" MinWidth="60" Choice="True" Tint="{DynamicResource GrayFill}" Filled="{Binding ReplyOff, Mode=OneWay}"
-                                                  Command="{Binding SetAutoReply}" CommandParameter="off" />
                             </StackPanel>
                         </Border>
 
@@ -524,6 +523,17 @@
                             <local:SvgIcon Kind="x" Width="13" Height="13" Foreground="{DynamicResource Fg3}" />
                         </Button>
                     </Grid>
+                    <!-- Filter: every chat, or only those Claude may (or may not) listen to. -->
+                    <Border Style="{StaticResource Segments}" Margin="0,8,0,0">
+                        <StackPanel Orientation="Horizontal">
+                            <local:PillButton Content="All" MinWidth="50" Choice="True" Tint="{DynamicResource AccentFill}" Filled="{Binding FilterAll, Mode=OneWay}"
+                                              Command="{Binding SetFilter}" CommandParameter="all" ToolTip="Every saved chat" />
+                            <local:PillButton Content="Listening" Choice="True" Tint="{DynamicResource AccentFill}" Filled="{Binding FilterOn, Mode=OneWay}"
+                                              Command="{Binding SetFilter}" CommandParameter="on" ToolTip="Chats Claude may listen to" />
+                            <local:PillButton Content="Not listening" Choice="True" Tint="{DynamicResource AccentFill}" Filled="{Binding FilterOff, Mode=OneWay}"
+                                              Command="{Binding SetFilter}" CommandParameter="off" ToolTip="Chats Claude can't listen to" />
+                        </StackPanel>
+                    </Border>
                     <TextBlock Text="{Binding ContactsSummary}" Style="{StaticResource Caption}" Margin="4,8,0,0" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
                 </StackPanel>
 
@@ -648,10 +658,62 @@
                                         <StackPanel>
                                             <TextBlock Style="{StaticResource EmptyTitle}" Text="No one is listening" />
                                             <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,0"
-                                                       Text="Ask Claude to watch a chat. Only chats with Auto-reply on (Contacts) can be watched." />
+                                                       Text="Ask Claude to watch a chat. It can only watch the chats you switch on below." />
                                         </StackPanel>
                                     </DockPanel>
+                                    <!-- What a switch does, in plain words. -->
+                                    <Border Margin="0,10,0,0" CornerRadius="10" Background="{DynamicResource Subtle}" Padding="10,8"
+                                            Visibility="{Binding NoListening, Converter={StaticResource Hidden}}">
+                                        <DockPanel>
+                                            <local:SvgIcon Kind="info" Width="15" Height="15" DockPanel.Dock="Left" Foreground="{DynamicResource Accent}" VerticalAlignment="Top" Margin="0,1,8,0" />
+                                            <TextBlock FontSize="11" Foreground="{DynamicResource Fg2}" TextWrapping="Wrap"
+                                                       Text="Each switch pauses or resumes a chat for every session listening to it. While it's paused, new messages there aren't passed to Claude; the watch stays." />
+                                        </DockPanel>
+                                    </Border>
                                     <ItemsControl ItemsSource="{Binding Listening}" ItemTemplate="{StaticResource SessionTemplate}" Focusable="False" />
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Every saved chat with its listen switch: choose who Claude may watch without opening Contacts. -->
+                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12" Visibility="{Binding ListeningShown, Converter={StaticResource Visible}}">
+                                <StackPanel>
+                                    <DockPanel>
+                                        <Button DockPanel.Dock="Right" Style="{StaticResource Flat}" Command="{Binding ShowContacts}" VerticalAlignment="Center"
+                                                ToolTip="Open Contacts for every chat's rules">
+                                            <TextBlock Text="All settings" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
+                                        </Button>
+                                        <TextBlock Style="{StaticResource CardTitle}" Text="Chats Claude may listen to" />
+                                    </DockPanel>
+                                    <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,0"
+                                               Text="Switch a chat on and a Claude session can watch it and reply there without asking while it does. Off: no session can listen." />
+                                    <TextBlock Text="{Binding MayListenPlaceholder}" Style="{StaticResource Caption}" Foreground="{DynamicResource Fg2}" Margin="0,10,0,0"
+                                               Visibility="{Binding MayListenPlaceholder, Converter={StaticResource IfSet}}" />
+                                    <ItemsControl ItemsSource="{Binding MayListen}" Focusable="False">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate DataType="{x:Type local:ContactVM}">
+                                                <DockPanel Margin="0,10,0,0">
+                                                    <ToggleButton DockPanel.Dock="Right" Style="{StaticResource Switch}" Margin="8,0,0,0"
+                                                                  IsChecked="{Binding Listens, Mode=OneWay}" Command="{Binding ToggleListen}" IsEnabled="{Binding Idle}"
+                                                                  AutomationProperties.Name="{Binding ListenName}" />
+                                                    <Grid DockPanel.Dock="Left" Width="28" Height="28" Margin="0,0,10,0">
+                                                        <Ellipse Fill="{Binding Avatar.Fill}" />
+                                                        <TextBlock Text="{Binding Avatar.Initials}" FontSize="10" FontWeight="SemiBold" Foreground="White"
+                                                                   HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding ShowsGlyph, Converter={StaticResource Hidden}}" />
+                                                        <local:SvgIcon Kind="{Binding KindIcon}" Width="14" Height="14" Foreground="White" HorizontalAlignment="Center"
+                                                                       Visibility="{Binding ShowsGlyph, Converter={StaticResource Visible}}" />
+                                                    </Grid>
+                                                    <StackPanel VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding Nickname}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
+                                                        <TextBlock Text="{Binding ListenCaption}" FontSize="10" Foreground="{DynamicResource Fg3}" TextTrimming="CharacterEllipsis" />
+                                                    </StackPanel>
+                                                </DockPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                    <Button Style="{StaticResource Flat}" Command="{Binding ToggleMayListen}" HorizontalAlignment="Left" Margin="0,10,0,0"
+                                            Visibility="{Binding MayListenMore, Converter={StaticResource IfSet}}">
+                                        <TextBlock Text="{Binding MayListenMore}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
+                                    </Button>
                                 </StackPanel>
                             </Border>
 

@@ -187,26 +187,34 @@ public sealed class ApprovalVM : Observable
 }
 
 /// <summary>
-/// A chat a session listens to. <see cref="Nickname"/>: its saved name, whose auto-reply switch pauses
-/// and resumes listening (null when the chat isn't saved, so there is no button).
+/// A chat a session listens to. <see cref="Nickname"/>: its saved name, whose auto-reply is the switch
+/// that pauses and resumes listening (null when the chat isn't saved, so there is no switch).
 /// </summary>
 public sealed record WatchVM(string ChatLabel, string? From, string? Topic, string Tooltip, string? Nickname, bool Paused, ICommand Toggle)
 {
     public bool CanToggle => Nickname is not null;
-    public string ToggleIcon => Paused ? "play" : "pause";
+    public bool Listening => !Paused;
+    /// <summary>"listening · from Anna · topic 42", or "paused …", or "not a saved chat".</summary>
+    public string Detail => string.Join(" · ", new[] { Paused ? "paused" : "listening", From, Topic, Nickname is null ? "not a saved chat" : null }
+        .Where(s => s is not null));
     public string ToggleName => Paused ? $"Resume listening to {ChatLabel}" : $"Pause listening to {ChatLabel}";
     public string ToggleTip => Paused
         ? $"Resume: {ChatLabel}'s messages reach Claude again (turns auto-reply back on)"
         : $"Pause: stop passing {ChatLabel}'s messages to Claude (turns auto-reply off; the watch stays)";
 }
 
-/// <summary>A Claude session listening to chats.</summary>
-public sealed record SessionVM(string Label, Tag Tag, IReadOnlyList<WatchVM> Watches)
+/// <summary>
+/// A Claude session listening to chats. <see cref="Nicknames"/>: the saved chats it listens to; with
+/// two or more, the session gets an "all" switch for them together.
+/// </summary>
+public sealed record SessionVM(string Label, Tag Tag, IReadOnlyList<WatchVM> Watches, IReadOnlyList<string> Nicknames, bool AnyOn, ICommand ToggleAll)
 {
-    public static SessionVM From(UiSession s, UiState state, ICommand toggle) => new(
-        s.Label,
-        Presenter.SessionTag(s),
-        s.Watches.Select(w =>
+    public bool HasAll => Nicknames.Count > 1;
+    public string AllName => AnyOn ? $"Pause every chat {Label} listens to" : $"Resume every chat {Label} listens to";
+
+    public static SessionVM From(UiSession s, UiState state, ICommand toggle, ICommand toggleAll)
+    {
+        var watches = s.Watches.Select(w =>
         {
             var contact = Presenter.ListeningSwitch(state, w.ChatId);
             var paused = contact is { AutoReply: false };
@@ -218,7 +226,10 @@ public sealed record SessionVM(string Label, Tag Tag, IReadOnlyList<WatchVM> Wat
                 contact?.Nickname,
                 paused,
                 toggle);
-        }).ToList());
+        }).ToList();
+        var names = watches.Where(w => w.Nickname is not null).Select(w => w.Nickname!).Distinct().Order().ToList();
+        return new(s.Label, Presenter.SessionTag(s), watches, names, watches.Any(w => w.Nickname is not null && w.Listening), toggleAll);
+    }
 }
 
 public sealed record RecentMessageVM(string Body, string Meta);
@@ -295,17 +306,26 @@ public sealed class ContactVM : Observable
         Toggle = new Command(_ => _panel.OpenNickname = IsOpen ? null : Nickname);
         Rename = new Command(_ => _ = Edit(new ContactChange(Nickname, Rename: RenameText.Trim())), _ => CanRename);
         SetMode = new Command(p => { if (p is string mode && mode != _c.SendMode) _ = Edit(new ContactChange(Nickname, SendMode: mode)); });
-        SetAutoReply = new Command(p =>
-        {
-            var on = p is "on";
-            if (on != _c.AutoReply) _ = Edit(new ContactChange(Nickname, AutoReply: on));
-        });
         SetPageFrom = new Command(p =>
         {
             var on = p is "on";
             if (on != _c.PagesMe) _ = Edit(new ContactChange(Nickname, PageFrom: on));
         });
         SendPage = new Command(_ => _ = _panel.PageContactAsync(this), _ => CanSendPage);
+        ToggleListen = new Command(_ => _ = _panel.SetListeningAsync([Nickname], !Listens, Nickname));
+    }
+
+    /// <summary>The Listen switch: Claude may listen to this chat (its auto-reply).</summary>
+    public bool Listens => _c.AutoReply;
+    public string ListenCaption => Contacts.ListenCaption(_c);
+    public string ListenName => $"Let Claude listen to {_c.Nickname}";
+    public ICommand ToggleListen { get; }
+
+    /// <summary>After a switch the daemon refused: show the saved state again.</summary>
+    internal void Resync()
+    {
+        Raise(nameof(Listens));
+        Raise(nameof(ListenCaption));
     }
 
     System.Threading.Tasks.Task Edit(ContactChange change) => _panel.EditContactAsync(this, change);
@@ -334,7 +354,6 @@ public sealed class ContactVM : Observable
         ContactKind.Person => "user",
         _ => "message-circle",
     };
-    public Tag? AutoReplyTag => Contacts.AutoReplyTag(_c);
     public Tag? PageFromTag => Contacts.PageFromTag(_c);
     public Tag ModeTag => Contacts.ModeTag(_c, _defaultPolicy);
     public string Explanation => Contacts.Explanation(_c, _defaultPolicy);
@@ -343,8 +362,6 @@ public sealed class ContactVM : Observable
     public bool IsAutoSend => _c.SendMode == "autoSend";
     public bool IsAsk => _c.SendMode == "requireApproval";
     public bool IsBlocked => _c.SendMode == "blocked";
-    public bool ReplyOn => _c.AutoReply;
-    public bool ReplyOff => !_c.AutoReply;
 
     /// <summary>A person: the "Can page me" choice and the Page button show.</summary>
     public bool CanPage => _c.CanPage;
@@ -404,7 +421,6 @@ public sealed class ContactVM : Observable
     public ICommand Toggle { get; }
     public ICommand Rename { get; }
     public ICommand SetMode { get; }
-    public ICommand SetAutoReply { get; }
     public ICommand SetPageFrom { get; }
     public ICommand SendPage { get; }
 }

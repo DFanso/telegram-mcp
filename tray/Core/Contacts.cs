@@ -4,6 +4,9 @@ namespace TelegramMCPTray.Core;
 
 public enum ContactKind { Person, Bot, Group, Channel, Chat }
 
+/// <summary>Which saved chats the Contacts tab shows: all, those Claude may listen to, or the rest.</summary>
+public enum ListenFilter { All, On, Off }
+
 /// <summary>
 /// The Contacts page: the chats saved in config.json and the words for each control. Same texts as
 /// the menu bar app; the daemon does the editing (POST /ui/contacts), this only describes.
@@ -20,8 +23,43 @@ public static class Contacts
 
     public static string NoMatch(string query) => $"No saved chat matches “{query.Trim()}”";
 
-    public static string Summary(int count) =>
-        $"{count} saved chat{(count == 1 ? "" : "s")} · changes save to config.json at once";
+    public static string Summary(int count, int listening) =>
+        $"{count} saved chat{(count == 1 ? "" : "s")} · Claude may listen to {listening} · changes save to config.json at once";
+
+    /// <summary>The Contacts tab's filter: every chat, or only those Claude may (or may not) listen to.</summary>
+    public static IReadOnlyList<UiContact> FilterListening(IReadOnlyList<UiContact> contacts, ListenFilter filter) => filter switch
+    {
+        ListenFilter.On => contacts.Where(c => c.AutoReply).ToList(),
+        ListenFilter.Off => contacts.Where(c => !c.AutoReply).ToList(),
+        _ => contacts,
+    };
+
+    /// <summary>Instead of rows when the search and filter leave none.</summary>
+    public static string NoneShown(string query, ListenFilter filter)
+    {
+        var q = query.Trim();
+        return filter switch
+        {
+            ListenFilter.On => q.Length == 0 ? "Claude may listen to none of your chats. Switch one on to let it." : $"No chat Claude may listen to matches “{q}”",
+            ListenFilter.Off => q.Length == 0 ? "Claude may listen to every saved chat." : $"No chat Claude can't listen to matches “{q}”",
+            _ => NoMatch(q),
+        };
+    }
+
+    /// <summary>Under a chat's name next to its listen switch: what listening there comes to.</summary>
+    public static string ListenCaption(UiContact c) => !c.AutoReply
+        ? "Claude can't listen here"
+        : c.SendMode switch
+        {
+            "requireApproval" => "May listen; replies still ask you",
+            "blocked" => "May listen, but can't reply",
+            _ => "May listen and reply without asking",
+        };
+
+    /// <summary>The flash after a listen switch: turning a chat's auto-reply on or off.</summary>
+    public static string ListenFlash(bool on, string label) => on
+        ? $"Claude may listen to {label} again."
+        : $"Paused {label}: new messages there aren't passed to Claude.";
 
     /// <summary>The mode tag on a row. "none" means on no sending list, so defaultPolicy decides.</summary>
     public static Tag ModeTag(UiContact c, string? defaultPolicy) => c.SendMode switch
