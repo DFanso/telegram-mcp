@@ -34,6 +34,9 @@ public sealed class PanelViewModel : Observable
     string? _problem;
     string? _flash;
     bool _contactsPage;
+    bool _awayPage, _awayLoaded, _awaySaving;
+    bool _awayEnabled;
+    string _awayFrom = "", _awayUntil = "", _awayMessage = "";
     string _search = "";
     string? _openNickname;
 
@@ -49,8 +52,24 @@ public sealed class PanelViewModel : Observable
             _flashTimer.Stop();
             Flash = null;
         };
-        ShowContacts = new Command(_ => ContactsPage = true);
-        ShowMain = new Command(_ => ContactsPage = false);
+        ShowContacts = new Command(_ =>
+        {
+            AwayPage = false;
+            ContactsPage = true;
+        });
+        ShowAway = new Command(_ =>
+        {
+            ContactsPage = false;
+            LoadAway();
+            AwayPage = true;
+        });
+        ShowMain = new Command(_ =>
+        {
+            ContactsPage = false;
+            AwayPage = false;
+        });
+        SetAwayEnabled = new Command(p => AwayEnabled = p as string == "on");
+        SaveAway = new Command(_ => _ = SaveAwayAsync(), _ => !_awaySaving && AwayError is null && AwayShown);
         ClearSearch = new Command(_ => Search = "");
         OpenRules = new Command(_ => OpenFile("config.json"));
         OpenLog = new Command(_ => OpenFile("daemon.log"));
@@ -101,7 +120,112 @@ public sealed class PanelViewModel : Observable
         }
     }
 
-    public bool MainPage => !_contactsPage;
+    public bool MainPage => !_contactsPage && !_awayPage;
+
+    // ---- the Away page --------------------------------------------------------------------
+
+    public bool AwayPage
+    {
+        get => _awayPage;
+        private set
+        {
+            if (!Set(ref _awayPage, value)) return;
+            Raise(nameof(MainPage));
+        }
+    }
+
+    /// <summary>The daemon sent an away state, so the page can show its fields.</summary>
+    public bool AwayShown => ShowContent && State?.Away is not null;
+
+    /// <summary>Instead of the fields: a daemon too old to know about away.</summary>
+    public string? AwayPlaceholder => ShowContent && State!.Away is null ? Away.OlderDaemon : null;
+
+    public string? AwayStatus => State?.Away is { } a ? Away.Status(a) : null;
+
+    /// <summary>"Away until 09:00" on the main page while replies can go out.</summary>
+    public string? AwayBadge => ShowContent ? Away.Badge(State?.Away) : null;
+
+    public bool AwayEnabled
+    {
+        get => _awayEnabled;
+        set
+        {
+            if (!Set(ref _awayEnabled, value)) return;
+            Raise(nameof(AwayDisabled));
+        }
+    }
+
+    public bool AwayDisabled => !_awayEnabled;
+
+    public string AwayFrom
+    {
+        get => _awayFrom;
+        set => EditAway(ref _awayFrom, value);
+    }
+
+    public string AwayUntil
+    {
+        get => _awayUntil;
+        set => EditAway(ref _awayUntil, value);
+    }
+
+    public string AwayMessage
+    {
+        get => _awayMessage;
+        set
+        {
+            if (EditAway(ref _awayMessage, value)) Raise(nameof(AwayPreview));
+        }
+    }
+
+    /// <summary>The first problem with what is typed, or null. Live, so Save stays off until it is fixed.</summary>
+    public string? AwayError => Away.Check(_awayFrom.Trim(), _awayUntil.Trim(), _awayMessage);
+
+    /// <summary>What the typed message would send. The daemon's own preview shows only the saved one.</summary>
+    public string AwayPreview => Away.Preview(_awayMessage, State?.Telegram.Me?.Name, State?.Footer ?? "");
+
+    bool EditAway(ref string field, string? value)
+    {
+        if (!Set(ref field, value ?? "")) return false;
+        Raise(nameof(AwayError));
+        return true;
+    }
+
+    /// <summary>Fills the fields from the daemon's saved state. Only when the page opens and after a save: polling leaves them alone.</summary>
+    void LoadAway()
+    {
+        if (State?.Away is not { } a) return;
+        _awayLoaded = true;
+        AwayEnabled = a.Enabled;
+        AwayFrom = a.From;
+        AwayUntil = a.Until;
+        AwayMessage = a.Message;
+        Raise(nameof(AwayPreview));
+    }
+
+    /// <summary>Sends only what differs from the saved state.</summary>
+    async Task SaveAwayAsync()
+    {
+        if (State?.Away is not { } saved || AwayError is not null) return;
+        var from = _awayFrom.Trim();
+        var until = _awayUntil.Trim();
+        var change = new AwayChange(
+            _awayEnabled != saved.Enabled ? _awayEnabled : null,
+            from != saved.From ? from : null,
+            until != saved.Until ? until : null,
+            _awayMessage != saved.Message ? _awayMessage : null);
+        if (change == new AwayChange())
+        {
+            ShowFlash("Nothing changed.");
+            return;
+        }
+        _awaySaving = true;
+        var r = await _api.SaveAwayAsync(change);
+        _awaySaving = false;
+        ShowFlash(r.Text);
+        await PollAsync();
+        if (r.Ok) LoadAway();
+    }
 
     public string Search
     {
@@ -140,6 +264,9 @@ public sealed class PanelViewModel : Observable
     public string? WaitingBanner => Reachable && State is { Approvals.Count: > 0 } s ? Format.Waiting(s.Approvals.Count) : null;
 
     public ICommand ShowContacts { get; }
+    public ICommand ShowAway { get; }
+    public ICommand SetAwayEnabled { get; }
+    public ICommand SaveAway { get; }
     public ICommand ShowMain { get; }
     public ICommand ClearSearch { get; }
     public ICommand OpenRules { get; }
@@ -265,10 +392,14 @@ public sealed class PanelViewModel : Observable
         }
         SyncContacts();
 
+        // The page was opened before the daemon answered: fill the fields once it does.
+        if (_awayPage && !_awayLoaded) LoadAway();
+
         foreach (var name in new[]
                  {
                      nameof(Header), nameof(ShowContent), nameof(ShownProblem), nameof(ConfigError), nameof(ApprovalCount),
                      nameof(NoApprovals), nameof(NoListening), nameof(NoRecent), nameof(ContactsSummary), nameof(WaitingBanner),
+                     nameof(AwayShown), nameof(AwayPlaceholder), nameof(AwayStatus), nameof(AwayBadge), nameof(AwayError), nameof(AwayPreview),
                  })
         {
             Raise(name);

@@ -48,4 +48,14 @@ public class AwayTests
         Assert.Null(Away.Check("18:00", "09:00", new string('x', 1000)));
         Assert.Equal("The message is too long (1000 characters at most).", Away.Check("18:00", "09:00", new string('x', 1001)));
     }
+
+    [Fact]
+    public void Preview_fills_in_the_first_name_and_adds_the_footer_once()
+    {
+        const string foot = "\n\n-- bot";
+        Assert.Equal("Hi Chamodh!" + foot, Away.Preview("Hi {name}!  ", "Chamodh Perera", foot));
+        Assert.Equal("Hi {name}!" + foot, Away.Preview("Hi {name}!", null, foot));
+        Assert.Equal("Hi X" + foot, Away.Preview("Hi X" + foot, "A", foot));
+        Assert.Equal("Hi A A", Away.Preview("Hi {name} {name}", "A B", "  "));
+    }
 }
