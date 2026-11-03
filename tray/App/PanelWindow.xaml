@@ -11,13 +11,18 @@
         UseLayoutRounding="True" TextOptions.TextFormattingMode="Display">
 
     <Window.Resources>
-        <!-- A round avatar with initials. -->
+        <!-- A round avatar: initials, covered by the profile photo once it has loaded. -->
         <DataTemplate DataType="{x:Type local:Avatar}">
             <Grid Width="34" Height="34">
                 <Ellipse Fill="{Binding Fill}" />
-                <Ellipse Stroke="#33FFFFFF" StrokeThickness="1" />
                 <TextBlock Text="{Binding Initials}" FontSize="12" FontWeight="SemiBold" Foreground="White"
                            HorizontalAlignment="Center" VerticalAlignment="Center" />
+                <Ellipse Visibility="{Binding Photo.HasImage, Converter={StaticResource Visible}, FallbackValue=Collapsed}">
+                    <Ellipse.Fill>
+                        <ImageBrush ImageSource="{Binding Photo.Image}" Stretch="UniformToFill" />
+                    </Ellipse.Fill>
+                </Ellipse>
+                <Ellipse Stroke="#33FFFFFF" StrokeThickness="1" />
             </Grid>
         </DataTemplate>
 
@@ -261,6 +266,13 @@
                                         Visibility="{Binding ShowsGlyph, Converter={StaticResource Visible}}">
                                     <local:SvgIcon Kind="{Binding KindIcon}" Width="17" Height="17" Foreground="White" HorizontalAlignment="Center" />
                                 </Border>
+                                <!-- A group's, channel's or bot's own photo covers its glyph once it has loaded. -->
+                                <Ellipse Width="34" Height="34" DataContext="{Binding Avatar.Photo}"
+                                         Visibility="{Binding HasImage, Converter={StaticResource Visible}, FallbackValue=Collapsed}">
+                                    <Ellipse.Fill>
+                                        <ImageBrush ImageSource="{Binding Image}" Stretch="UniformToFill" />
+                                    </Ellipse.Fill>
+                                </Ellipse>
                             </Grid>
                             <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                 <TextBlock Text="{Binding Nickname}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
