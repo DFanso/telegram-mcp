@@ -33,6 +33,33 @@ public static class Format
     public static bool IsLongDraft(string text) =>
         text.Split('\n').Sum(line => Math.Max(1, (line.Length + 54) / 55)) > 4;
 
+    /// <summary>
+    /// One or two letters for an avatar: "Leo Gavin" → "LG", "team-qa" → "TQ", "@anna_k" → "AK",
+    /// "leo" → "L". Emoji and symbols are skipped; nothing usable gives "?".
+    /// </summary>
+    public static string Initials(string name)
+    {
+        var words = name.Split([' ', '-', '_', '.', '@', '(', ')'], StringSplitOptions.RemoveEmptyEntries)
+            .Select(w => w.FirstOrDefault(char.IsLetterOrDigit))
+            .Where(c => c != default)
+            .ToList();
+        if (words.Count == 0) return "?";
+        var first = char.ToUpper(words[0], CultureInfo.InvariantCulture).ToString();
+        return words.Count == 1 ? first : first + char.ToUpper(words[^1], CultureInfo.InvariantCulture);
+    }
+
+    /// <summary>Which of <paramref name="colours"/> an avatar gets: the same name always gets the same one.</summary>
+    public static int AvatarIndex(string name, int colours)
+    {
+        uint h = 2166136261; // FNV-1a: string.GetHashCode changes from run to run
+        foreach (var c in name.ToLowerInvariant())
+        {
+            h ^= c;
+            h *= 16777619;
+        }
+        return (int)(h % (uint)colours);
+    }
+
     /// <summary>How a sent message was let through. The daemon calls the tray (like the menu bar) "menubar".</summary>
     public static string ViaLabel(string via) => via switch
     {

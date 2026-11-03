@@ -9,15 +9,48 @@ public enum TagKind { Good, Warn, Bad, Info, Muted }
 
 public sealed record Tag(string Text, TagKind Kind);
 
-/// <summary>The tray icon: a filled plane while a session listens, and a badge (count or "!").</summary>
-public sealed record IconState(bool Filled, string? Badge);
+/// <summary>
+/// The tray icon: the plane coloured by <paramref name="Health"/> (blue online, yellow reconnecting,
+/// red logged out, grey offline), a green dot while a session listens (<paramref name="Filled"/>),
+/// and a badge: the count of drafts waiting, or "!".
+/// </summary>
+public sealed record IconState(bool Filled, string? Badge, StatusKind Health = StatusKind.Good);
 
 /// <summary>A chat you sent to recently, with the messages sent there (newest first).</summary>
 public sealed record RecentChat(long ChatId, string Label, IReadOnlyList<SentRecord> Messages);
 
+/// <summary>A tile at the top of Home: "Waiting 2 · needs you".</summary>
+public sealed record Stat(string Label, string Value, Tag Chip);
+
 /// <summary>What the panel and the tray icon say, worked out from the daemon's state.</summary>
 public static class Presenter
 {
+    /// <summary>
+    /// Home's three tiles: drafts waiting, chats being listened to, saved chats. The chip says in a
+    /// word whether that needs you ("needs you", "idle"...).
+    /// </summary>
+    public static IReadOnlyList<Stat> Stats(UiState state)
+    {
+        var waiting = state.Approvals.Count;
+        var sessions = Listening(state);
+        var chats = sessions.SelectMany(s => s.Watches).Select(w => w.ChatId).Distinct().Count();
+        var connected = sessions.Count(s => s.Connected);
+        var contacts = state.Contacts;
+        var replying = contacts?.Count(c => c.AutoReply) ?? 0;
+        return
+        [
+            new("Waiting", Count(waiting), waiting > 0 ? new("needs you", TagKind.Warn) : new("all clear", TagKind.Good)),
+            new("Listening", Count(chats), connected > 0
+                ? new($"{connected} session{(connected == 1 ? "" : "s")}", TagKind.Good)
+                : new(sessions.Count > 0 ? "session gone" : "idle", TagKind.Muted)),
+            new("Contacts", contacts is null ? "–" : Count(contacts.Count), replying > 0
+                ? new($"{replying} auto-reply", TagKind.Info)
+                : new("saved", TagKind.Muted)),
+        ];
+    }
+
+    static string Count(int n) => n.ToString(System.Globalization.CultureInfo.InvariantCulture);
+
     public static Status Header(UiState? state, bool reachable)
     {
         var phase = reachable ? state?.Telegram.Phase ?? "" : "unreachable";
@@ -56,10 +89,10 @@ public static class Presenter
     public static IconState Icon(UiState? state, bool reachable)
     {
         var filled = state is not null && Listening(state).Count > 0;
+        var health = Header(state, reachable).Kind;
         var waiting = reachable ? state?.Approvals.Count ?? 0 : 0;
-        if (waiting > 0) return new(filled, Format.BadgeText(waiting));
-        var healthy = reachable && state?.Telegram.Phase == "connected";
-        return new(filled, healthy ? null : "!");
+        if (waiting > 0) return new(filled, Format.BadgeText(waiting), health);
+        return new(filled, health == StatusKind.Good ? null : "!", health);
     }
 
     /// <summary>The tray tooltip; Windows cuts it at 127 characters.</summary>

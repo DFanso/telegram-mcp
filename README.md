@@ -247,12 +247,14 @@ On Windows, `tgmcp menubar` starts the tray app and sets it to start at login. S
 
 It is the menu bar app's counterpart:
 
-- **The tray icon** is a paper plane, filled while a session is listening. Its badge is the number of drafts waiting, or `!` when the daemon or Telegram is down. Hover it for a summary.
-- **Click it for the panel**: the connection, **Waiting for approval** (Approve / Deny; a new chat gets a nickname box and Deny / Ask every time / Always allow), **Listening**, and **Recently sent** (click a chat to see its messages). As in the menu bar app, a long draft and a recent chat open on click, never on hover.
-- **Contacts** (top right of the panel) is the same page as the menu bar's (see [Contacts](#contacts) above): rename a saved chat, choose what happens when Claude sends there, turn auto-reply on or off, choose who can page you, and page someone.
+- **The tray icon** is the paper plane from `docs/icon.svg`, coloured by status: blue when connected, yellow while it reconnects, red when logged out, grey when the daemon can't be reached. A green dot means a session is listening. The amber badge is the number of drafts waiting for you, and `!` means something is wrong. Hover it for a summary.
+- **Click it for the panel**, a frosted-glass flyout (acrylic on Windows 11, following light or dark mode) with two tabs. **Home** shows the connection as a status pill, three tiles (Waiting, Listening, Contacts), then cards for **Waiting for approval** (who asked and why, with Send / Deny; a new chat says it's the first message, gets a nickname box, and offers Deny / **Send, ask next time** / **Send, always allow**), **Listening now**, and **Recently sent** (click a chat to see its messages). Each empty card says what would show up there. As in the menu bar app, a long draft and a recent chat open on click, never on hover. Results flash under the header: a green check when it worked, red when it didn't. Esc clears a search, then closes the panel; Ctrl+1 / Ctrl+2 switch tabs, Ctrl+F searches contacts, and Tab reaches every button, with a focus ring.
+- **Contacts** (the second tab) is the same page as the menu bar's (see [Contacts](#contacts) above): rename a saved chat, choose what happens when Claude sends there, turn auto-reply on or off, choose who can page you, and page someone.
 - **A Windows notification** for each draft has the same choices as buttons. Click the notification itself to open the panel.
 
 Right-click the icon for Open, Contacts, Rules, Log and Quit. Quit keeps it closed until your next login. `tgmcp menubar uninstall` quits it and stops it starting at login.
+
+The icons in the panel are [Lucide](https://lucide.dev) (ISC license), drawn from `tray/App/Icons.xaml`.
 
 It reads the daemon's token from Windows Credential Manager (the `telegram-mcp/token` entry the daemon keeps there), or from the `token` file with `TELEGRAM_MCP_SECRET_STORE=file`. It talks only to 127.0.0.1. Problems it can't show in the panel go to `%LOCALAPPDATA%\TelegramMCPTray\tray.log`.
 
