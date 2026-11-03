@@ -808,6 +808,20 @@ describe('deleting a sent message', () => {
     expect(tg.deleted).toEqual([{ chatId: LEO.id, messageId: id }])
   })
 
+  test('a file in a chat the session watches follows the file rule, a text message there does not', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'tgmcp-')), 'report.pdf')
+    writeFileSync(file, '%PDF-1.7 hello')
+    const sent = await svc.call('s1', 'telegram_send_file', { to: 'leo', path: file, caption: 'Q3' })
+    const fileId = Number(/message #(\d+)/.exec(sent.text)![1])
+    const textId = await sentId('leo')
+    await svc.call('s1', 'telegram_watch', { chat: 'leo' })
+    const r = await svc.call('s1', 'telegram_delete_message', { chat: 'leo', messageId: fileId })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('files to a chat this session is watching always need approval')
+    expect((await svc.call('s1', 'telegram_delete_message', { chat: 'leo', messageId: textId })).isError).toBeFalsy()
+    expect(tg.deleted).toEqual([{ chatId: LEO.id, messageId: textId }])
+  })
+
   test('a chat that needs approval is refused', async () => {
     const r = await svc.call('s1', 'telegram_delete_message', { chat: 'qa', messageId: 1 })
     expect(r.isError).toBe(true)
