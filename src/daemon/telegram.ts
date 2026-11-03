@@ -8,6 +8,7 @@ import type {
   IncomingMessage,
   MessageInfo,
   PeerInfo,
+  ReadStatus,
   TelegramState,
 } from '../shared/protocol'
 import { downloadFileName, fmtBytes, type OutgoingFile } from '../shared/media'
@@ -49,6 +50,8 @@ export interface TelegramPort {
   /** Replace the text of one of your own text messages. */
   editMessage(chatId: number, messageId: number, text: string, opts?: { parseMode?: SendOptions['parseMode'] }): Promise<MessageInfo>
   getHistory(chatId: number, opts: { limit: number; beforeId?: number; topicId?: number }): Promise<MessageInfo[]>
+  /** Who has read one of your own messages (Telegram only tells for small groups and recent messages). */
+  getReadStatus(chatId: number, messageId: number): Promise<ReadStatus>
   /** Recent dialogs, newest first; `type` keeps only one kind (private chats, groups, channels or bots). */
   listDialogs(opts: { limit: number; unreadOnly: boolean; type?: ChatKind }): Promise<DialogInfo[]>
   searchChats(query: string, limit: number): Promise<(PeerInfo & { global: boolean })[]>
@@ -60,6 +63,21 @@ export interface TelegramPort {
 }
 
 // ---- conversions ----------------------------------------------------------------
+
+/**
+ * Pairs each reader Telegram reports with their user by id, never by position, so a name can't land
+ * on the wrong person. A reader whose user couldn't be looked up shows as their id.
+ */
+export function readersOf(
+  parts: readonly { userId: number; date: number }[],
+  users: readonly ({ id: number; displayName: string; username: string | null } | null)[],
+): { id: number; name: string; username: string | null; at: string }[] {
+  const byId = new Map(users.flatMap(u => (u ? [[u.id, u] as const] : [])))
+  return parts.map(x => {
+    const u = byId.get(Number(x.userId))
+    return { id: Number(x.userId), name: u?.displayName ?? String(x.userId), username: u?.username ?? null, at: new Date(x.date * 1000).toISOString() }
+  })
+}
 
 export function peerInfo(p: Peer): PeerInfo {
   if (p.type === 'user') {
@@ -477,6 +495,33 @@ export class MtcuteTelegram implements TelegramPort {
       ? await c.searchMessages({ chatId, threadId: opts.topicId, limit: opts.limit, maxId: opts.beforeId, query: '' })
       : await c.getHistory(chatId, { limit: opts.limit, maxId: opts.beforeId })
     return [...list].map(messageInfo).reverse()
+  }
+
+  async getReadStatus(chatId: number, messageId: number): Promise<ReadStatus> {
+    const c = await this.#ready()
+    const [m] = await c.getMessages(chatId, [messageId])
+    if (!m) throw new Error(`Message #${messageId} not found in that chat.`)
+    if (!m.isOutgoing) throw new Error(`Message #${messageId} was not sent from your account: only your own messages have read receipts.`)
+    const peer = await c.resolvePeer(chatId)
+    if (peer._ === 'inputPeerUser' || peer._ === 'inputPeerSelf') {
+      const r = await c.call({ _: 'messages.getPeerDialogs', peers: [{ _: 'inputDialogPeer', peer }] })
+      const d = r.dialogs[0]
+      if (!d || d._ !== 'dialog') throw new Error('Telegram did not return this chat\'s read state.')
+      return { kind: 'private', seen: messageId <= d.readOutboxMaxId }
+    }
+    let parts
+    try {
+      parts = await c.call({ _: 'messages.getMessageReadParticipants', peer, msgId: messageId })
+    } catch (e) {
+      const text = e instanceof Error ? e.message : String(e)
+      if (/CHAT_TOO_BIG/.test(text)) throw new Error('Telegram only tells who read a message in groups of up to 100 people.')
+      if (/MSG_TOO_OLD/.test(text)) throw new Error('Telegram only tells who read a message for about a week after it was sent.')
+      throw e
+    }
+    // One lookup per reader (mtcute batches them). getUsers with a list silently drops anyone missing
+    // from the peer cache (e.g. a member who never posts), which would shift names onto the wrong people.
+    const users = await Promise.all(parts.map(x => c.getUsers(x.userId).then(([u]) => u ?? null, () => null)))
+    return { kind: 'group', readers: readersOf(parts, users) }
   }
 
   async downloadMedia(chatId: number, messageId: number, dir: string, maxBytes: number): Promise<DownloadedFile> {

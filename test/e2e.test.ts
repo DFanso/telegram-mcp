@@ -95,7 +95,7 @@ describe('proxy <-> daemon', () => {
     const client = await spawnProxy()
     const { tools } = await client.listTools()
     expect(tools.map(t => t.name)).toContain('telegram_send_message')
-    expect(tools).toHaveLength(21)
+    expect(tools).toHaveLength(22)
     const inst = client.getInstructions() ?? ''
     expect(inst).toContain('Be brief.')
     const s = await call(client, 'telegram_status')
@@ -206,7 +206,7 @@ describe('proxy <-> daemon', () => {
   test('the session survives the daemon being down at first', async () => {
     await daemon.stop()
     const client = await spawnProxy()
-    expect((await client.listTools()).tools.length).toBe(21)
+    expect((await client.listTools()).tools.length).toBe(22)
     tg = new FakeTelegram().add(LEO, ANNA, TEAM_QA)
     daemon = await createDaemon({ paths, port, telegram: tg, log: silent })
     const s = await call(client, 'telegram_status')
