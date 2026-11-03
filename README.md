@@ -216,7 +216,7 @@ When you're off for the night, friends who write get one reply saying so. It's *
 - Not to someone who is paging you, or whose page is still waiting.
 - Only for messages less than 10 minutes old, so catching up after the laptop sleeps doesn't send night-time replies in the morning.
 
-Change it from the Away tab of the tray app, with `tgmcp away`, or in `config.json`:
+Change it from the Away page of the menu bar app (macOS) or the Away tab of the tray app (Windows), with `tgmcp away`, or in `config.json`:
 
 ```
 tgmcp away                          # show the settings and the reply text
@@ -233,7 +233,7 @@ tgmcp away quiet 60
 }
 ```
 
-An away reply shows under Recently sent as "away reply". No MCP tool can change these settings, so sessions can't turn it on or rewrite the message; only you can, through the file, the CLI or the tray (`POST /ui/away` with the token). The menu bar page for macOS is coming.
+An away reply shows under Recently sent as "away reply". No MCP tool can change these settings, so sessions can't turn it on or rewrite the message; only you can, through the file, the CLI, the menu bar app or the tray (`POST /ui/away` with the token).
 
 ## Menu bar app
 
@@ -244,6 +244,7 @@ An away reply shows under Recently sent as "away reply". No MCP tool can change 
 - **Listening**: each session that is watching chats, and whether its Monitor is connected
 - **Recently sent**: the last 5 chats you sent to. Click a chat to see its messages, when they went, how they were approved, and from which session; click again to close it.
 - **Contacts** (the button at the top right): every saved chat, to change its rules without editing `config.json`. See [Contacts](#contacts).
+- **Away** (next to Contacts): the [away auto-reply](#away-auto-reply). On / Off saves at once; the hours, quiet minutes and message save with **Save**, with a preview of the reply. The header says whether it's away now and until when, and while it is, Home shows a line saying so.
 
 <p>
   <img src="docs/menubar-approvals.png" width="370" alt="The menu bar panel: two drafts waiting for approval (one to a saved group, one to a new chat with Deny, Ask every time and Always allow), two listening sessions, and the recently sent chats">
@@ -314,6 +315,7 @@ export TELEGRAM_MCP_HOME=/tmp/tgmcp-demo TELEGRAM_MCP_PORT=47901 TELEGRAM_MCP_SE
 "$APP" --snapshot docs/menubar-approvals.png
 SNAPSHOT_EXPAND=recent SNAPSHOT_SCREEN_HEIGHT=4000 "$APP" --snapshot /tmp/history-full.png   # SNAPSHOT_EXPAND: 1, approvals or recent
 SNAPSHOT_PAGE=contacts SNAPSHOT_OPEN=team-qa "$APP" --snapshot docs/menubar-contacts.png    # SNAPSHOT_OPEN: a nickname to open
+SNAPSHOT_PAGE=away "$APP" --snapshot /tmp/menubar-away.png
 ```
 
 ### Releasing
