@@ -618,8 +618,14 @@
 
                     <!-- Contacts -->
                     <StackPanel Visibility="{Binding ContactsPage, Converter={StaticResource Visible}}">
-                        <TextBlock Text="{Binding ShownProblem}" Foreground="{DynamicResource Fg2}" TextWrapping="Wrap" Margin="0,0,0,10"
-                                   Visibility="{Binding ShownProblem, Converter={StaticResource IfSet}}" />
+                        <Border Style="{StaticResource CardStyle}" Margin="0,0,0,10" Visibility="{Binding ShownProblem, Converter={StaticResource IfSet}}">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Left" Width="34" Height="34" CornerRadius="17" Background="{DynamicResource Subtle2}" Margin="0,0,10,0" VerticalAlignment="Top">
+                                    <local:SvgIcon Kind="unplug" Width="17" Height="17" Foreground="{DynamicResource Fg2}" HorizontalAlignment="Center" />
+                                </Border>
+                                <TextBlock Text="{Binding ShownProblem}" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center" />
+                            </DockPanel>
+                        </Border>
                         <Border Margin="0,0,0,10" CornerRadius="12" Padding="12,8" Background="{DynamicResource PendingWash}" Visibility="{Binding WaitingBanner, Converter={StaticResource IfSet}}">
                             <DockPanel>
                                 <local:SvgIcon Kind="clock" Width="16" Height="16" DockPanel.Dock="Left" Foreground="{DynamicResource Orange}" Margin="0,0,8,0" />
