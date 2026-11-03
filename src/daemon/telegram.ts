@@ -57,7 +57,14 @@ export interface TelegramPort {
 
 export function peerInfo(p: Peer): PeerInfo {
   if (p.type === 'user') {
-    return { id: p.id, type: p.isBot ? 'bot' : 'user', name: p.displayName, username: p.username, isSelf: p.isSelf }
+    return {
+      id: p.id,
+      type: p.isBot ? 'bot' : 'user',
+      name: p.displayName,
+      username: p.username,
+      isSelf: p.isSelf,
+      ...(p.isSupport ? { isSupport: true } : {}),
+    }
   }
   return {
     id: p.id,

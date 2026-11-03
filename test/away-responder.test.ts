@@ -8,6 +8,8 @@ import type { IncomingMessage, PeerInfo, SentRecord } from '../src/shared/protoc
 import { ANNA, FakeTelegram, LEO, TEAM_QA } from './fake-telegram'
 
 const BOT: PeerInfo = { id: 77, type: 'bot', name: 'Helper Bot', username: 'helper_bot' }
+const TELEGRAM: PeerInfo = { id: 777000, type: 'user', name: 'Telegram', username: null }
+const SUPPORT: PeerInfo = { id: 4242, type: 'user', name: 'Volunteer Support', username: null, isSupport: true }
 const at = (day: number, h: number, m = 0) => new Date(2026, 10, day, h, m)
 
 function cfg(over: { away?: object; blocked?: number[]; autoReply?: number[] } = {}): Config {
@@ -93,6 +95,8 @@ describe('AwayResponder', () => {
     ['when disabled', () => { config = cfg({ away: { enabled: false } }); return msg(ANNA) }],
     ['to groups', () => msg(TEAM_QA, undefined, { from: ANNA })],
     ['to bots', () => msg(BOT)],
+    ["to Telegram's service account (777000)", () => msg(TELEGRAM)],
+    ['to Telegram support', () => msg(SUPPORT)],
     ['to self', () => msg({ ...ANNA, isSelf: true })],
     ['to outgoing messages', () => msg(ANNA, undefined, { outgoing: true })],
     ['to a blocked chat', () => { config = cfg({ blocked: [ANNA.id] }); return msg(ANNA) }],
