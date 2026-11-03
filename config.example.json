@@ -26,5 +26,12 @@
       "topicId": 42,
       "notes": "QA topic"
     }
+  },
+  "away": {
+    "enabled": false,
+    "from": "18:00",
+    "until": "09:00",
+    "message": "{name} is off the grid for the night and will get back to you tomorrow. If something's on fire, call them 🔥",
+    "quietMinutes": 30
   }
 }

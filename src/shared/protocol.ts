@@ -9,6 +9,8 @@ export interface PeerInfo {
   username: string | null
   isSelf?: boolean
   isForum?: boolean
+  /** A Telegram support account: type 'user', but not a person to send an away reply to. */
+  isSupport?: boolean
 }
 
 export interface MessageInfo {
@@ -108,7 +110,7 @@ export interface SentRecord {
   text: string
   messageId: number
   /** auto = allowed by the rules; menubar / dialog / chat = approved there. */
-  via: 'auto' | 'menubar' | 'dialog' | 'chat'
+  via: 'auto' | 'menubar' | 'dialog' | 'chat' | 'away'
   sessionLabel: string | null
 }
 
@@ -177,6 +179,19 @@ export interface UiState {
   contacts: UiContact[]
   /** Pages still waiting for someone: the menu bar and tray ring while any is ringing or unanswered. */
   pages: UiPage[]
+  away: UiAway
+}
+
+/** The away auto-reply as the tray shows it. `preview` is the text a sender would get. */
+export interface UiAway {
+  enabled: boolean
+  from: string
+  until: string
+  message: string
+  quietMinutes: number
+  active: boolean
+  nextChange: string | null
+  preview: string
 }
 
 export interface UiPage {

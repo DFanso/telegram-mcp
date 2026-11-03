@@ -97,4 +97,21 @@ describe('ConfigStore', () => {
     expect(store.error()).toContain('invalid')
     expect(store.get().rules.blocked).toEqual([5])
   })
+
+  test('old config without away parses with away disabled', () => {
+    const c = parseConfig(JSON.stringify({ rules: { blocked: [5] } }))
+    expect(c.away).toMatchObject({ enabled: false, from: '18:00', until: '09:00', quietMinutes: 30 })
+    expect(c.away.message).toContain('{name}')
+  })
+
+  test('invalid away keeps the previous config', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'tgmcp-'))
+    const path = join(dir, 'config.json')
+    writeFileSync(path, JSON.stringify({ away: { enabled: true } }))
+    const store = new ConfigStore(path)
+    writeFileSync(path, JSON.stringify({ away: { enabled: true, from: '25:00' } }))
+    store.reload()
+    expect(store.error()).toContain('config.json is invalid')
+    expect(store.get().away.from).toBe('18:00')
+  })
 })

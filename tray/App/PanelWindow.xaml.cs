@@ -47,7 +47,7 @@ public partial class PanelWindow : Window
 
     PanelViewModel? Vm => DataContext as PanelViewModel;
 
-    /// <summary>Esc closes; Ctrl+1 / Ctrl+2 switch tabs; Ctrl+F searches contacts.</summary>
+    /// <summary>Esc closes; Ctrl+1 / Ctrl+2 / Ctrl+3 switch tabs; Ctrl+F searches contacts.</summary>
     void OnKey(object sender, KeyEventArgs e)
     {
         var ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
@@ -66,6 +66,11 @@ public partial class PanelWindow : Window
         {
             contacts.ContactsPage = true;
             if (e.Key == Key.F) Dispatcher.InvokeAsync(() => SearchBox.Focus(), DispatcherPriority.Loaded);
+            e.Handled = true;
+        }
+        else if (ctrl && e.Key is Key.D3 or Key.NumPad3 && Vm is { } away)
+        {
+            away.ShowAway.Execute(null);
             e.Handled = true;
         }
     }

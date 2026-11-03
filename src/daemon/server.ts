@@ -56,6 +56,7 @@ export function eventsKey(token: string, sessionId: string): string {
  *                                (the Contacts page: a human editing the rules)
  *   POST /ui/contacts/page       {"nickname": "…", "reason"?: "…"}  the Page button: "/page <reason>" to that person
  *   POST /ui/pages/:id           {"action": "ack" | "snooze", "minutes"?: 15 | 60, "from"?: "menubar" | "tray"}
+ *   POST /ui/away                {"enabled"?, "from"?, "until"?, "message"?, "quietMinutes"?}  the away auto-reply settings
  *   POST /ui/pages/test          ring a test page (tgmcp page test)
  *   WS   /bridge                 one per Claude session: the MCP proxy's tool calls and pushes
  *   WS   /events?session=ID&key=K  Monitor stream: one text frame per watched message
@@ -111,6 +112,14 @@ export function startServer(o: ServerOptions) {
           } catch (e) {
             return Response.json({ ok: false, text: e instanceof Error ? e.message : String(e) }, { status: 409 })
           }
+        })()
+      }
+      if (url.pathname === '/ui/away' && req.method === 'POST') {
+        return (async () => {
+          const body = await req.json().catch(() => ({}))
+          const r = o.service.editAway(body)
+          if (r.ok) o.log(`menu bar away: ${r.text}`)
+          return Response.json(r, { status: r.ok ? 200 : 400 })
         })()
       }
       if (url.pathname === '/ui/pages/test' && req.method === 'POST') {
