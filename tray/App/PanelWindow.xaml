@@ -478,11 +478,34 @@
                     <TextBlock Text="{Binding ContactsSummary}" Style="{StaticResource Caption}" Margin="4,8,0,0" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
                 </StackPanel>
 
-                <Border Margin="0,12,0,0" CornerRadius="12" Background="{DynamicResource AccentSoft}" Padding="12,9"
-                        Visibility="{Binding Flash, Converter={StaticResource IfSet}}">
+                <!-- What just happened: a green check when it worked, a red warning when it didn't. -->
+                <Border Margin="0,12,0,0" CornerRadius="12" Padding="12,9" Visibility="{Binding Flash, Converter={StaticResource IfSet}}">
+                    <Border.Style>
+                        <Style TargetType="Border">
+                            <Setter Property="Background" Value="{DynamicResource GreenWash}" />
+                            <Style.Triggers>
+                                <DataTrigger Binding="{Binding FlashOk}" Value="False">
+                                    <Setter Property="Background" Value="{DynamicResource RedWash}" />
+                                </DataTrigger>
+                            </Style.Triggers>
+                        </Style>
+                    </Border.Style>
                     <DockPanel>
-                        <local:SvgIcon Kind="circle-check" Width="15" Height="15" DockPanel.Dock="Left" Foreground="{DynamicResource Accent}" VerticalAlignment="Top" Margin="0,1,8,0" />
-                        <TextBlock Text="{Binding Flash}" FontSize="11" TextWrapping="Wrap" />
+                        <local:SvgIcon DockPanel.Dock="Left" Width="15" Height="15" VerticalAlignment="Top" Margin="0,1,8,0">
+                            <local:SvgIcon.Style>
+                                <Style TargetType="local:SvgIcon">
+                                    <Setter Property="Kind" Value="circle-check" />
+                                    <Setter Property="Foreground" Value="{DynamicResource Green}" />
+                                    <Style.Triggers>
+                                        <DataTrigger Binding="{Binding FlashOk}" Value="False">
+                                            <Setter Property="Kind" Value="triangle-alert" />
+                                            <Setter Property="Foreground" Value="{DynamicResource Red}" />
+                                        </DataTrigger>
+                                    </Style.Triggers>
+                                </Style>
+                            </local:SvgIcon.Style>
+                        </local:SvgIcon>
+                        <TextBlock Text="{Binding Flash}" FontSize="11" TextWrapping="Wrap" AutomationProperties.LiveSetting="Polite" />
                     </DockPanel>
                 </Border>
             </StackPanel>

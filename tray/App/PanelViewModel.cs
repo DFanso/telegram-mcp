@@ -33,6 +33,7 @@ public sealed class PanelViewModel : Observable
     bool _reachable;
     string? _problem;
     string? _flash;
+    bool _flashOk = true;
     bool _contactsPage;
     string _search = "";
     string? _openNickname;
@@ -90,6 +91,9 @@ public sealed class PanelViewModel : Observable
     public bool NoRecent => Recent.Count == 0;
 
     public string? Flash { get => _flash; private set => Set(ref _flash, value); }
+
+    /// <summary>Whether the flash reports something that worked (a check) or didn't (a warning, in red).</summary>
+    public bool FlashOk { get => _flashOk; private set => Set(ref _flashOk, value); }
 
     // ---- the Contacts page --------------------------------------------------------------
 
@@ -175,14 +179,15 @@ public sealed class PanelViewModel : Observable
         approval.Busy = true;
         var r = await _api.DecideAsync(approval.Id, decision);
         approval.Busy = false;
-        ShowFlash(r.Text);
+        ShowFlash(r.Text, r.Ok);
         await PollAsync();
     }
 
     /// <summary>Ack or snooze a page from the alarm window or its notification.</summary>
     public async Task PageAsync(string id, bool ack, int minutes)
     {
-        ShowFlash((await _api.PageAsync(id, ack, minutes)).Text);
+        var r = await _api.PageAsync(id, ack, minutes);
+        ShowFlash(r.Text, r.Ok);
         await PollAsync();
     }
 
@@ -192,7 +197,8 @@ public sealed class PanelViewModel : Observable
         if (_approvals.TryGetValue(id, out var vm)) await DecideAsync(vm, decision);
         else
         {
-            ShowFlash((await _api.DecideAsync(id, decision)).Text);
+            var r = await _api.DecideAsync(id, decision);
+            ShowFlash(r.Text, r.Ok);
             await PollAsync();
         }
     }
@@ -204,7 +210,7 @@ public sealed class PanelViewModel : Observable
         contact.Busy = false;
         // After a rename the row has a new name: keep it open.
         if (r.Ok && r.Nickname is { } now && OpenNickname == contact.Nickname) OpenNickname = now;
-        ShowFlash(r.Text);
+        ShowFlash(r.Text, r.Ok);
         await PollAsync();
     }
 
@@ -215,7 +221,7 @@ public sealed class PanelViewModel : Observable
         var r = await _api.PageContactAsync(contact.Nickname, contact.PageReason);
         contact.Paging = false;
         if (r.Ok) contact.PageReason = "";
-        ShowFlash(r.Text);
+        ShowFlash(r.Text, r.Ok);
         await PollAsync();
     }
 
@@ -226,8 +232,9 @@ public sealed class PanelViewModel : Observable
         else _openRecent.Remove(row.ChatId);
     }
 
-    public void ShowFlash(string text)
+    public void ShowFlash(string text, bool ok = true)
     {
+        FlashOk = ok;
         Flash = text;
         _flashTimer.Stop();
         _flashTimer.Start();
@@ -297,7 +304,7 @@ public sealed class PanelViewModel : Observable
         var path = Path.Combine(_settings.Home, name);
         if (!File.Exists(path))
         {
-            ShowFlash($"There is no {name} in {_settings.Home} yet.");
+            ShowFlash($"There is no {name} in {_settings.Home} yet.", ok: false);
             return;
         }
         try
