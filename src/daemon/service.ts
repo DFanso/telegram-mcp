@@ -25,8 +25,7 @@ import { checkSendable, describeOutgoing, fileDigest, fmtBytes, safeFileName, ty
 import { looksLikeReplyCommand, parseReplyCommand } from '../shared/takeover'
 import type { IncomingMessage, MessageInfo, PeerInfo, SendMode, SentRecord, TgEvent, ToolResult, UiContact, UiPage, UiState } from '../shared/protocol'
 import { TOOLS, isToolName, type ToolInput, type ToolName } from '../shared/tools'
-import type { AwayResponder } from './away'
-import { uiAway } from './away'
+import { uiAway, type AwayResponder } from './away'
 import type { Approvals, DecideOptions, PendingSend } from './approvals'
 import { visibleText } from './formatting'
 import type { Page, PageAction, PageActor, Pager } from './pager'
@@ -523,13 +522,16 @@ export class Service {
     return (await this.d.pager?.act(id, action, by)) ?? false
   }
 
-  /** The tray's / CLI's away edit: validates, then saves to the rules file. */
+  /** The tray's away edit: validates (a rejected patch never touches the file), then saves to the rules file. */
   editAway(patch: unknown): { ok: boolean; text: string } {
     const r = applyAwayPatch(this.d.store.get().away, patch)
     if (!r.ok) return { ok: false, text: r.error }
     try {
+      // Apply again to the file as it is now, so a hand edit the store hasn't reloaded yet survives.
       const saved = this.d.store.update(c => {
-        c.away = r.away
+        const fresh = applyAwayPatch(c.away, patch)
+        if (!fresh.ok) throw new Error(fresh.error)
+        c.away = fresh.away
       })
       return { ok: true, text: `Saved. Away is ${awaySummary(saved.away, new Date())}.` }
     } catch (e) {

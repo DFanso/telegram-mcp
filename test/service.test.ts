@@ -594,6 +594,18 @@ describe('away in the service', () => {
     expect(readFileSync(path, 'utf8')).toBe(before)
   })
 
+  test('editAway keeps a hand edit the store has not reloaded yet', () => {
+    setup(baseConfig)
+    writeFileSync(path, JSON.stringify({ footer: FOOTER, ...baseConfig, away: { message: 'typed by hand' } }))
+    expect(svc.editAway({ enabled: true })).toMatchObject({ ok: true })
+    expect(onDisk().away).toMatchObject({ enabled: true, message: 'typed by hand' })
+    // A patch that only fails against the fresh file is refused and the file kept.
+    writeFileSync(path, JSON.stringify({ footer: FOOTER, ...baseConfig, away: { until: '07:00' } }))
+    const before = readFileSync(path, 'utf8')
+    expect(svc.editAway({ from: '07:00' })).toMatchObject({ ok: false, text: "From and until can't be the same time." })
+    expect(readFileSync(path, 'utf8')).toBe(before)
+  })
+
   test('get_rules shows the away line', async () => {
     setup(baseConfig)
     const r = await svc.call('s1', 'telegram_get_rules', {})

@@ -113,7 +113,9 @@ export async function createDaemon(o: DaemonOptions) {
 
   tg.onMessage(msg => {
     if (msg.outgoing) {
-      away.noteOutgoing(msg.chatId)
+      // The message's own time: a catch-up after sleep replays old sends, which mustn't count as just now.
+      const sentAt = Date.parse(msg.date)
+      away.noteOutgoing(msg.chatId, Number.isNaN(sentAt) ? Date.now() : sentAt)
       service
         .handleOwnMessage(msg)
         .then(cmd => cmd && log(`/reply in ${msg.chatId}: ${hub.takeoverOf(msg.chatId) ?? 'no session took it (or it ended)'}`))
