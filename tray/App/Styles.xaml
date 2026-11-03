@@ -3,24 +3,41 @@
                     xmlns:local="clr-namespace:TelegramMCPTray"
                     xmlns:core="clr-namespace:TelegramMCPTray.Core;assembly=TelegramMCPTray.Core">
 
-    <!-- Colours. Theme.cs replaces these for light/dark and the accent colour; these are the dark defaults. -->
-    <SolidColorBrush x:Key="PanelBg" Color="#FF2B2B2B" />
-    <SolidColorBrush x:Key="PanelBorder" Color="#FF3F3F3F" />
-    <SolidColorBrush x:Key="Fg" Color="#FFFFFFFF" />
-    <SolidColorBrush x:Key="Fg2" Color="#FFC5C5C5" />
-    <SolidColorBrush x:Key="Fg3" Color="#FF8B8B8B" />
-    <SolidColorBrush x:Key="Subtle" Color="#0DFFFFFF" />
-    <SolidColorBrush x:Key="Subtle2" Color="#17FFFFFF" />
-    <SolidColorBrush x:Key="Divider" Color="#1FFFFFFF" />
-    <SolidColorBrush x:Key="Accent" Color="#FF4CC2FF" />
-    <SolidColorBrush x:Key="Green" Color="#FF2EA043" />
-    <SolidColorBrush x:Key="Orange" Color="#FFF7840C" />
-    <SolidColorBrush x:Key="Red" Color="#FFE5484D" />
-    <SolidColorBrush x:Key="Blue" Color="#FF3B8EEA" />
-    <SolidColorBrush x:Key="Gray" Color="#FF8B8B8B" />
-    <SolidColorBrush x:Key="Yellow" Color="#FFE3B341" />
+    <!-- Colours. Theme.cs replaces these for light/dark (and opaque where there's no acrylic); these are the dark defaults. -->
+    <SolidColorBrush x:Key="PanelBg" Color="#FF2E2A28" />
+    <SolidColorBrush x:Key="PanelBorder" Color="#33FFFFFF" />
+    <SolidColorBrush x:Key="Fg" Color="#FFF7F5F3" />
+    <SolidColorBrush x:Key="Fg2" Color="#FFC9C3BE" />
+    <SolidColorBrush x:Key="Fg3" Color="#FF8F8883" />
+    <SolidColorBrush x:Key="Card" Color="#14FFFFFF" />
+    <SolidColorBrush x:Key="CardBorder" Color="#1CFFFFFF" />
+    <SolidColorBrush x:Key="CardHover" Color="#1FFFFFFF" />
+    <SolidColorBrush x:Key="Subtle" Color="#0FFFFFFF" />
+    <SolidColorBrush x:Key="Subtle2" Color="#1AFFFFFF" />
+    <SolidColorBrush x:Key="Divider" Color="#1AFFFFFF" />
+    <SolidColorBrush x:Key="Accent" Color="#FFFF6A3D" />
+    <SolidColorBrush x:Key="AccentSoft" Color="#2EFF6A3D" />
+    <SolidColorBrush x:Key="OnAccent" Color="#FFFFFFFF" />
+    <SolidColorBrush x:Key="Green" Color="#FF4CC75A" />
+    <SolidColorBrush x:Key="Orange" Color="#FFFFAA3B" />
+    <SolidColorBrush x:Key="Red" Color="#FFFF5F57" />
+    <SolidColorBrush x:Key="Blue" Color="#FF62AEFF" />
+    <SolidColorBrush x:Key="Gray" Color="#FF9A938E" />
+    <SolidColorBrush x:Key="Yellow" Color="#FFF5D547" />
+    <SolidColorBrush x:Key="GreenWash" Color="#263DD68C" />
+    <SolidColorBrush x:Key="PendingWash" Color="#26FFB020" />
+    <SolidColorBrush x:Key="PendingEdge" Color="#66FFB020" />
+    <SolidColorBrush x:Key="YellowWash" Color="#26F5D547" />
+    <SolidColorBrush x:Key="RedWash" Color="#26FF5C5C" />
+    <SolidColorBrush x:Key="BlueWash" Color="#264FB8F2" />
+    <SolidColorBrush x:Key="GrayWash" Color="#269A938E" />
+    <SolidColorBrush x:Key="Brand" Color="#FF1B92D1" />
+
+    <!-- The app icon's paper plane (docs/icon.svg), on a 100×100 box. The tray icon draws the same path. -->
+    <Geometry x:Key="PlaneGeometry">M88.723,12.142C76.419,17.238,23.661,39.091,9.084,45.047c-9.776,3.815-4.053,7.392-4.053,7.392s8.345,2.861,15.499,5.007c7.153,2.146,10.968-0.238,10.968-0.238l33.62-22.652c11.922-8.107,9.061-1.431,6.199,1.431c-6.199,6.2-16.452,15.975-25.036,23.844c-3.815,3.338-1.908,6.199-0.238,7.63c6.199,5.246,23.129,15.976,24.082,16.691c5.037,3.566,14.945,8.699,16.452-2.146c0,0,5.961-37.435,5.961-37.435c1.908-12.637,3.815-24.321,4.053-27.659C97.307,8.804,88.723,12.142,88.723,12.142z</Geometry>
 
     <FontFamily x:Key="UiFont">Segoe UI Variable Text, Segoe UI</FontFamily>
+    <FontFamily x:Key="DisplayFont">Segoe UI Variable Display, Segoe UI</FontFamily>
     <!-- Windows 11 has Segoe Fluent Icons; Windows 10 has the same code points in Segoe MDL2 Assets. -->
     <FontFamily x:Key="IconFont">Segoe Fluent Icons, Segoe MDL2 Assets</FontFamily>
 
@@ -29,18 +46,43 @@
         <Setter Property="VerticalAlignment" Value="Center" />
     </Style>
 
+    <!-- A frosted card: everything on the panel sits on one. -->
+    <Style x:Key="CardStyle" TargetType="Border">
+        <Setter Property="Background" Value="{DynamicResource Card}" />
+        <Setter Property="BorderBrush" Value="{DynamicResource CardBorder}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="14" />
+        <Setter Property="Padding" Value="14" />
+    </Style>
+
+    <!-- A card's title: "Waiting for approval", with an optional count chip next to it. -->
+    <Style x:Key="CardTitle" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="13" />
+        <Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{DynamicResource Fg}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+    </Style>
+
+    <Style x:Key="Caption" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="11" />
+        <Setter Property="Foreground" Value="{DynamicResource Fg3}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+    </Style>
+
     <!-- A capsule button. Filled: solid tint, white text. Not filled: a faint tint, tinted text.
-         Choice (a segmented choice): not filled is neutral grey instead. -->
+         Choice (a segmented choice): not filled is neutral instead. -->
     <Style TargetType="local:PillButton">
         <Setter Property="Tint" Value="{DynamicResource Green}" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Focusable" Value="True" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="local:PillButton">
-                    <Grid x:Name="Root" MinHeight="26">
-                        <Border x:Name="Bg" CornerRadius="13" Background="{TemplateBinding Tint}" Opacity="0.14" />
-                        <ContentPresenter x:Name="Label" Margin="12,4" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    <Grid x:Name="Root" MinHeight="30">
+                        <Border x:Name="Bg" CornerRadius="15" Background="{TemplateBinding Tint}" Opacity="0.16" />
+                        <Border x:Name="Focus" CornerRadius="15" BorderBrush="{DynamicResource Fg}" BorderThickness="1.5" Opacity="0" />
+                        <ContentPresenter x:Name="Label" Margin="14,5" HorizontalAlignment="Center" VerticalAlignment="Center"
                                           TextElement.FontSize="12" TextElement.FontWeight="SemiBold"
                                           TextElement.Foreground="{TemplateBinding Tint}" />
                     </Grid>
@@ -50,22 +92,25 @@
                                 <Condition Property="Choice" Value="True" />
                                 <Condition Property="Filled" Value="False" />
                             </MultiTrigger.Conditions>
-                            <Setter TargetName="Bg" Property="Background" Value="{DynamicResource Subtle2}" />
+                            <Setter TargetName="Bg" Property="Background" Value="Transparent" />
                             <Setter TargetName="Bg" Property="Opacity" Value="1" />
                             <Setter TargetName="Label" Property="TextElement.Foreground" Value="{DynamicResource Fg2}" />
                         </MultiTrigger>
                         <Trigger Property="Filled" Value="True">
                             <Setter TargetName="Bg" Property="Opacity" Value="1" />
-                            <Setter TargetName="Label" Property="TextElement.Foreground" Value="White" />
+                            <Setter TargetName="Label" Property="TextElement.Foreground" Value="{DynamicResource OnAccent}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Focus" Property="Opacity" Value="0.7" />
                         </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Root" Property="Opacity" Value="0.88" />
+                            <Setter TargetName="Root" Property="Opacity" Value="0.86" />
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
-                            <Setter TargetName="Root" Property="Opacity" Value="0.72" />
+                            <Setter TargetName="Root" Property="Opacity" Value="0.7" />
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
-                            <Setter TargetName="Root" Property="Opacity" Value="0.5" />
+                            <Setter TargetName="Root" Property="Opacity" Value="0.45" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -73,19 +118,82 @@
         </Setter>
     </Style>
 
-    <!-- The footer buttons: a glyph and a word on a faint rounded background. -->
+    <!-- A tab in the segmented bar under the header: the open one is a solid orange capsule. -->
+    <Style x:Key="Tab" TargetType="local:PillButton">
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="local:PillButton">
+                    <Border x:Name="Bg" CornerRadius="15" Background="Transparent" MinHeight="30" Padding="14,5">
+                        <ContentPresenter x:Name="Label" HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          TextElement.FontSize="12" TextElement.FontWeight="SemiBold"
+                                          TextElement.Foreground="{DynamicResource Fg2}" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bg" Property="Background" Value="{DynamicResource Subtle2}" />
+                        </Trigger>
+                        <Trigger Property="Filled" Value="True">
+                            <Setter TargetName="Bg" Property="Background" Value="{DynamicResource Accent}" />
+                            <Setter TargetName="Label" Property="TextElement.Foreground" Value="{DynamicResource OnAccent}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Bg" Property="BorderBrush" Value="{DynamicResource Fg}" />
+                            <Setter TargetName="Bg" Property="BorderThickness" Value="1.5" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- A round glass button with a glyph (the header's Rules and Log). -->
+    <Style x:Key="RoundButton" TargetType="Button">
+        <Setter Property="Foreground" Value="{DynamicResource Fg}" />
+        <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
+        <Setter Property="Template">
+            <Setter.Value>
+                <ControlTemplate TargetType="Button">
+                    <Border x:Name="Bg" Width="34" Height="34" CornerRadius="17" Background="{DynamicResource Card}"
+                            BorderBrush="{DynamicResource CardBorder}" BorderThickness="1">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
+                                          TextElement.FontFamily="{StaticResource IconFont}" TextElement.FontSize="14" />
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bg" Property="Background" Value="{DynamicResource CardHover}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Bg" Property="BorderBrush" Value="{DynamicResource Fg}" />
+                        </Trigger>
+                        <Trigger Property="IsPressed" Value="True">
+                            <Setter TargetName="Bg" Property="Opacity" Value="0.7" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value>
+        </Setter>
+    </Style>
+
+    <!-- A quiet text button with a glyph (the footer). -->
     <Style x:Key="IconButton" TargetType="Button">
         <Setter Property="Foreground" Value="{DynamicResource Fg2}" />
         <Setter Property="FontSize" Value="11" />
         <Setter Property="Cursor" Value="Hand" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
-                    <Border x:Name="Bg" CornerRadius="6" Background="{DynamicResource Subtle}" Padding="8,4">
+                    <Border x:Name="Bg" CornerRadius="13" Background="Transparent" Padding="10,5">
                         <ContentPresenter VerticalAlignment="Center" />
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
+                            <Setter TargetName="Bg" Property="Background" Value="{DynamicResource Subtle2}" />
+                        </Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
                             <Setter TargetName="Bg" Property="Background" Value="{DynamicResource Subtle2}" />
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
@@ -97,11 +205,12 @@
         </Setter>
     </Style>
 
-    <!-- A button that looks like its content (row headers, back). -->
+    <!-- A button that looks like its content (row headers, stat tiles). -->
     <Style x:Key="Flat" TargetType="Button">
         <Setter Property="Foreground" Value="{DynamicResource Fg}" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
@@ -118,17 +227,20 @@
         <Setter Property="CaretBrush" Value="{DynamicResource Fg}" />
         <Setter Property="SelectionBrush" Value="{DynamicResource Accent}" />
         <Setter Property="FontSize" Value="12" />
-        <Setter Property="Padding" Value="6,4" />
+        <Setter Property="Padding" Value="10,6" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="TextBox">
-                    <Border x:Name="Bg" CornerRadius="6" Background="{DynamicResource Subtle2}" Padding="{TemplateBinding Padding}"
-                            BorderThickness="0,0,0,1" BorderBrush="Transparent">
+                    <Border x:Name="Bg" CornerRadius="15" Background="{DynamicResource Subtle2}" Padding="{TemplateBinding Padding}"
+                            BorderThickness="1" BorderBrush="Transparent">
                         <ScrollViewer x:Name="PART_ContentHost" VerticalAlignment="Center" />
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsKeyboardFocused" Value="True">
                             <Setter TargetName="Bg" Property="BorderBrush" Value="{DynamicResource Accent}" />
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False">
+                            <Setter TargetName="Bg" Property="Opacity" Value="0.5" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -147,7 +259,7 @@
                             <Thumb>
                                 <Thumb.Template>
                                     <ControlTemplate TargetType="Thumb">
-                                        <Border CornerRadius="3" Width="5" HorizontalAlignment="Center" Background="{DynamicResource Fg3}" Opacity="0.6" />
+                                        <Border CornerRadius="3" Width="4" HorizontalAlignment="Center" Background="{DynamicResource Fg3}" Opacity="0.5" />
                                     </ControlTemplate>
                                 </Thumb.Template>
                             </Thumb>
@@ -158,11 +270,11 @@
         </Setter>
     </Style>
 
-    <!-- A small coloured tag ("Monitor on", "always allow"...). -->
+    <!-- A small coloured chip ("Monitor on", "always allow"...), like the +11% chips on a dashboard. -->
     <DataTemplate DataType="{x:Type core:Tag}">
         <Grid VerticalAlignment="Center" Margin="4,0,0,0">
-            <Border x:Name="Bg" CornerRadius="8" Opacity="0.16" Background="{DynamicResource Gray}" />
-            <TextBlock x:Name="Label" Text="{Binding Text}" Margin="7,2" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource Gray}" />
+            <Border x:Name="Bg" CornerRadius="9" Opacity="0.2" Background="{DynamicResource Gray}" />
+            <TextBlock x:Name="Label" Text="{Binding Text}" Margin="8,2,8,3" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource Gray}" />
         </Grid>
         <DataTemplate.Triggers>
             <DataTrigger Binding="{Binding Kind}" Value="Good">

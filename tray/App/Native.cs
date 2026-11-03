@@ -100,6 +100,31 @@ static class Native
         var round = DwmwcpRound;
         _ = DwmSetWindowAttribute(hwnd, DwmwaWindowCornerPreference, ref round, sizeof(int));
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct Margins
+    {
+        public int Left, Right, Top, Bottom;
+    }
+
+    [DllImport("dwmapi.dll")]
+    static extern int DwmExtendFrameIntoClientArea(IntPtr hwnd, ref Margins margins);
+
+    /// <summary>
+    /// Windows 11 22H2+: acrylic (the "transient window" backdrop flyouts use) behind the whole
+    /// window, in the app's light or dark mode. The window has to paint a transparent background for
+    /// it to show. False when Windows refused, so the caller can paint an opaque background instead.
+    /// </summary>
+    public static bool Acrylic(IntPtr hwnd, bool dark)
+    {
+        const int DwmwaUseImmersiveDarkMode = 20, DwmwaSystemBackdropType = 38, DwmsbtTransientWindow = 3;
+        var on = dark ? 1 : 0;
+        _ = DwmSetWindowAttribute(hwnd, DwmwaUseImmersiveDarkMode, ref on, sizeof(int));
+        var all = new Margins { Left = -1, Right = -1, Top = -1, Bottom = -1 };
+        if (DwmExtendFrameIntoClientArea(hwnd, ref all) != 0) return false;
+        var backdrop = DwmsbtTransientWindow;
+        return DwmSetWindowAttribute(hwnd, DwmwaSystemBackdropType, ref backdrop, sizeof(int)) == 0;
+    }
 }
 
 /// <summary>

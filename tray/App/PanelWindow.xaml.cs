@@ -35,10 +35,55 @@ public partial class PanelWindow : Window
             FitHeight();
             Reposition();
         };
-        PreviewKeyDown += (_, e) =>
+        PreviewKeyDown += OnKey;
+    }
+
+    PanelViewModel? Vm => DataContext as PanelViewModel;
+
+    /// <summary>Esc closes; Ctrl+1 / Ctrl+2 switch tabs; Ctrl+F searches contacts.</summary>
+    void OnKey(object sender, KeyEventArgs e)
+    {
+        var ctrl = (Keyboard.Modifiers & ModifierKeys.Control) != 0;
+        if (e.Key == Key.Escape)
         {
-            if (e.Key == Key.Escape) HidePanel();
-        };
+            if (Vm is { ContactsPage: true, SearchEmpty: false } vm) vm.Search = ""; // first Esc clears the search
+            else HidePanel();
+            e.Handled = true;
+        }
+        else if (ctrl && e.Key is Key.D1 or Key.NumPad1 && Vm is { } home)
+        {
+            home.ContactsPage = false;
+            e.Handled = true;
+        }
+        else if (ctrl && (e.Key is Key.D2 or Key.NumPad2 or Key.F) && Vm is { } contacts)
+        {
+            contacts.ContactsPage = true;
+            if (e.Key == Key.F) Dispatcher.InvokeAsync(() => SearchBox.Focus(), DispatcherPriority.Loaded);
+            e.Handled = true;
+        }
+    }
+
+    /// <summary>
+    /// Acrylic behind the panel where Windows has it; otherwise the theme's tints are drawn opaque.
+    /// Called again when the app mode (light/dark) changes.
+    /// </summary>
+    public void ApplyBackdrop()
+    {
+        var hwnd = new WindowInteropHelper(this).Handle;
+        if (hwnd == IntPtr.Zero) return;
+        if (Theme.Translucent && Native.Acrylic(hwnd, Theme.AppsDark))
+        {
+            if (HwndSource.FromHwnd(hwnd)?.CompositionTarget is { } target) target.BackgroundColor = Colors.Transparent;
+            Background = Brushes.Transparent;
+            return;
+        }
+        if (Theme.Translucent)
+        {
+            // Windows said no: paint the same tints opaque from now on.
+            Theme.Translucent = false;
+            Theme.Apply(Application.Current.Resources);
+        }
+        SetResourceReference(BackgroundProperty, "PanelBg");
     }
 
     /// <summary>When the panel last went away (a tray click right after shouldn't reopen it).</summary>
@@ -51,6 +96,7 @@ public partial class PanelWindow : Window
         base.OnSourceInitialized(e);
         var hwnd = new WindowInteropHelper(this).Handle;
         Native.RoundCorners(hwnd);
+        ApplyBackdrop();
         HwndSource.FromHwnd(hwnd)?.AddHook(Anchor);
     }
 
