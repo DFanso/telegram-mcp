@@ -45,6 +45,8 @@ export interface TelegramPort {
   sendSticker(chatId: number, from: StickerRef, opts?: SendOptions): Promise<MessageInfo>
   /** Delete one of your own messages for everyone. */
   deleteMessage(chatId: number, messageId: number): Promise<void>
+  /** Replace the text of one of your own text messages. */
+  editMessage(chatId: number, messageId: number, text: string, opts?: { parseMode?: SendOptions['parseMode'] }): Promise<MessageInfo>
   getHistory(chatId: number, opts: { limit: number; beforeId?: number; topicId?: number }): Promise<MessageInfo[]>
   listDialogs(opts: { limit: number; unreadOnly: boolean }): Promise<DialogInfo[]>
   searchChats(query: string, limit: number): Promise<(PeerInfo & { global: boolean })[]>
@@ -443,6 +445,12 @@ export class MtcuteTelegram implements TelegramPort {
   async deleteMessage(chatId: number, messageId: number): Promise<void> {
     const c = await this.#ready()
     await c.deleteMessagesById(chatId, [messageId], { revoke: true })
+  }
+
+  async editMessage(chatId: number, messageId: number, text: string, opts: { parseMode?: SendOptions['parseMode'] } = {}): Promise<MessageInfo> {
+    const c = await this.#ready()
+    const edited = await c.editMessage({ chatId, message: messageId, text: formatted(text, opts.parseMode) })
+    return messageInfo(edited)
   }
 
   async sendSticker(chatId: number, from: StickerRef, opts: SendOptions = {}): Promise<MessageInfo> {

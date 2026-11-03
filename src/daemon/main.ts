@@ -94,6 +94,7 @@ export async function createDaemon(o: DaemonOptions) {
     mcpHome: o.paths.home,
     pager,
     away,
+    log,
   })
 
   // Bind first: if another daemon already owns the port, fail before touching the Telegram session.
