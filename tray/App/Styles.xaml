@@ -237,7 +237,8 @@
         </Setter>
     </Style>
 
-    <!-- A button that looks like its content (row headers, stat tiles). -->
+    <!-- A button that looks like its content (row headers, a long draft, clear search). It shows a
+         focus ring when reached with the keyboard, since it has no other outline. -->
     <Style x:Key="Flat" TargetType="Button">
         <Setter Property="Foreground" Value="{DynamicResource Fg}" />
         <Setter Property="Cursor" Value="Hand" />
@@ -246,9 +247,18 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="Button">
-                    <Border Background="Transparent">
-                        <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" />
-                    </Border>
+                    <Grid>
+                        <Border Background="Transparent">
+                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center" />
+                        </Border>
+                        <Border x:Name="Focus" Margin="-4" CornerRadius="12" BorderThickness="1.5" BorderBrush="{DynamicResource Fg}"
+                                Opacity="0" IsHitTestVisible="False" />
+                    </Grid>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsKeyboardFocused" Value="True">
+                            <Setter TargetName="Focus" Property="Opacity" Value="0.8" />
+                        </Trigger>
+                    </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
