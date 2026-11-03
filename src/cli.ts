@@ -5,6 +5,7 @@ import { ensureHome } from './shared/files'
 import { getPaths, getPort } from './shared/paths'
 import { FileSecretStore, loadCredentials, openSecretStore, readToken, saveCredentials } from './shared/secrets'
 import { ConfigStore } from './shared/config'
+import { readDaemonReply } from './shared/daemon-reply'
 import { VERSION, isCompiled, selfCommand, shellJoin } from './shared/runtime'
 
 const HELP = `tgmcp ${VERSION}: always-on Telegram daemon + per-session MCP bridge
@@ -31,12 +32,12 @@ const HELP = `tgmcp ${VERSION}: always-on Telegram daemon + per-session MCP brid
 Files live in ${getPaths().home} (override with TELEGRAM_MCP_HOME). Port ${getPort()} (TELEGRAM_MCP_PORT).
 Secrets (login key, API token, api_hash) live in the OS keystore; TELEGRAM_MCP_SECRET_STORE=file keeps them in files.`
 
-async function daemonFetch(path: string, init?: RequestInit): Promise<Response> {
+async function daemonFetch(path: string, init?: RequestInit, timeoutMs = 3_000): Promise<Response> {
   const token = await readToken(openSecretStore(getPaths()))
   return fetch(`http://127.0.0.1:${getPort()}${path}`, {
     ...init,
     headers: { ...(init?.headers ?? {}), authorization: `Bearer ${token ?? ''}` },
-    signal: AbortSignal.timeout(3_000),
+    signal: AbortSignal.timeout(timeoutMs),
   })
 }
 
@@ -177,8 +178,9 @@ async function pageSetup() {
 }
 
 async function pageTest() {
-  const res = await daemonFetch('/ui/pages/test', { method: 'POST' })
-  const body = (await res.json()) as { ok: boolean; text: string }
+  // The daemon answers once the bot has tried the phone, which can take its full 10 s timeout.
+  const res = await daemonFetch('/ui/pages/test', { method: 'POST' }, 15_000)
+  const body = await readDaemonReply(res)
   console.log(body.text)
   if (!body.ok) process.exitCode = 1
 }
