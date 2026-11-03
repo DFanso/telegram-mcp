@@ -9,6 +9,8 @@ export interface PeerInfo {
   username: string | null
   isSelf?: boolean
   isForum?: boolean
+  /** A Telegram support account: type 'user', but not a person to send an away reply to. */
+  isSupport?: boolean
 }
 
 export interface MessageInfo {

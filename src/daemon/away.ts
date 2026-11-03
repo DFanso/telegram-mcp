@@ -24,6 +24,9 @@ export interface AwayDeps {
 /** Entries older than this are dropped on save: no away window is longer than a day. */
 const REPLIED_KEEP_MS = 48 * 3_600_000
 
+/** Telegram's own service account (login codes, security notices): never a person to answer. */
+const TELEGRAM_SERVICE_ID = 777000
+
 /**
  * away.json as an earlier build wrote it: `{ window: "YYYY-MM-DDTHH:MM", chats: [...] }`, the window
  * named by its local start. Read back as "answered at the window's start", which still blocks that night.
@@ -114,7 +117,8 @@ export class AwayResponder {
       if (!away.enabled) return 'skipped' // R1
       if (msg.outgoing) return 'skipped' // R2
       const chat = msg.chat
-      if (chat.type !== 'user' || chat.isSelf) return 'skipped' // R3 (bots are type 'bot')
+      // R3: bots are type 'bot'; Telegram's service account and support staff are users but not people to answer.
+      if (chat.type !== 'user' || chat.isSelf || chat.isSupport || chat.id === TELEGRAM_SERVICE_ID) return 'skipped'
       if (isListed(config, 'blocked', chat)) return 'skipped' // R4
       const at = Date.parse(msg.date)
       if (Number.isNaN(at)) return 'skipped'
