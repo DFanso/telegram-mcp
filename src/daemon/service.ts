@@ -936,9 +936,11 @@ export class Service {
         return fail(`Not deleted: message #${p.messageId} in ${t.label} was sent by another session (${rec.sessionLabel ?? 'unknown'}). Only the session that sent a message can delete it.`)
       }
       // Deleting changes what the chat sees and has no approval step, so, as with an edit, anything
-      // but an outright "send" is refused.
+      // but an outright "send" is refused. A file follows the file rule: in a chat this session is
+      // watching (or took over), sending one needs approval, so deleting one is refused there too.
       const decision = decideSend(config, t.peer, {
         isWatching: this.d.hub.isWatching(sid, t.peer.id),
+        file: rec.kind === 'file',
         takenOver: this.d.hub.isTakenOverBy(sid, t.peer.id),
       })
       if (decision.action === 'block') return fail(`Not deleted in ${t.label}: ${decision.reason}.`)
