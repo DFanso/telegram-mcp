@@ -35,10 +35,13 @@ public static class Format
 
     /// <summary>
     /// One or two letters for an avatar: "Leo Gavin" → "LG", "team-qa" → "TQ", "@anna_k" → "AK",
-    /// "leo" → "L". Emoji and symbols are skipped; nothing usable gives "?".
+    /// "leo" → "L". Emoji and symbols are skipped; nothing usable gives "?". A label's trailing
+    /// " [nickname]" is not part of the name: "Leo Perera [leo]" → "LP", not "LL" (as in the menu bar app).
     /// </summary>
     public static string Initials(string name)
     {
+        var open = name.LastIndexOf(" [", StringComparison.Ordinal);
+        if (name.EndsWith(']') && open > 0) name = name[..open];
         var words = name.Split([' ', '-', '_', '.', '@', '(', ')'], StringSplitOptions.RemoveEmptyEntries)
             .Select(w => w.FirstOrDefault(char.IsLetterOrDigit))
             .Where(c => c != default)
