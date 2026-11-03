@@ -4,7 +4,9 @@ import { createInterface } from 'node:readline/promises'
 import { ensureHome } from './shared/files'
 import { getPaths, getPort } from './shared/paths'
 import { FileSecretStore, loadCredentials, openSecretStore, readToken, saveCredentials } from './shared/secrets'
-import { ConfigStore } from './shared/config'
+import { ConfigStore, type Config } from './shared/config'
+import { applyAwayPatch, awaySummary, parseAwayArgs, renderAwayMessage } from './shared/away'
+import { withFooter } from './shared/policy'
 import { VERSION, isCompiled, selfCommand, shellJoin } from './shared/runtime'
 
 const HELP = `tgmcp ${VERSION}: always-on Telegram daemon + per-session MCP bridge
@@ -22,6 +24,7 @@ const HELP = `tgmcp ${VERSION}: always-on Telegram daemon + per-session MCP brid
   tgmcp menubar uninstall
   tgmcp page setup    connect your own pager bot (from @BotFather) so pages reach your phone
   tgmcp page test     ring a test page: hear the alarm, check the volume, try Ack
+  tgmcp away          show the away auto-reply; tgmcp away on|off|hours HH:MM HH:MM|message <text>|quiet <minutes>
   tgmcp call <tool> [json]   call a tool as a one-off session, e.g. tgmcp call telegram_get_rules
   tgmcp mcp-add       print the command that registers the MCP server with Claude Code
   tgmcp daemon        run the daemon in the foreground
@@ -38,6 +41,58 @@ async function daemonFetch(path: string, init?: RequestInit): Promise<Response> 
     headers: { ...(init?.headers ?? {}), authorization: `Bearer ${token ?? ''}` },
     signal: AbortSignal.timeout(3_000),
   })
+}
+
+/** The reply as it would go out: the daemon's own rendering when it answers, else rendered here without a name. */
+async function awayPreview(config: Config): Promise<string> {
+  try {
+    const res = await daemonFetch('/ui/state')
+    if (res.ok) {
+      const body = (await res.json()) as { away?: { preview?: unknown } }
+      if (typeof body.away?.preview === 'string') return body.away.preview
+    }
+  } catch {
+    // daemon not running: the local preview below is good enough
+  }
+  return withFooter(renderAwayMessage(config.away.message, null), config.footer)
+}
+
+async function away(args: string[]) {
+  const parsed = parseAwayArgs(args)
+  if (parsed.kind === 'error') {
+    console.log(parsed.usage)
+    process.exitCode = 1
+    return
+  }
+  const store = new ConfigStore(getPaths().config) // no watch(): nothing keeps the process alive
+  try {
+    if (parsed.kind === 'patch') {
+      let rejected: string | null = null
+      store.update(c => {
+        const r = applyAwayPatch(c.away, parsed.patch)
+        if (r.ok) c.away = r.away
+        else rejected = r.error
+      })
+      if (rejected !== null) {
+        console.log(rejected)
+        process.exitCode = 1
+        return
+      }
+      console.log('Saved.')
+    } else if (store.error()) {
+      throw new Error(store.error()!)
+    }
+  } catch (e) {
+    console.log(e instanceof Error ? e.message : String(e))
+    process.exitCode = 1
+    return
+  }
+  const { away: a } = store.get()
+  console.log(`Away auto-reply: ${awaySummary(a, new Date())}`)
+  console.log(`Hours: ${a.from}–${a.until}`)
+  console.log(`Quiet after you reply: ${a.quietMinutes} min`)
+  console.log('Preview:')
+  console.log((await awayPreview(store.get())).replace(/^/gm, '  '))
 }
 
 /** install / uninstall / restart run the daemon under launchd. */
@@ -306,6 +361,9 @@ switch (cmd) {
     }
     break
   }
+  case 'away':
+    await away(rest)
+    break
   case 'mcp-add':
     mcpAdd()
     break
