@@ -199,6 +199,40 @@ The sender gets fixed replies, never text Claude wrote and never their own reaso
 
 The bot only messages the account you're logged in as, and ignores button presses from anyone else.
 
+## Away auto-reply
+
+When you're off for the night, friends who write get one reply saying so. It's **off by default**. Turn it on and it answers during the hours you set (6pm to 9am unless you change it, in the laptop's local time; the start is included and the end is not):
+
+> Chamodh is off the grid for the night and will get back to you tomorrow. If something's on fire, call them 🔥
+
+`{name}` becomes your first name, and the footer is added as with any message. The reply goes out plain (not as a reply to their message) and without approval. The rules, so it never gets in the way:
+
+- Only private chats with people: not groups, bots, Saved Messages or blocked chats.
+- Once per chat per night. A restart in the middle of the night doesn't repeat it.
+- Not for 30 minutes after you last wrote in that chat (`quietMinutes`; 0 turns this off).
+- Not while a Claude session is handling the chat (watching it, or after `/reply`).
+- Not to someone who is paging you, or whose page is still waiting.
+- Only for messages less than 10 minutes old, so catching up after the laptop sleeps doesn't send night-time replies in the morning.
+
+Change it from the Away page of the tray app, with `tgmcp away`, or in `config.json`:
+
+```
+tgmcp away                          # show the settings and the reply text
+tgmcp away on | off
+tgmcp away hours 19:00 08:30        # from, until (24-hour HH:MM; they can't be equal)
+tgmcp away message "{name} is away until tomorrow."   # at most 1000 characters
+tgmcp away quiet 60
+```
+
+```jsonc
+"away": {
+  "enabled": true, "from": "18:00", "until": "09:00",
+  "message": "{name} is away until tomorrow.", "quietMinutes": 30
+}
+```
+
+An away reply shows under Recently sent as "away reply". No MCP tool can change these settings, so sessions can't turn it on or rewrite the message; only you can, through the file, the CLI or the tray (`POST /ui/away` with the token). The menu bar page for macOS is coming.
+
 ## Menu bar app
 
 `tgmcp menubar` builds `menubar/build/Telegram MCP.app` (SwiftUI, no Dock icon) and starts it at login. Choosing Quit keeps it closed until your next login. It shows:
@@ -250,6 +284,7 @@ It is the menu bar app's counterpart:
 - **The tray icon** is a paper plane, filled while a session is listening. Its badge is the number of drafts waiting, or `!` when the daemon or Telegram is down. Hover it for a summary.
 - **Click it for the panel**: the connection, **Waiting for approval** (Approve / Deny; a new chat gets a nickname box and Deny / Ask every time / Always allow), **Listening**, and **Recently sent** (click a chat to see its messages). As in the menu bar app, a long draft and a recent chat open on click, never on hover.
 - **Contacts** (top right of the panel) is the same page as the menu bar's (see [Contacts](#contacts) above): rename a saved chat, choose what happens when Claude sends there, turn auto-reply on or off, choose who can page you, and page someone.
+- **Away** (top right, next to Contacts) turns the [away auto-reply](#away-auto-reply) on or off, sets the hours and the message, and previews the reply. Quiet minutes aren't on the page: use `tgmcp away quiet` or `config.json`.
 - **A Windows notification** for each draft has the same choices as buttons. Click the notification itself to open the panel.
 
 Right-click the icon for Open, Contacts, Rules, Log and Quit. Quit keeps it closed until your next login. `tgmcp menubar uninstall` quits it and stops it starting at login.
