@@ -56,7 +56,7 @@
                         </StackPanel>
                         <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Top" Margin="6,2,0,0">
                             <local:SvgIcon Kind="clock" Width="13" Height="13" Foreground="{DynamicResource Fg3}" Margin="0,0,4,0" />
-                            <TextBlock Text="{Binding Ago}" FontSize="11" Foreground="{DynamicResource Fg3}" />
+                            <TextBlock Text="{Binding AgoText}" FontSize="11" Foreground="{DynamicResource Fg3}" />
                         </StackPanel>
                     </Grid>
 
@@ -73,9 +73,14 @@
                         </StackPanel>
                     </Button>
 
+                    <!-- Who wants to send it, and why it waits for you. -->
                     <DockPanel Margin="0,8,0,0">
+                        <local:SvgIcon Kind="terminal" Width="14" Height="14" DockPanel.Dock="Left" Foreground="{DynamicResource Fg3}" VerticalAlignment="Top" Margin="0,1,6,0" />
+                        <TextBlock Text="{Binding AskedBy}" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" TextWrapping="NoWrap" />
+                    </DockPanel>
+                    <DockPanel Margin="0,3,0,0">
                         <local:SvgIcon Kind="info" Width="14" Height="14" DockPanel.Dock="Left" Foreground="{DynamicResource Fg3}" VerticalAlignment="Top" Margin="0,1,6,0" />
-                        <TextBlock Text="{Binding ReasonLine}" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" MaxHeight="30" />
+                        <TextBlock Text="{Binding Reason}" Style="{StaticResource Caption}" TextTrimming="CharacterEllipsis" MaxHeight="30" ToolTip="{Binding Reason}" />
                     </DockPanel>
 
                     <!-- First message to a chat: say so plainly, and it gets saved under this nickname. -->
@@ -86,7 +91,7 @@
                                 <TextBlock Text="First message to this chat" FontWeight="SemiBold" VerticalAlignment="Center" />
                             </DockPanel>
                             <TextBlock Style="{StaticResource Caption}" Foreground="{DynamicResource Fg2}" Margin="0,3,0,0"
-                                       Text="Send it, then choose: ask you every time, or always allow this chat from now on." />
+                                       Text="Pick how to send it: ask you again next time, or trust this chat and send without asking from now on." />
                             <DockPanel Margin="0,8,0,0">
                                 <TextBlock Text="Save as" FontSize="11" Foreground="{DynamicResource Fg2}" VerticalAlignment="Center" Margin="0,0,8,0" />
                                 <TextBlock Text="{Binding ExistingNickname}" FontSize="12" FontWeight="SemiBold" VerticalAlignment="Center"
@@ -99,18 +104,20 @@
                         </StackPanel>
                     </Border>
 
-                    <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,12,0,0">
-                        <local:PillButton Content="Deny" Tint="{DynamicResource Red}" Command="{Binding Deny}" IsEnabled="{Binding Idle}"
+                    <!-- Buttons say what they do: every choice but Deny sends this message now. They wrap
+                         to a second line rather than squeeze. -->
+                    <WrapPanel HorizontalAlignment="Right" Margin="0,8,0,0">
+                        <local:PillButton Content="Deny" Tint="{DynamicResource Red}" Command="{Binding Deny}" IsEnabled="{Binding Idle}" Margin="8,4,0,0"
                                           ToolTip="Don't send it. Claude is told you said no." />
-                        <local:PillButton Content="Ask every time" Tint="{DynamicResource Orange}" Margin="8,0,0,0"
+                        <local:PillButton x:Name="AskNext" Content="Send, ask next time" Tint="{DynamicResource Orange}" Margin="8,4,0,0"
                                           Command="{Binding AskEveryTime}" IsEnabled="{Binding Idle}"
-                                          ToolTip="Send now; future messages to this chat need approval too"
+                                          ToolTip="Send now. Future messages to this chat wait for you too (Ask every time)."
                                           Visibility="{Binding FirstTime, Converter={StaticResource Visible}}" />
-                        <local:PillButton x:Name="Always" Content="Always allow" Filled="True" Tint="{DynamicResource GreenFill}" Margin="8,0,0,0"
+                        <local:PillButton x:Name="Always" Content="Send, always allow" Filled="True" Tint="{DynamicResource GreenFill}" Margin="8,4,0,0"
                                           Command="{Binding AlwaysAllow}" IsEnabled="{Binding Idle}"
                                           ToolTip="Send now and trust this chat: future messages send without asking"
                                           Visibility="{Binding FirstTime, Converter={StaticResource Visible}}" />
-                        <local:PillButton x:Name="Approve" Filled="True" Tint="{DynamicResource GreenFill}" Margin="8,0,0,0"
+                        <local:PillButton x:Name="Approve" Filled="True" Tint="{DynamicResource GreenFill}" Margin="8,4,0,0"
                                           Command="{Binding Approve}" IsEnabled="{Binding Idle}" ToolTip="Send this message now"
                                           Visibility="{Binding FirstTime, Converter={StaticResource Hidden}}">
                             <StackPanel Orientation="Horizontal">
@@ -118,7 +125,7 @@
                                 <TextBlock x:Name="ApproveText" Text="Send" />
                             </StackPanel>
                         </local:PillButton>
-                    </StackPanel>
+                    </WrapPanel>
                 </StackPanel>
             </Border>
             <DataTemplate.Triggers>
@@ -130,6 +137,7 @@
                 </DataTrigger>
                 <DataTrigger Binding="{Binding Busy}" Value="True">
                     <Setter TargetName="Always" Property="Content" Value="Sending…" />
+                    <Setter TargetName="AskNext" Property="Content" Value="Sending…" />
                     <Setter TargetName="ApproveText" Property="Text" Value="Sending…" />
                 </DataTrigger>
             </DataTemplate.Triggers>
