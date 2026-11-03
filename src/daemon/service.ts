@@ -866,6 +866,22 @@ export class Service {
       return { text: lines.join('\n') }
     },
 
+    telegram_message_readers: async (_sid, p) => {
+      const t = await this.#resolve(p.chat, false)
+      const st = await this.d.tg.getReadStatus(t.peer.id, p.messageId)
+      const head = `Message #${p.messageId} in ${t.label}:`
+      if (st.kind === 'private') {
+        return {
+          text: `${head} ${st.seen ? `read by ${t.peer.name}` : `not read by ${t.peer.name} yet (as far as Telegram shows: someone who hides read receipts looks the same)`}.`,
+        }
+      }
+      if (st.readers.length === 0) {
+        return { text: `${head} nobody is shown as having read it. Telegram doesn't list people who hide their read receipts.` }
+      }
+      const lines = st.readers.map(r => `• ${r.name}${r.username ? ` (@${r.username})` : ''} · ${r.at}`)
+      return { text: [`${head} read by ${st.readers.length}:`, ...lines].join('\n') }
+    },
+
     telegram_download_media: async (_sid, p) => {
       const t = await this.#resolve(p.chat, false)
       const root = this.d.downloadsDir ?? join(homedir(), 'Downloads', 'telegram-mcp')

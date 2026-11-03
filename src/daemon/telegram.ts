@@ -8,6 +8,7 @@ import type {
   IncomingMessage,
   MessageInfo,
   PeerInfo,
+  ReadStatus,
   TelegramState,
 } from '../shared/protocol'
 import { downloadFileName, fmtBytes, type OutgoingFile } from '../shared/media'
@@ -49,6 +50,8 @@ export interface TelegramPort {
   /** Replace the text of one of your own text messages. */
   editMessage(chatId: number, messageId: number, text: string, opts?: { parseMode?: SendOptions['parseMode'] }): Promise<MessageInfo>
   getHistory(chatId: number, opts: { limit: number; beforeId?: number; topicId?: number }): Promise<MessageInfo[]>
+  /** Who has read one of your own messages (Telegram only tells for small groups and recent messages). */
+  getReadStatus(chatId: number, messageId: number): Promise<ReadStatus>
   /** Recent dialogs, newest first; `type` keeps only one kind (private chats, groups, channels or bots). */
   listDialogs(opts: { limit: number; unreadOnly: boolean; type?: ChatKind }): Promise<DialogInfo[]>
   searchChats(query: string, limit: number): Promise<(PeerInfo & { global: boolean })[]>
@@ -477,6 +480,35 @@ export class MtcuteTelegram implements TelegramPort {
       ? await c.searchMessages({ chatId, threadId: opts.topicId, limit: opts.limit, maxId: opts.beforeId, query: '' })
       : await c.getHistory(chatId, { limit: opts.limit, maxId: opts.beforeId })
     return [...list].map(messageInfo).reverse()
+  }
+
+  async getReadStatus(chatId: number, messageId: number): Promise<ReadStatus> {
+    const c = await this.#ready()
+    const [m] = await c.getMessages(chatId, [messageId])
+    if (!m) throw new Error(`Message #${messageId} not found in that chat.`)
+    if (!m.isOutgoing) throw new Error(`Message #${messageId} was not sent from your account: only your own messages have read receipts.`)
+    const peer = await c.resolvePeer(chatId)
+    if (peer._ === 'inputPeerUser' || peer._ === 'inputPeerSelf') {
+      const r = await c.call({ _: 'messages.getPeerDialogs', peers: [{ _: 'inputDialogPeer', peer }] })
+      const d = r.dialogs[0]
+      if (!d || d._ !== 'dialog') throw new Error('Telegram did not return this chat\'s read state.')
+      return { kind: 'private', seen: messageId <= d.readOutboxMaxId }
+    }
+    let parts
+    try {
+      parts = await c.call({ _: 'messages.getMessageReadParticipants', peer, msgId: messageId })
+    } catch (e) {
+      const text = e instanceof Error ? e.message : String(e)
+      if (/CHAT_TOO_BIG/.test(text)) throw new Error('Telegram only tells who read a message in groups of up to 100 people.')
+      if (/MSG_TOO_OLD/.test(text)) throw new Error('Telegram only tells who read a message for about a week after it was sent.')
+      throw e
+    }
+    const users = parts.length ? await c.getUsers(parts.map(x => x.userId)) : []
+    const readers = parts.map((x, i) => {
+      const u = users[i]
+      return { id: Number(x.userId), name: u?.displayName ?? String(x.userId), username: u?.username ?? null, at: new Date(x.date * 1000).toISOString() }
+    })
+    return { kind: 'group', readers }
   }
 
   async downloadMedia(chatId: number, messageId: number, dir: string, maxBytes: number): Promise<DownloadedFile> {

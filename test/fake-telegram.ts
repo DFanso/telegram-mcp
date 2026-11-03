@@ -1,7 +1,7 @@
 import { mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import type { SendFileOptions, SendOptions, StickerRef, TelegramPort } from '../src/daemon/telegram'
-import type { DialogInfo, DownloadedFile, IncomingMessage, MessageInfo, PeerInfo, TelegramState } from '../src/shared/protocol'
+import type { DialogInfo, DownloadedFile, IncomingMessage, MessageInfo, PeerInfo, ReadStatus, TelegramState } from '../src/shared/protocol'
 import { downloadFileName, type OutgoingFile } from '../src/shared/media'
 import { matchesChatKind, type ChatKind } from '../src/shared/tools'
 
@@ -104,6 +104,15 @@ export class FakeTelegram implements TelegramPort {
 
   async deleteMessage(chatId: number, messageId: number): Promise<void> {
     this.deleted.push({ chatId, messageId })
+  }
+
+  /** What Telegram would say about who read which of your messages, keyed `${chatId}:${messageId}`. */
+  readStatuses = new Map<string, ReadStatus>()
+
+  async getReadStatus(chatId: number, messageId: number): Promise<ReadStatus> {
+    const st = this.readStatuses.get(`${chatId}:${messageId}`)
+    if (!st) throw new Error(`Message #${messageId} was not sent from your account: only your own messages have read receipts.`)
+    return st
   }
 
   edits: { chatId: number; messageId: number; text: string; parseMode?: SendOptions['parseMode'] }[] = []

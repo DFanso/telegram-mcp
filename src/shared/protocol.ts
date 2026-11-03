@@ -25,6 +25,14 @@ export interface MessageInfo {
   topicId: number | null
 }
 
+/**
+ * Who has read one of your messages, as Telegram reports it. In a private chat it is only whether
+ * the other person has read up to it; in a small group it is the people who did, with the time.
+ */
+export type ReadStatus =
+  | { kind: 'private'; seen: boolean }
+  | { kind: 'group'; readers: { id: number; name: string; username: string | null; at: string }[] }
+
 /** A message's attachment saved to disk. */
 export interface DownloadedFile {
   path: string
