@@ -3,9 +3,17 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Text.Json;
 using System.Windows.Input;
+using System.Windows.Media;
 using TelegramMCPTray.Core;
 
 namespace TelegramMCPTray;
+
+/// <summary>A round avatar: initials on a colour picked by name, the same name always the same colour.</summary>
+public sealed record Avatar(string Initials, Brush Fill)
+{
+    public static Avatar For(string name) =>
+        new(Format.Initials(name), Theme.Avatars[Format.AvatarIndex(name, Theme.Avatars.Length)]);
+}
 
 /// <summary>A draft waiting for approval. Kept across polls, so a nickname being typed survives.</summary>
 public sealed class ApprovalVM : Observable
@@ -31,9 +39,14 @@ public sealed class ApprovalVM : Observable
     public UiApproval Item { get; }
     public string Id => Item.Id;
     public string To => Item.To;
+    public Avatar Avatar => Avatar.For(Item.Nickname ?? Item.To);
     public string Text => Item.Text;
     public string Detail => Item.Detail;
     public string ReasonLine => $"{Item.Reason} · {Item.SessionLabel}";
+    /// <summary>Why it waits for you, as the daemon puts it ("this chat is on the requireApproval list").</summary>
+    public string Reason => Item.Reason;
+    /// <summary>"Asked by api-server · pid 4121": which Claude session wants to send it.</summary>
+    public string AskedBy => $"Asked by {Item.SessionLabel}";
     public bool FirstTime => Item.FirstTime;
     /// <summary>First message to a chat that has no nickname yet: the nickname box shows.</summary>
     public bool AsksNickname => Item.FirstTime && Item.Nickname is null;
@@ -55,7 +68,19 @@ public sealed class ApprovalVM : Observable
     }
 
     public string ExpandLabel => _expanded ? "Show less" : "Show all";
-    public string Ago { get => _ago; set => Set(ref _ago, value); }
+    public string Ago
+    {
+        get => _ago;
+        set
+        {
+            if (Set(ref _ago, value)) Raise(nameof(AgoText));
+        }
+    }
+
+    /// <summary>"just now", "5m ago".</summary>
+    public string AgoText => AgoWords(_ago);
+
+    internal static string AgoWords(string ago) => ago == "now" ? "just now" : $"{ago} ago";
 
     public bool Busy
     {
@@ -124,6 +149,9 @@ public sealed class RecentChatVM : Observable
 
     public long ChatId { get; }
     public string Label { get; }
+    public Avatar Avatar => Avatar.For(Label);
+    /// <summary>"3 messages · 5m": how many were sent there lately, and when the last one went.</summary>
+    public string Summary => $"{(Count is null ? "1 message" : $"{Count} messages")} · last sent {ApprovalVM.AgoWords(Ago)}";
     public string? Count { get; }
     public string Ago { get; }
     public IReadOnlyList<RecentMessageVM> Messages { get; }
@@ -137,7 +165,7 @@ public sealed class RecentChatVM : Observable
         }
     }
 
-    public string Chevron => _open ? "" : "";
+    public string Chevron => _open ? "chevron-up" : "chevron-down";
     public ICommand Toggle { get; }
 }
 
@@ -186,15 +214,19 @@ public sealed class ContactVM : Observable
     }
 
     public string Nickname => _c.Nickname;
+    public Avatar Avatar => Avatar.For(_c.Name ?? _c.Nickname);
+    /// <summary>Groups, channels and bots get a glyph on their avatar instead of initials.</summary>
+    public bool ShowsGlyph => Kind is ContactKind.Group or ContactKind.Channel or ContactKind.Bot;
     public string Subtitle => Contacts.Subtitle(_c);
     public ContactKind Kind => Contacts.Kind(_c);
-    public string KindGlyph => Kind switch
+    /// <summary>The Lucide icon on a group's, channel's or bot's avatar.</summary>
+    public string KindIcon => Kind switch
     {
-        ContactKind.Person => "",
-        ContactKind.Bot => "",
-        ContactKind.Group => "",
-        ContactKind.Channel => "",
-        _ => "",
+        ContactKind.Bot => "bot",
+        ContactKind.Group => "users",
+        ContactKind.Channel => "megaphone",
+        ContactKind.Person => "user",
+        _ => "message-circle",
     };
     public Tag? AutoReplyTag => Contacts.AutoReplyTag(_c);
     public Tag? PageFromTag => Contacts.PageFromTag(_c);
@@ -231,7 +263,7 @@ public sealed class ContactVM : Observable
     bool CanSendPage => !_paging && !Contacts.Blocked(_c, _defaultPolicy);
 
     public bool IsOpen => _panel.OpenNickname == Nickname;
-    public string Chevron => IsOpen ? "" : "";
+    public string Chevron => IsOpen ? "chevron-up" : "chevron-down";
     internal void OpenChanged()
     {
         Raise(nameof(IsOpen));

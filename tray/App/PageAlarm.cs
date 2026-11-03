@@ -123,7 +123,7 @@ sealed class PageAlarm
             .AddAudio(new Uri("ms-winsoundevent:Notification.Looping.Alarm"), loop: true)
             .AddButton(new ToastButton().SetContent("Ack").AddArgument("page", p.Id).AddArgument("do", "ack").SetBackgroundActivation())
             .AddButton(new ToastButton().SetContent("Snooze 15m").AddArgument("page", p.Id).AddArgument("do", "s15").SetBackgroundActivation())
-            .AddButton(new ToastButton().SetContent("1h").AddArgument("page", p.Id).AddArgument("do", "s60").SetBackgroundActivation());
+            .AddButton(new ToastButton().SetContent("Snooze 1h").AddArgument("page", p.Id).AddArgument("do", "s60").SetBackgroundActivation());
         Toasts.Safely(() => toast.Show(t =>
         {
             t.Tag = p.Id;
@@ -139,11 +139,14 @@ sealed class PageAlarm
     }
 }
 
-/// <summary>The window that stays on top while a page rings.</summary>
+/// <summary>
+/// The window that stays on top while a page rings. An ordinary window, so it paints the opaque
+/// Surface colour (the panel's tints are see-through, made for acrylic) and uses the panel's pills.
+/// </summary>
 sealed class PageWindow : Window
 {
     readonly PageAlarm _alarm;
-    readonly StackPanel _list = new() { Margin = new Thickness(18) };
+    readonly StackPanel _list = new() { Margin = new Thickness(20) };
     string _signature = "";
 
     public PageWindow(PageAlarm alarm)
@@ -157,8 +160,11 @@ sealed class PageWindow : Window
         Topmost = true;
         ShowInTaskbar = true;
         Content = _list;
-        SetResourceReference(BackgroundProperty, "PanelBg");
+        SetResourceReference(BackgroundProperty, "Surface");
         SetResourceReference(ForegroundProperty, "Fg");
+        SetResourceReference(FontFamilyProperty, "UiFont");
+        FontSize = 13;
+        SourceInitialized += (_, _) => Native.DarkTitleBar(new System.Windows.Interop.WindowInteropHelper(this).Handle, Theme.AppsDark);
         // Closing only hides it: the page keeps ringing until it is acked or snoozed.
         Closing += (_, e) =>
         {
@@ -174,58 +180,71 @@ sealed class PageWindow : Window
         if (signature == _signature) return;
         _signature = signature;
         _list.Children.Clear();
-        _list.Children.Add(new TextBlock
+        var title = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 14) };
+        var bell = new SvgIcon { Kind = "bell-ring", Width = 22, Height = 22, Margin = new Thickness(0, 0, 10, 0) };
+        bell.SetResourceReference(SvgIcon.ForegroundProperty, "Red");
+        title.Children.Add(bell);
+        var heading = new TextBlock
         {
             Text = ringing.Count > 1 ? $"{ringing.Count} pages" : "Page",
-            FontSize = 18,
-            FontWeight = FontWeights.Bold,
-            Foreground = Brushes.Crimson,
-            Margin = new Thickness(0, 0, 0, 10),
-        });
+            FontSize = 20,
+            FontWeight = FontWeights.SemiBold,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        heading.SetResourceReference(TextBlock.ForegroundProperty, "Red");
+        title.Children.Add(heading);
+        _list.Children.Add(title);
         foreach (var p in ringing) _list.Children.Add(Card(p));
     }
 
     UIElement Card(UiPage p)
     {
-        var card = new StackPanel { Margin = new Thickness(0, 0, 0, 12) };
-        card.Children.Add(new TextBlock { Text = p.From, FontWeight = FontWeights.SemiBold, FontSize = 14 });
-        if (p.Chat is { } chat) card.Children.Add(new TextBlock { Text = chat, Opacity = 0.7 });
+        var card = new StackPanel();
+        var border = new Border { Child = card, CornerRadius = new CornerRadius(14), Padding = new Thickness(14), Margin = new Thickness(0, 0, 0, 12), BorderThickness = new Thickness(1) };
+        border.SetResourceReference(Border.BackgroundProperty, "Subtle2");
+        border.SetResourceReference(Border.BorderBrushProperty, "CardBorder");
+        card.Children.Add(new TextBlock { Text = p.From, FontWeight = FontWeights.SemiBold, FontSize = 15 });
+        if (p.Chat is { } chat)
+        {
+            var c = new TextBlock { Text = chat, FontSize = 12 };
+            c.SetResourceReference(TextBlock.ForegroundProperty, "Fg3");
+            card.Children.Add(c);
+        }
         card.Children.Add(new TextBlock
         {
             Text = string.IsNullOrEmpty(p.Reason) ? "No reason given" : p.Reason,
             TextWrapping = TextWrapping.Wrap,
-            Margin = new Thickness(0, 6, 0, 6),
-            FontSize = 13,
+            Margin = new Thickness(0, 8, 0, 8),
+            FontSize = 14,
         });
         if (p.State == "unanswered")
         {
-            card.Children.Add(new TextBlock
+            var warn = new TextBlock
             {
                 Text = "Not acked on the phone either; the sender was told to call.",
-                Foreground = Brushes.DarkOrange,
-                Margin = new Thickness(0, 0, 0, 6),
-            });
+                TextWrapping = TextWrapping.Wrap,
+                Margin = new Thickness(0, 0, 0, 8),
+                FontSize = 12,
+            };
+            warn.SetResourceReference(TextBlock.ForegroundProperty, "Orange");
+            card.Children.Add(warn);
         }
-        var buttons = new StackPanel { Orientation = Orientation.Horizontal };
-        buttons.Children.Add(Btn("Ack", () => _alarm.Press(p.Id, true, 0), primary: true));
-        buttons.Children.Add(Btn("Snooze 15m", () => _alarm.Press(p.Id, false, 15)));
-        buttons.Children.Add(Btn("1h", () => _alarm.Press(p.Id, false, 60)));
+        var buttons = new WrapPanel();
+        buttons.Children.Add(Btn("Ack", "RedFill", () => _alarm.Press(p.Id, true, 0), filled: true));
+        buttons.Children.Add(Btn("Snooze 15m", "Orange", () => _alarm.Press(p.Id, false, 15)));
+        buttons.Children.Add(Btn("Snooze 1h", "Orange", () => _alarm.Press(p.Id, false, 60)));
         if (Pages.MessageUri(p.ChatId, p.MessageId) is { } uri)
         {
-            buttons.Children.Add(Btn("Open message", () => Process.Start(new ProcessStartInfo(uri.ToString()) { UseShellExecute = true })));
+            buttons.Children.Add(Btn("Open message", "Blue", () => Process.Start(new ProcessStartInfo(uri.ToString()) { UseShellExecute = true })));
         }
         card.Children.Add(buttons);
-        return card;
+        return border;
     }
 
-    static Button Btn(string text, Action click, bool primary = false)
+    static PillButton Btn(string text, string tint, Action click, bool filled = false)
     {
-        var b = new Button { Content = text, Padding = new Thickness(12, 4, 12, 4), Margin = new Thickness(0, 0, 8, 0), IsDefault = primary };
-        if (primary)
-        {
-            b.Background = Brushes.Crimson;
-            b.Foreground = Brushes.White;
-        }
+        var b = new PillButton { Content = text, Filled = filled, Margin = new Thickness(0, 4, 8, 0), IsDefault = filled };
+        b.SetResourceReference(PillButton.TintProperty, tint);
         b.Click += (_, _) => click();
         return b;
     }
