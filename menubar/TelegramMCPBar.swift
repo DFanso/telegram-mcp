@@ -711,7 +711,12 @@ func agoWords(_ iso: String) -> String {
 
 /// One or two letters for an avatar: "Leo Gavin" → "LG", "team-qa" → "TQ", "@anna_k" → "AK",
 /// "leo" → "L" (Format.Initials in the tray). Emoji and symbols are skipped; nothing usable gives "?".
+/// A label's trailing " [nickname]" is not part of the name: "Leo Perera [leo]" → "LP", not "LL".
 func initials(_ name: String) -> String {
+    var name = name
+    if name.hasSuffix("]"), let open = name.range(of: " [", options: .backwards), open.lowerBound > name.startIndex {
+        name = String(name[..<open.lowerBound])
+    }
     let separators: Set<Character> = [" ", "-", "_", ".", "@", "(", ")"]
     let firsts = name.split(whereSeparator: { separators.contains($0) })
         .compactMap { $0.first(where: { $0.isLetter || $0.isNumber }) }
@@ -1385,13 +1390,36 @@ struct ListenSwitch: View {
     let label: String
     let change: (Bool) -> Void
     var body: some View {
-        Toggle(isOn: Binding(get: { on }, set: { change($0) })) { Text(verbatim: label) }
-            .toggleStyle(.switch)
-            .controlSize(.mini)
-            .labelsHidden()
-            .tint(Palette.blueFill)
-            .disabled(busy)
-            .accessibilityLabel(Text(verbatim: label))
+        if isSnapshot {
+            SnapshotSwitch(on: on, tint: Palette.blueFill, mini: true)
+        } else {
+            Toggle(isOn: Binding(get: { on }, set: { change($0) })) { Text(verbatim: label) }
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
+                .tint(Palette.blueFill)
+                .disabled(busy)
+                .accessibilityLabel(Text(verbatim: label))
+        }
+    }
+}
+
+/// The offscreen snapshot renderer can't draw a native switch (it leaves a yellow placeholder),
+/// so snapshots get this drawing of one instead.
+struct SnapshotSwitch: View {
+    let on: Bool
+    let tint: Color
+    var mini = false
+    var body: some View {
+        let size = mini ? CGSize(width: 26, height: 15) : CGSize(width: 38, height: 22)
+        Capsule()
+            .fill(on ? tint : Color.primary.opacity(0.18))
+            .frame(width: size.width, height: size.height)
+            .overlay(alignment: on ? .trailing : .leading) {
+                Circle().fill(Color.white)
+                    .shadow(color: .black.opacity(0.25), radius: 0.5, y: 0.5)
+                    .padding(1.5)
+            }
     }
 }
 
@@ -1926,20 +1954,26 @@ struct ApprovalCard: View {
                 Spacer(minLength: 0)
             }
             .padding(.top, 8)
-            // The two ways to send it, side by side under the explanation they answer.
-            HStack(spacing: 8) {
-                Button(busy ? "Sending\u{2026}" : "Send, ask next time") { decide(remember: "requireApproval") }
-                    .buttonStyle(Pill(tint: p.orange, wide: true))
-                    .help("Send now. Future messages to this chat wait for you too (Ask every time).")
-                Button(busy ? "Sending\u{2026}" : "Send, always allow") { decide(remember: "autoSend") }
-                    .buttonStyle(Pill(tint: .white, fill: Palette.greenFill, wide: true))
-                    .help("Send now and trust this chat: future messages send without asking")
+            // The two ways to send it, side by side under the explanation they answer. The menu bar
+            // panel is narrower than the tray's, so they stack when both labels don't fit in full.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 8) { sendChoices(p) }
+                VStack(spacing: 6) { sendChoices(p) }
             }
             .padding(.top, 10)
             .disabled(busy)
         }
         .padding(.horizontal, 10).padding(.vertical, 8)
         .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(p.wash(p.blue)))
+    }
+
+    @ViewBuilder private func sendChoices(_ p: Palette) -> some View {
+        Button(busy ? "Sending\u{2026}" : "Send, ask next time") { decide(remember: "requireApproval") }
+            .buttonStyle(Pill(tint: p.orange, wide: true))
+            .help("Send now. Future messages to this chat wait for you too (Ask every time).")
+        Button(busy ? "Sending\u{2026}" : "Send, always allow") { decide(remember: "autoSend") }
+            .buttonStyle(Pill(tint: .white, fill: Palette.greenFill, wide: true))
+            .help("Send now and trust this chat: future messages send without asking")
     }
 
     /// Deny, and Send for a chat that has a rule (a new chat's two ways to send are in its box above).
@@ -2596,12 +2630,16 @@ struct AwayEditor: View {
                     Text(verbatim: Away.status(away)).font(.system(size: 11)).foregroundStyle(away.active ? p.blue : p.fg3)
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
-                Toggle(isOn: Binding(get: { away.enabled }, set: { toggle($0) })) { Text("Reply while I\u{2019}m away") }
-                    .toggleStyle(.switch)
-                    .labelsHidden()
-                    .tint(Palette.greenFill)
-                    .disabled(busy)
-                    .help("Saves as soon as you switch it")
+                if isSnapshot {
+                    SnapshotSwitch(on: away.enabled, tint: Palette.greenFill)
+                } else {
+                    Toggle(isOn: Binding(get: { away.enabled }, set: { toggle($0) })) { Text("Reply while I\u{2019}m away") }
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                        .tint(Palette.greenFill)
+                        .disabled(busy)
+                        .help("Saves as soon as you switch it")
+                }
             }
             // In plain words first: what happens, and who never gets it.
             Hint(text: "When it\u{2019}s on, someone who messages you privately during these hours gets this reply, once a night. Groups, bots, Blocked and Ask every time chats, and chats Claude is handling, never do.")
