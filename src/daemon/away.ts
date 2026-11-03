@@ -26,6 +26,26 @@ interface Answered {
   chats: number[]
 }
 
+/** What a sender gets: the message with {name} filled in, plus the footer. */
+export function awayText(config: Config, me: { name: string } | null | undefined): string {
+  return withFooter(renderAwayMessage(config.away.message, firstName(me)), config.footer)
+}
+
+/** The away settings as the tray shows them. One place, so the responder and a Service without one agree. */
+export function uiAway(config: Config, me: { name: string } | null | undefined, at: Date): UiAway {
+  const { away } = config
+  return {
+    enabled: away.enabled,
+    from: away.from,
+    until: away.until,
+    message: away.message,
+    quietMinutes: away.quietMinutes,
+    active: away.enabled && awayWindowAt(away, at) !== null,
+    nextChange: nextAwayChange(away, at)?.toISOString() ?? null,
+    preview: awayText(config, me),
+  }
+}
+
 /** Sends at most one away reply per chat per away window, to people only, and never over a live Claude or page. */
 export class AwayResponder {
   #answered: Answered | null = null
@@ -37,7 +57,7 @@ export class AwayResponder {
   #log = (m: string) => this.d.log?.(m)
 
   #text(config: Config): string {
-    return withFooter(renderAwayMessage(config.away.message, firstName(this.d.tg.state().me)), config.footer)
+    return awayText(config, this.d.tg.state().me)
   }
 
   /** The answered set for `window`: loaded lazily from disk, reset when the window differs. */
@@ -115,19 +135,7 @@ export class AwayResponder {
   }
 
   ui(): UiAway {
-    const config = this.d.config()
-    const { away } = config
-    const now = new Date(this.#now())
-    return {
-      enabled: away.enabled,
-      from: away.from,
-      until: away.until,
-      message: away.message,
-      quietMinutes: away.quietMinutes,
-      active: away.enabled && awayWindowAt(away, now) !== null,
-      nextChange: nextAwayChange(away, now)?.toISOString() ?? null,
-      preview: this.#text(config),
-    }
+    return uiAway(this.d.config(), this.d.tg.state().me, new Date(this.#now()))
   }
 
   summary(): string {
