@@ -64,6 +64,7 @@ public static class Format
     public static string ViaLabel(string via) => via switch
     {
         "auto" => "auto-sent",
+        "away" => "away reply",
         "menubar" => "approved in the tray",
         "dialog" => "approved in the dialog",
         _ => "approved in chat",

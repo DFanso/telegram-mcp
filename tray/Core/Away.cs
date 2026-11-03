@@ -1,0 +1,58 @@
+using System.Globalization;
+using System.Text.RegularExpressions;
+
+namespace TelegramMCPTray.Core;
+
+/// <summary>
+/// The Away page: the words for the away auto-reply state and the same checks the daemon makes
+/// (src/shared/away.ts), so a mistake is caught before the call. The daemon does the saving.
+/// </summary>
+public static class Away
+{
+    /// <summary>A 404 from POST /ui/away, or no away in /ui/state.</summary>
+    public const string OlderDaemon = "The daemon is older than this app. Restart it to set away hours.";
+
+    public const int MessageMax = 1000;
+
+    static readonly Regex TimeRe = new(@"^([01][0-9]|2[0-3]):[0-5][0-9]\z", RegexOptions.CultureInvariant);
+
+    public static string Status(UiAway a) =>
+        !a.Enabled ? "Off" : a.Active ? $"Away now, until {a.Until}" : $"Starts at {a.From}";
+
+    /// <summary>The line for the Status page while a reply could go out; null otherwise.</summary>
+    public static string? Badge(UiAway? a) => a is { Enabled: true, Active: true } ? $"Away until {a.Until}" : null;
+
+    public static bool IsTime(string s) => TimeRe.IsMatch(s);
+
+    public const int QuietMax = 1440;
+
+    /// <summary>Quiet minutes as typed: a whole number from 0 to a day, or null. No sign, decimals or exponent.</summary>
+    public static int? Quiet(string s) =>
+        int.TryParse(s.Trim(), NumberStyles.None, CultureInfo.InvariantCulture, out var n) && n <= QuietMax ? n : null;
+
+    /// <summary>The first problem, in the daemon's words, or null when the fields are fine.</summary>
+    public static string? Check(string from, string until, string message, string quiet = "30")
+    {
+        if (!IsTime(from)) return "from must be a time like 18:00";
+        if (!IsTime(until)) return "until must be a time like 18:00";
+        if (from == until) return "From and until can't be the same time.";
+        if (message.Trim() == "") return "The message can't be empty.";
+        if (message.Length > MessageMax) return $"The message is too long ({MessageMax} characters at most).";
+        if (Quiet(quiet) is null) return $"quietMinutes must be a whole number from 0 to {QuietMax}";
+        return null;
+    }
+
+    /// <summary>
+    /// What the message would send: {name} becomes the first word of your name (left as is when it is unknown),
+    /// then the footer is added unless the text already ends with it. Mirrors withFooter in src/shared/policy.ts.
+    /// </summary>
+    public static string Preview(string message, string? meName, string footer)
+    {
+        var first = meName?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        var text = first is null ? message : message.Replace("{name}", first, StringComparison.Ordinal);
+        var mark = footer.Trim();
+        if (mark == "") return text;
+        var body = text.TrimEnd();
+        return body.EndsWith(mark, StringComparison.Ordinal) ? body : body + footer;
+    }
+}

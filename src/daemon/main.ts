@@ -1,9 +1,11 @@
 import { join } from 'node:path'
+import { firstName } from '../shared/away'
 import { ConfigStore, isListed } from '../shared/config'
 import { ensureHome, makeLogger } from '../shared/files'
 import { getPaths, getPort, type Paths } from '../shared/paths'
 import { ensureToken, loadCredentials, openSecretStore, type SecretStore } from '../shared/secrets'
 import { Approvals } from './approvals'
+import { AwayResponder } from './away'
 import { PageBot } from './page-bot'
 import { Pager, pageTrigger } from './pager'
 import { eventsKey, startServer } from './server'
@@ -51,7 +53,7 @@ export async function createDaemon(o: DaemonOptions) {
   const ownerId = () => tg.state().me?.id ?? null
   const pager: Pager = new Pager({
     paging: () => store.get().paging,
-    ownerName: () => tg.state().me?.name.split(' ')[0] || 'They',
+    ownerName: () => firstName(tg.state().me) ?? 'They',
     channel: () => bot,
     // The fixed replies go out from your account, through the same rules as any send.
     tellSender: (chatId, text, replyTo) => service.tellPageSender(chatId, text, replyTo),
@@ -69,6 +71,16 @@ export async function createDaemon(o: DaemonOptions) {
       })
     : null
 
+  const away = new AwayResponder({
+    config: () => store.get(),
+    tg,
+    hub,
+    pages: () => pager.active(),
+    record: r => service.recordSent(r),
+    statePath: join(o.paths.home, 'away.json'),
+    log,
+  })
+
   let port = o.port
   const service = new Service({
     store,
@@ -81,6 +93,7 @@ export async function createDaemon(o: DaemonOptions) {
     downloadsDir: o.paths.downloads,
     mcpHome: o.paths.home,
     pager,
+    away,
   })
 
   // Bind first: if another daemon already owns the port, fail before touching the Telegram session.
@@ -100,6 +113,9 @@ export async function createDaemon(o: DaemonOptions) {
 
   tg.onMessage(msg => {
     if (msg.outgoing) {
+      // The message's own time: a catch-up after sleep replays old sends, which mustn't count as just now.
+      const sentAt = Date.parse(msg.date)
+      away.noteOutgoing(msg.chatId, Number.isNaN(sentAt) ? Date.now() : sentAt)
       service
         .handleOwnMessage(msg)
         .then(cmd => cmd && log(`/reply in ${msg.chatId}: ${hub.takeoverOf(msg.chatId) ?? 'no session took it (or it ended)'}`))
@@ -125,6 +141,7 @@ export async function createDaemon(o: DaemonOptions) {
         })
         .then(r => log(r.ok ? `page ${r.page.id} (${trigger.source}) from ${msg.from!.id} in ${msg.chatId}` : `page from ${msg.from!.id} not sent: ${r.error}`))
     }
+    void away.onIncoming(msg, trigger !== null)
     // Taking a chat off autoReply ends listening to it at once, even for existing watches. A chat
     // handed over with /reply is listened to for as long as the takeover lasts.
     if (!hub.takeoverOf(msg.chatId) && !isListed(store.get(), 'autoReply', msg.chat)) return

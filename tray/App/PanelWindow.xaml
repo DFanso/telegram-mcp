@@ -441,9 +441,9 @@
                     </StackPanel>
                 </Grid>
 
-                <!-- Tabs: Home (approvals, listening, recent) and Contacts (each chat's rules). -->
+                <!-- Tabs: Home (approvals, listening, recent), Contacts (each chat's rules) and Away (the away auto-reply). -->
                 <Border Margin="0,16,0,0" CornerRadius="19" Background="{DynamicResource Subtle}" BorderBrush="{DynamicResource CardBorder}" BorderThickness="1" Padding="3">
-                    <UniformGrid Columns="2">
+                    <UniformGrid Columns="3">
                         <local:PillButton Style="{StaticResource Tab}" Filled="{Binding MainPage, Mode=OneWay}" Command="{Binding ShowMain}" ToolTip="Home (Ctrl+1)">
                             <StackPanel Orientation="Horizontal">
                                 <local:SvgIcon Kind="house" Width="15" Height="15" Margin="0,0,7,0" />
@@ -458,6 +458,15 @@
                             <StackPanel Orientation="Horizontal">
                                 <local:SvgIcon Kind="users" Width="15" Height="15" Margin="0,0,7,0" />
                                 <TextBlock Text="Contacts" />
+                            </StackPanel>
+                        </local:PillButton>
+                        <local:PillButton Style="{StaticResource Tab}" Filled="{Binding AwayPage, Mode=OneWay}" Command="{Binding ShowAway}" ToolTip="Away: one reply for you while you're off (Ctrl+3)">
+                            <StackPanel Orientation="Horizontal">
+                                <local:SvgIcon Kind="moon" Width="15" Height="15" Margin="0,0,7,0" />
+                                <TextBlock Text="Away" />
+                                <!-- Green while away replies can go out. -->
+                                <Ellipse Width="7" Height="7" Fill="{DynamicResource Green}" Margin="7,0,0,0" VerticalAlignment="Center"
+                                         Visibility="{Binding AwayBadge, Converter={StaticResource IfSet}}" />
                             </StackPanel>
                         </local:PillButton>
                     </UniformGrid>
@@ -519,7 +528,7 @@
                         <TextBlock Text="Quit" />
                     </StackPanel>
                 </Button>
-                <TextBlock Text="Esc closes · Ctrl+F finds a contact" FontSize="10" Foreground="{DynamicResource Fg3}" VerticalAlignment="Center" />
+                <TextBlock Text="Esc closes · Ctrl+1–3 switch tabs · Ctrl+F finds a contact" FontSize="10" Foreground="{DynamicResource Fg3}" VerticalAlignment="Center" />
             </DockPanel>
 
             <!-- The middle scrolls when it would run past the screen; header and footer stay put. -->
@@ -544,6 +553,16 @@
                                 <DockPanel>
                                     <local:SvgIcon Kind="triangle-alert" Width="15" Height="15" DockPanel.Dock="Left" Foreground="{DynamicResource Red}" VerticalAlignment="Top" Margin="0,1,8,0" />
                                     <TextBlock Text="{Binding ConfigError}" FontSize="11" Foreground="{DynamicResource Fg}" TextWrapping="Wrap" />
+                                </DockPanel>
+                            </Border>
+
+                            <!-- Away right now: people who write get one reply. -->
+                            <Border Margin="0,0,0,12" CornerRadius="12" Padding="12,9" Background="{DynamicResource BlueWash}" Visibility="{Binding AwayBadge, Converter={StaticResource IfSet}}">
+                                <DockPanel>
+                                    <local:SvgIcon Kind="moon" Width="15" Height="15" DockPanel.Dock="Left" Foreground="{DynamicResource Blue}" VerticalAlignment="Top" Margin="0,1,8,0" />
+                                    <TextBlock FontSize="11" Foreground="{DynamicResource Fg}" TextWrapping="Wrap">
+                                        <Run Text="{Binding AwayBadge, Mode=OneWay}" FontWeight="SemiBold" /><Run Text=": people who message you privately get one reply saying you're away." />
+                                    </TextBlock>
                                 </DockPanel>
                             </Border>
 
@@ -642,6 +661,122 @@
                             </DockPanel>
                         </Border>
                         <ItemsControl ItemsSource="{Binding ContactRows}" ItemTemplate="{StaticResource ContactTemplate}" Focusable="False" />
+                    </StackPanel>
+
+                    <!-- Away -->
+                    <StackPanel Visibility="{Binding AwayPage, Converter={StaticResource Visible}}">
+                        <Border Style="{StaticResource CardStyle}" Margin="0,0,0,10" Visibility="{Binding ShownProblem, Converter={StaticResource IfSet}}">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Left" Width="34" Height="34" CornerRadius="17" Background="{DynamicResource Subtle2}" Margin="0,0,10,0" VerticalAlignment="Top">
+                                    <local:SvgIcon Kind="unplug" Width="17" Height="17" Foreground="{DynamicResource Fg2}" HorizontalAlignment="Center" />
+                                </Border>
+                                <TextBlock Text="{Binding ShownProblem}" FontWeight="SemiBold" TextWrapping="Wrap" VerticalAlignment="Center" />
+                            </DockPanel>
+                        </Border>
+                        <Border Style="{StaticResource CardStyle}" Padding="16" Visibility="{Binding AwayPlaceholder, Converter={StaticResource IfSet}}">
+                            <DockPanel>
+                                <Border DockPanel.Dock="Left" Width="34" Height="34" CornerRadius="17" Background="{DynamicResource Subtle2}" Margin="0,0,10,0" VerticalAlignment="Top">
+                                    <local:SvgIcon Kind="moon" Width="17" Height="17" Foreground="{DynamicResource Fg3}" HorizontalAlignment="Center" />
+                                </Border>
+                                <TextBlock Text="{Binding AwayPlaceholder}" Style="{StaticResource Caption}" Foreground="{DynamicResource Fg2}" VerticalAlignment="Center" />
+                            </DockPanel>
+                        </Border>
+
+                        <Border Style="{StaticResource CardStyle}" Visibility="{Binding AwayShown, Converter={StaticResource Visible}}">
+                            <StackPanel>
+                                <TextBlock Style="{StaticResource CardTitle}" Text="Away auto-reply" />
+
+                                <!-- In plain words first: what happens right now. -->
+                                <Border Margin="0,12,0,0" CornerRadius="10" Background="{DynamicResource Subtle}" Padding="10,8">
+                                    <DockPanel>
+                                        <local:SvgIcon Kind="info" Width="15" Height="15" DockPanel.Dock="Left" Foreground="{DynamicResource Accent}" VerticalAlignment="Top" Margin="0,1,8,0" />
+                                        <TextBlock FontSize="11" Foreground="{DynamicResource Fg2}" TextWrapping="Wrap">
+                                            <Run Text="{Binding AwayStatus, Mode=OneWay}" FontWeight="SemiBold" Foreground="{DynamicResource Fg}" /><Run Text=". When it's on, someone who messages you privately during these hours gets this reply, once a night. Groups, bots, Blocked and Ask every time chats, and chats Claude is handling, never do." />
+                                        </TextBlock>
+                                    </DockPanel>
+                                </Border>
+
+                                <TextBlock Style="{StaticResource SettingTitle}" Text="Reply while I'm away" />
+                                <TextBlock Style="{StaticResource SettingHint}" Text="Saves as soon as you switch it." />
+                                <Border Style="{StaticResource Segments}">
+                                    <StackPanel Orientation="Horizontal">
+                                        <local:PillButton Content="On" MinWidth="60" Choice="True" Tint="{DynamicResource GreenFill}" Filled="{Binding AwayEnabled, Mode=OneWay}"
+                                                          Command="{Binding SetAwayEnabled}" CommandParameter="on" />
+                                        <local:PillButton Content="Off" MinWidth="60" Choice="True" Tint="{DynamicResource GrayFill}" Filled="{Binding AwayDisabled, Mode=OneWay}"
+                                                          Command="{Binding SetAwayEnabled}" CommandParameter="off" />
+                                    </StackPanel>
+                                </Border>
+
+                                <TextBlock Style="{StaticResource SettingTitle}" Text="Hours" />
+                                <TextBlock Style="{StaticResource SettingHint}" Text="This PC's time. Overnight works, like 18:00 until 09:00." />
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBlock Text="From" Foreground="{DynamicResource Fg2}" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                    <Grid>
+                                        <TextBox Width="72" Text="{Binding AwayFrom, UpdateSourceTrigger=PropertyChanged}" MaxLength="5" HorizontalContentAlignment="Center"
+                                                 AutomationProperties.Name="Away from" />
+                                        <TextBlock Text="HH:MM" Foreground="{DynamicResource Fg3}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding AwayFrom}" Value="">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
+                                    <TextBlock Text="until" Foreground="{DynamicResource Fg2}" VerticalAlignment="Center" Margin="12,0,8,0" />
+                                    <Grid>
+                                        <TextBox Width="72" Text="{Binding AwayUntil, UpdateSourceTrigger=PropertyChanged}" MaxLength="5" HorizontalContentAlignment="Center"
+                                                 AutomationProperties.Name="Away until" />
+                                        <TextBlock Text="HH:MM" Foreground="{DynamicResource Fg3}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+                                            <TextBlock.Style>
+                                                <Style TargetType="TextBlock">
+                                                    <Setter Property="Visibility" Value="Collapsed" />
+                                                    <Style.Triggers>
+                                                        <DataTrigger Binding="{Binding AwayUntil}" Value="">
+                                                            <Setter Property="Visibility" Value="Visible" />
+                                                        </DataTrigger>
+                                                    </Style.Triggers>
+                                                </Style>
+                                            </TextBlock.Style>
+                                        </TextBlock>
+                                    </Grid>
+                                </StackPanel>
+
+                                <TextBlock Style="{StaticResource SettingTitle}" Text="Quiet after you write" />
+                                <TextBlock Style="{StaticResource SettingHint}" Text="No away reply in a chat for this long after anything is sent from your account there, by you or by Claude. 0 turns this off." />
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBox Width="72" Text="{Binding AwayQuiet, UpdateSourceTrigger=PropertyChanged}" MaxLength="4" HorizontalContentAlignment="Center"
+                                             AutomationProperties.Name="Quiet minutes" />
+                                    <TextBlock Text="minutes" Foreground="{DynamicResource Fg2}" VerticalAlignment="Center" Margin="8,0,0,0" />
+                                </StackPanel>
+
+                                <TextBlock Style="{StaticResource SettingTitle}" Text="Message" />
+                                <TextBlock Style="{StaticResource SettingHint}" Text="{}{name} becomes your first name." />
+                                <TextBox Text="{Binding AwayMessage, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap"
+                                         MinHeight="64" MaxHeight="140" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top"
+                                         AutomationProperties.Name="Away message" />
+
+                                <TextBlock Style="{StaticResource SettingTitle}" Text="Preview" />
+                                <TextBlock Style="{StaticResource SettingHint}" Text="What they get, footer included." />
+                                <Border CornerRadius="12,12,12,4" Background="{DynamicResource AccentSoft}" Padding="10,7">
+                                    <TextBlock Text="{Binding AwayPreview}" FontSize="12" TextWrapping="Wrap" />
+                                </Border>
+
+                                <DockPanel Margin="0,10,0,0" Visibility="{Binding AwayError, Converter={StaticResource IfSet}}">
+                                    <local:SvgIcon Kind="triangle-alert" Width="14" Height="14" DockPanel.Dock="Left" Foreground="{DynamicResource Red}" VerticalAlignment="Top" Margin="0,1,6,0" />
+                                    <TextBlock Text="{Binding AwayError}" FontSize="11" Foreground="{DynamicResource Red}" TextWrapping="Wrap" />
+                                </DockPanel>
+                                <DockPanel Margin="0,12,0,0">
+                                    <local:PillButton DockPanel.Dock="Right" Content="Save" Filled="True" Tint="{DynamicResource AccentFill}" MinWidth="76" Command="{Binding SaveAway}"
+                                                      ToolTip="Save the hours, quiet minutes and message" />
+                                    <TextBlock Style="{StaticResource Caption}" Text="Hours, quiet minutes and message save with Save." VerticalAlignment="Center" />
+                                </DockPanel>
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </Grid>
             </ScrollViewer>

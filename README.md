@@ -199,6 +199,42 @@ The sender gets fixed replies, never text Claude wrote and never their own reaso
 
 The bot only messages the account you're logged in as, and ignores button presses from anyone else.
 
+## Away auto-reply
+
+When you're off for the night, friends who write get one reply saying so. It's **off by default**. Turn it on and it answers during the hours you set (6pm to 9am unless you change it, in the laptop's local time; the start is included and the end is not):
+
+> Chamodh is off the grid for the night and will get back to you tomorrow. If something's on fire, call them 🔥
+
+`{name}` becomes your first name, and the footer is added as with any message. The reply goes out plain (not as a reply to their message) and without approval. The rules, so it never gets in the way:
+
+- Only private chats with people: not groups, bots, Saved Messages, or Telegram's service and support accounts.
+- Only chats whose rules allow a message without asking: never a **Blocked** or **Ask every time** chat, nor a chat that isn't saved when `defaultPolicy` is `"block"`. (Like the pager's fixed replies: nobody is there to approve it.)
+- Once per chat per night, and at most 20 replies a night in all, so a wave of messages from strangers doesn't look like spam from your account. A restart in the middle of the night doesn't reset either.
+- Only while it's still away hours: a message from 08:58 that the laptop picks up at 09:05 gets nothing.
+- Not for 30 minutes after anything was sent from your account in that chat, whether you typed it or Claude sent it (`quietMinutes`; 0 turns this off). The Page button's message and the away reply itself don't count.
+- Not while a Claude session is handling the chat (watching it, or after `/reply`).
+- Not to someone who is paging you, or whose page is still waiting.
+- Only for messages less than 10 minutes old, so catching up after the laptop sleeps doesn't send night-time replies in the morning.
+
+Change it from the Away page of the menu bar app (macOS) or the Away tab of the tray app (Windows), with `tgmcp away`, or in `config.json`:
+
+```
+tgmcp away                          # show the settings and the reply text
+tgmcp away on | off
+tgmcp away hours 19:00 08:30        # from, until (24-hour HH:MM; they can't be equal)
+tgmcp away message "{name} is away until tomorrow."   # at most 1000 characters
+tgmcp away quiet 60
+```
+
+```jsonc
+"away": {
+  "enabled": true, "from": "18:00", "until": "09:00",
+  "message": "{name} is away until tomorrow.", "quietMinutes": 30
+}
+```
+
+An away reply shows under Recently sent as "away reply". No MCP tool can change these settings, so sessions can't turn it on or rewrite the message; only you can, through the file, the CLI, the menu bar app or the tray (`POST /ui/away` with the token).
+
 ## Menu bar app
 
 `tgmcp menubar` builds `menubar/build/Telegram MCP.app` (SwiftUI, no Dock icon) and starts it at login. Choosing Quit keeps it closed until your next login. It shows:
@@ -208,6 +244,7 @@ The bot only messages the account you're logged in as, and ignores button presse
 - **Listening**: each session that is watching chats, and whether its Monitor is connected
 - **Recently sent**: the last 5 chats you sent to. Click a chat to see its messages, when they went, how they were approved, and from which session; click again to close it.
 - **Contacts** (the button at the top right): every saved chat, to change its rules without editing `config.json`. See [Contacts](#contacts).
+- **Away** (next to Contacts): the [away auto-reply](#away-auto-reply). On / Off saves at once; the hours, quiet minutes and message save with **Save**, with a preview of the reply. The header says whether it's away now and until when, and while it is, Home shows a line saying so.
 
 <p>
   <img src="docs/menubar-approvals.png" width="370" alt="The menu bar panel: two drafts waiting for approval (one to a saved group, one to a new chat with Deny, Ask every time and Always allow), two listening sessions, and the recently sent chats">
@@ -248,8 +285,9 @@ On Windows, `tgmcp menubar` starts the tray app and sets it to start at login. S
 It is the menu bar app's counterpart:
 
 - **The tray icon** is the paper plane from `docs/icon.svg`, coloured by status: blue when connected, yellow while it reconnects, red when logged out, grey when the daemon can't be reached. A green dot means a session is listening. The amber badge is the number of drafts waiting for you, and `!` means something is wrong. Hover it for a summary.
-- **Click it for the panel**, a frosted-glass flyout (acrylic on Windows 11, following light or dark mode) with two tabs. **Home** shows the connection as a status pill, three tiles (Waiting, Listening, Contacts), then cards for **Waiting for approval** (who asked and why, with Send / Deny; a new chat says it's the first message, gets a nickname box, and offers Deny / **Send, ask next time** / **Send, always allow**), **Listening now**, and **Recently sent** (click a chat to see its messages). Each empty card says what would show up there. As in the menu bar app, a long draft and a recent chat open on click, never on hover. Results flash under the header: a green check when it worked, red when it didn't. Esc clears a search, then closes the panel; Ctrl+1 / Ctrl+2 switch tabs, Ctrl+F searches contacts, and Tab reaches every button, with a focus ring.
+- **Click it for the panel**, a frosted-glass flyout (acrylic on Windows 11, following light or dark mode) with three tabs. **Home** shows the connection as a status pill, three tiles (Waiting, Listening, Contacts), then cards for **Waiting for approval** (who asked and why, with Send / Deny; a new chat says it's the first message, gets a nickname box, and offers Deny / **Send, ask next time** / **Send, always allow**), **Listening now**, and **Recently sent** (click a chat to see its messages). Each empty card says what would show up there. As in the menu bar app, a long draft and a recent chat open on click, never on hover. Results flash under the header: a green check when it worked, red when it didn't. Esc clears a search, then closes the panel; Ctrl+1 to Ctrl+3 switch tabs, Ctrl+F searches contacts, and Tab reaches every button, with a focus ring.
 - **Contacts** (the second tab) is the same page as the menu bar's (see [Contacts](#contacts) above): rename a saved chat, choose what happens when Claude sends there, turn auto-reply on or off, choose who can page you, and page someone.
+- **Away** (the third tab) turns the [away auto-reply](#away-auto-reply) on or off (that saves at once), sets the hours, the quiet minutes and the message (those save with **Save**), and previews the reply with your footer. While replies can go out, the tab shows a green dot and Home says until when. Ctrl+3 opens it.
 - **A Windows notification** for each draft has the same choices as buttons. Click the notification itself to open the panel.
 
 Right-click the icon for Open, Contacts, Rules, Log and Quit. Quit keeps it closed until your next login. `tgmcp menubar uninstall` quits it and stops it starting at login.
@@ -277,6 +315,7 @@ export TELEGRAM_MCP_HOME=/tmp/tgmcp-demo TELEGRAM_MCP_PORT=47901 TELEGRAM_MCP_SE
 "$APP" --snapshot docs/menubar-approvals.png
 SNAPSHOT_EXPAND=recent SNAPSHOT_SCREEN_HEIGHT=4000 "$APP" --snapshot /tmp/history-full.png   # SNAPSHOT_EXPAND: 1, approvals or recent
 SNAPSHOT_PAGE=contacts SNAPSHOT_OPEN=team-qa "$APP" --snapshot docs/menubar-contacts.png    # SNAPSHOT_OPEN: a nickname to open
+SNAPSHOT_PAGE=away "$APP" --snapshot /tmp/menubar-away.png
 ```
 
 ### Releasing

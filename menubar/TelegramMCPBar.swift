@@ -1,7 +1,8 @@
 // Menu bar companion for the telegram-mcp daemon.
 // Shows approvals (approve / deny), which Claude sessions are listening to which chats,
 // and the chats you last sent to (click a chat to see what was sent). The Contacts page lists the
-// saved chats and edits their nickname, sending rule and auto-reply in config.json.
+// saved chats and edits their nickname, sending rule and auto-reply in config.json. The Away page
+// sets the away auto-reply: on or off, its hours, quiet minutes and message.
 // Talks only to the local daemon on 127.0.0.1, authenticated with the token the daemon keeps in
 // the login Keychain (service "telegram-mcp"; a file instead with TELEGRAM_MCP_SECRET_STORE=file).
 
@@ -121,6 +122,22 @@ struct UiPage: Decodable, Identifiable, Equatable {
     }
 }
 
+/// The away auto-reply settings and where the clock puts them (UiAway in src/shared/protocol.ts).
+struct UiAway: Decodable, Equatable {
+    let enabled: Bool
+    /// "HH:MM", this Mac's time.
+    let from: String
+    let until: String
+    let message: String
+    let quietMinutes: Int
+    /// Switched on and inside the hours: a message now gets a reply.
+    let active: Bool
+    /// When it next turns on or off (ISO time); nil while it's off.
+    let nextChange: String?
+    /// The saved message as it goes out: {name} filled in, footer added.
+    let preview: String
+}
+
 struct UiState: Decodable {
     let telegram: TelegramState
     let configError: String?
@@ -133,6 +150,8 @@ struct UiState: Decodable {
     let defaultPolicy: String?
     /// Missing from a daemon older than this app.
     let pages: [UiPage]?
+    /// Missing from a daemon older than this app; the Away page then asks for a restart.
+    let away: UiAway?
 }
 
 /// The chats you last sent to, newest first, each with the messages sent there.
@@ -397,6 +416,34 @@ final class Store: ObservableObject {
         return sent
     }
 
+    /// An Away-page edit for POST /ui/away: any of "enabled", "from", "until", "message", "quietMinutes".
+    /// True when the daemon saved it.
+    @discardableResult
+    func saveAway(_ change: [String: Any]) async -> Bool {
+        guard let req = await request("/ui/away", method: "POST", body: change) else {
+            show(tokenProblem ?? "No token for the daemon yet.")
+            return false
+        }
+        busy.insert("away")
+        defer { busy.remove("away") }
+        var saved = false
+        do {
+            let (data, resp) = try await URLSession.shared.data(for: req)
+            let code = (resp as? HTTPURLResponse)?.statusCode
+            let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            if code == 404 {
+                show(Away.olderDaemon)
+            } else {
+                saved = code == 200
+                show((obj?["text"] as? String) ?? (saved ? "Saved." : "Not changed."))
+            }
+        } catch {
+            show("Could not reach the daemon: \(error.localizedDescription)")
+        }
+        await poll()
+        return saved
+    }
+
     private func show(_ text: String) {
         flash = text
         Task {
@@ -514,8 +561,15 @@ func isLongDraft(_ text: String) -> Bool {
     text.split(separator: "\n", omittingEmptySubsequences: false)
         .reduce(0) { $0 + max(1, ($1.count + 54) / 55) } > 4
 }
-/// `SNAPSHOT_PAGE=contacts` renders the Contacts page; `SNAPSHOT_OPEN=<nickname>` opens that contact.
-let snapshotContacts = ProcessInfo.processInfo.environment["SNAPSHOT_PAGE"] == "contacts"
+/// `SNAPSHOT_PAGE=contacts` renders the Contacts page and `SNAPSHOT_PAGE=away` the Away page;
+/// `SNAPSHOT_OPEN=<nickname>` opens that contact.
+let snapshotPage: PanelPage = {
+    switch ProcessInfo.processInfo.environment["SNAPSHOT_PAGE"] {
+    case "contacts": return .contacts
+    case "away": return .away
+    default: return .home
+    }
+}()
 let snapshotOpenContact = ProcessInfo.processInfo.environment["SNAPSHOT_OPEN"]
 
 private let isoWithFraction: ISO8601DateFormatter = {
@@ -609,11 +663,11 @@ struct ChoiceButton: ButtonStyle {
 
 // MARK: - Panel
 
-enum PanelPage { case home, contacts }
+enum PanelPage { case home, contacts, away }
 
 struct PanelView: View {
     @EnvironmentObject var store: Store
-    @State private var page: PanelPage = snapshotContacts ? .contacts : .home
+    @State private var page: PanelPage = snapshotPage
     @State private var query = ""
 
     /// macOS doesn't keep a menu bar panel on screen: a long draft (opened with Show all), or many of
@@ -669,10 +723,18 @@ struct PanelView: View {
                     Label(err, systemImage: "exclamationmark.triangle.fill")
                         .font(.system(size: 11)).foregroundStyle(.orange)
                 }
-                if page == .contacts {
+                switch page {
+                case .contacts:
                     ContactsList(contacts: state.contacts, query: query, defaultPolicy: state.defaultPolicy ?? "approve",
                                  waiting: state.approvals.count) { page = .home }
-                } else {
+                case .away:
+                    if let away = state.away {
+                        AwayEditor(away: away, name: state.telegram.me?.name, footer: state.footer)
+                    } else {
+                        Placeholder(text: Away.olderDaemon)
+                    }
+                case .home:
+                    if let line = Away.badge(state.away) { awayLine(line) }
                     approvals(state.approvals)
                     listening
                     recent
@@ -686,7 +748,41 @@ struct PanelView: View {
     }
 
     @ViewBuilder private var header: some View {
-        if page == .contacts { contactsHeader } else { homeHeader }
+        switch page {
+        case .contacts: contactsHeader
+        case .away: awayHeader
+        case .home: homeHeader
+        }
+    }
+
+    private var awayHeader: some View {
+        HStack(spacing: 10) {
+            Button { page = .home } label: { Image(systemName: "chevron.left").font(.system(size: 12, weight: .semibold)) }
+                .buttonStyle(IconButton()).help("Back")
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Away").font(.system(size: 13, weight: .semibold))
+                Text(store.state?.away.map(Away.status) ?? "One reply for you while you\u{2019}re off")
+                    .font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+            }
+            Spacer()
+        }
+    }
+
+    /// On Home while replies can go out. Click it for the Away page.
+    private func awayLine(_ line: String) -> some View {
+        Button { page = .away } label: {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "moon.fill").font(.system(size: 11)).foregroundStyle(Color.accentColor)
+                Text("\(line): people who message you privately get one reply saying you\u{2019}re away.")
+                    .font(.system(size: 11)).fixedSize(horizontal: false, vertical: true)
+                Spacer(minLength: 0)
+            }
+            .padding(8)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.accentColor.opacity(0.08)))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .help("Change the away hours or message")
     }
 
     private var contactsHeader: some View {
@@ -742,6 +838,11 @@ struct PanelView: View {
                 }
             }
             Spacer()
+            Button { page = .away } label: {
+                Label("Away", systemImage: Away.badge(store.state?.away) == nil ? "moon" : "moon.fill")
+            }
+            .buttonStyle(IconButton())
+            .help("Away auto-reply: one reply for you while you\u{2019}re off")
             Button { page = .contacts } label: { Label("Contacts", systemImage: "person.2") }
                 .buttonStyle(IconButton())
                 .help("Saved chats: nicknames, sending rules and auto-reply")
@@ -1203,6 +1304,242 @@ struct ContactRow: View {
     }
 }
 
+// MARK: - Away page
+
+/// The away auto-reply's words and the same checks the daemon makes (src/shared/away.ts; the tray
+/// app's are tray/Core/Away.cs), so a mistake shows before the request. The daemon does the saving.
+enum Away {
+    static let olderDaemon = "The daemon is older than this app. Restart it (below) to set away hours."
+    static let messageMax = 1000
+    static let quietMax = 1440
+
+    private static func digits(_ s: Substring) -> Bool { s.allSatisfy { ("0"..."9").contains($0) } }
+
+    /// "HH:MM", 24-hour.
+    static func isTime(_ s: String) -> Bool {
+        let parts = s.split(separator: ":", omittingEmptySubsequences: false)
+        guard s.count == 5, parts.count == 2, parts.allSatisfy({ $0.count == 2 && digits($0) }),
+              let h = Int(parts[0]), let m = Int(parts[1]) else { return false }
+        return h < 24 && m < 60
+    }
+
+    /// Quiet minutes as typed: a whole number from 0 to a day, or nil.
+    static func quiet(_ s: String) -> Int? {
+        let t = s.trimmingCharacters(in: .whitespaces)
+        guard !t.isEmpty, t.count <= 4, digits(Substring(t)), let n = Int(t), n <= quietMax else { return nil }
+        return n
+    }
+
+    /// The first problem, in the daemon's words, or nil when the fields are fine.
+    static func check(_ f: AwayFields) -> String? {
+        if !isTime(f.from) { return "from must be a time like 18:00" }
+        if !isTime(f.until) { return "until must be a time like 18:00" }
+        if f.from == f.until { return "From and until can't be the same time." }
+        if f.message.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return "The message can't be empty." }
+        if f.message.count > messageMax { return "The message is too long (\(messageMax) characters at most)." }
+        if quiet(f.quiet) == nil { return "quietMinutes must be a whole number from 0 to \(quietMax)" }
+        return nil
+    }
+
+    private static let clockFormat: DateFormatter = {
+        let f = DateFormatter()
+        f.dateFormat = "HH:mm"
+        return f
+    }()
+
+    /// "09:00", or "09:00 tomorrow" when the change isn't today. Falls back to the saved time.
+    private static func when(_ iso: String?, or fallback: String) -> String {
+        guard let iso, let date = isoWithFraction.date(from: iso) ?? ISO8601DateFormatter().date(from: iso) else { return fallback }
+        let time = clockFormat.string(from: date)
+        return Calendar.current.isDateInToday(date) ? time : "\(time) tomorrow"
+    }
+
+    /// Whether it's on, and if so whether it's away now and when that changes.
+    static func status(_ a: UiAway) -> String {
+        if !a.enabled { return "Off" }
+        if a.active { return "Away now, until \(when(a.nextChange, or: a.until))" }
+        return "On, starts at \(when(a.nextChange, or: a.from))"
+    }
+
+    /// The line for Home while a reply could go out; nil otherwise.
+    static func badge(_ a: UiAway?) -> String? {
+        guard let a, a.enabled, a.active else { return nil }
+        return "Away until \(a.until)"
+    }
+
+    /// What the typed message would send: {name} becomes the first word of your name (left as is when
+    /// it's unknown), then the footer, unless the text already ends with it (withFooter in src/shared/policy.ts).
+    static func preview(_ message: String, name: String?, footer: String) -> String {
+        let first: String? = name?.split(whereSeparator: { $0.isWhitespace }).first.map { String($0) }
+        let text = first.map { message.replacingOccurrences(of: "{name}", with: $0) } ?? message
+        let mark = footer.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !mark.isEmpty else { return text }
+        var body = text
+        while let last = body.last, last.isWhitespace { body.removeLast() }
+        return body.hasSuffix(mark) ? body : body + footer
+    }
+}
+
+/// The Away page's typed fields, all text as typed. Quiet minutes are text too, so a half-typed number shows its error.
+struct AwayFields: Equatable {
+    var from: String
+    var until: String
+    var message: String
+    var quiet: String
+
+    /// As it would be sent: times trimmed, quiet minutes as a plain number.
+    var cleaned: AwayFields {
+        AwayFields(from: from.trimmingCharacters(in: .whitespaces), until: until.trimmingCharacters(in: .whitespaces),
+                   message: message, quiet: Away.quiet(quiet).map { String($0) } ?? quiet)
+    }
+}
+
+extension AwayFields {
+    init(_ a: UiAway) { self.init(from: a.from, until: a.until, message: a.message, quiet: String(a.quietMinutes)) }
+}
+
+/// The away auto-reply. On/Off saves at once; the hours, quiet minutes and message wait for Save, so a
+/// half-typed time never goes out. The fields are filled when the page opens: polling leaves them alone.
+struct AwayEditor: View {
+    @EnvironmentObject var store: Store
+    let away: UiAway
+    let name: String?
+    let footer: String
+    @State private var typed: AwayFields
+    /// What the daemon has saved as far as this page knows: as loaded, then as last sent. Save sends only what differs.
+    @State private var saved: AwayFields
+
+    init(away: UiAway, name: String?, footer: String) {
+        self.away = away
+        self.name = name
+        self.footer = footer
+        _typed = State(initialValue: AwayFields(away))
+        _saved = State(initialValue: AwayFields(away))
+    }
+
+    private var busy: Bool { store.busy.contains("away") }
+    private var problem: String? { Away.check(typed.cleaned) }
+    private var changed: Bool { typed.cleaned != saved }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .top, spacing: 6) {
+                Image(systemName: "info.circle").font(.system(size: 11)).foregroundStyle(Color.accentColor)
+                (Text(Away.status(away)).fontWeight(.semibold)
+                    + Text(verbatim: ". When it\u{2019}s on, someone who messages you privately during these hours gets this reply, once a night. Groups, bots, Blocked and Ask every time chats, and chats Claude is handling, never do."))
+                    .font(.system(size: 11)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.05)))
+
+            field("Reply while I\u{2019}m away", hint: "Saves as soon as you switch it.") {
+                HStack(spacing: 6) {
+                    Button("On") { toggle(true) }
+                        .buttonStyle(ChoiceButton(tint: .green, selected: away.enabled))
+                    Button("Off") { toggle(false) }
+                        .buttonStyle(ChoiceButton(tint: .gray, selected: !away.enabled))
+                }
+            }
+            field("Hours", hint: "This Mac\u{2019}s time. Overnight works, like 18:00 until 09:00.") {
+                HStack(spacing: 6) {
+                    Text("From").font(.system(size: 11)).foregroundStyle(.secondary)
+                    box($typed.from, placeholder: "18:00", width: 46)
+                    Text("until").font(.system(size: 11)).foregroundStyle(.secondary)
+                    box($typed.until, placeholder: "09:00", width: 46)
+                }
+            }
+            field("Quiet after you write",
+                  hint: "No away reply in a chat for this long after anything is sent from your account there, by you or by Claude. 0 turns this off.") {
+                HStack(spacing: 6) {
+                    box($typed.quiet, placeholder: "30", width: 40)
+                    Text("minutes").font(.system(size: 11)).foregroundStyle(.secondary)
+                }
+            }
+            field("Message", hint: "{name} becomes your first name.") { messageBox }
+            field("Preview", hint: "What they get, footer included.") {
+                Text(verbatim: Away.preview(typed.message, name: name, footer: footer))
+                    .font(.system(size: 11))
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(7)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.accentColor.opacity(0.07)))
+            }
+            if let problem {
+                Label(problem, systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11)).foregroundStyle(.red)
+            }
+            HStack(spacing: 6) {
+                Text("Hours, quiet minutes and message save with Save.")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                Spacer(minLength: 4)
+                Button(busy ? "Saving\u{2026}" : "Save", action: save)
+                    .buttonStyle(PillButton(tint: .accentColor))
+                    .disabled(busy || problem != nil || !changed)
+                    .help("Save the hours, quiet minutes and message")
+            }
+        }
+    }
+
+    private func field<Content: View>(_ title: String, hint: String, @ViewBuilder _ content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title).font(.system(size: 11, weight: .semibold))
+            Text(verbatim: hint).font(.system(size: 10)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            content()
+        }
+    }
+
+    private func box(_ text: Binding<String>, placeholder: String, width: CGFloat) -> some View {
+        Group {
+            // The offscreen snapshot renderer can't draw text fields; show the text instead.
+            if isSnapshot { Text(text.wrappedValue.isEmpty ? placeholder : text.wrappedValue) }
+            else { TextField(placeholder, text: text).textFieldStyle(.plain).multilineTextAlignment(.center) }
+        }
+        .font(.system(size: 12, weight: .medium).monospacedDigit())
+        .frame(width: width)
+        .padding(.horizontal, 7).padding(.vertical, 4)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.07)))
+    }
+
+    @ViewBuilder private var messageBox: some View {
+        Group {
+            if isSnapshot {
+                Text(verbatim: typed.message).fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                TextEditor(text: $typed.message).scrollContentBackground(.hidden).frame(minHeight: 54, maxHeight: 110)
+            }
+        }
+        .font(.system(size: 12))
+        .padding(5)
+        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.07)))
+    }
+
+    private func toggle(_ on: Bool) {
+        guard on != away.enabled, !busy else { return }
+        Task { await store.saveAway(["enabled": on]) }
+    }
+
+    private func save() {
+        guard !busy, problem == nil else { return }
+        let sent = typed.cleaned
+        var change: [String: Any] = [:]
+        if sent.from != saved.from { change["from"] = sent.from }
+        if sent.until != saved.until { change["until"] = sent.until }
+        if sent.message != saved.message { change["message"] = sent.message }
+        if sent.quiet != saved.quiet, let q = Away.quiet(sent.quiet) { change["quietMinutes"] = q }
+        guard !change.isEmpty else { return }
+        Task {
+            guard await store.saveAway(change) else { return }
+            saved = sent
+            // Show the cleaned-up values, unless they were typed over during the round trip.
+            if typed.cleaned == sent { typed = sent }
+        }
+    }
+}
+
 struct RecentChatRow: View {
     @EnvironmentObject var store: Store
     let chat: RecentChat
@@ -1254,6 +1591,7 @@ struct RecentChatRow: View {
     private func viaLabel(_ via: String) -> String {
         switch via {
         case "auto": return "auto-sent"
+        case "away": return "away reply"
         case "menubar": return "approved in menu bar"
         case "dialog": return "approved in dialog"
         default: return "approved in chat"
