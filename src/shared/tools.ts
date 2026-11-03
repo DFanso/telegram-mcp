@@ -92,6 +92,14 @@ export const TOOLS = {
       parseMode: z.enum(['plain', 'markdown', 'html']).default('plain'),
     }),
   },
+  telegram_delete_message: {
+    description:
+      'Delete a message this session sent recently, for everyone in the chat (its telegram_send_message, send_file or send_sticker, a /reply answer, or a draft of its the user approved; the message id is in the send result). Only works where sending needs no approval (auto-send, a watched autoReply chat, or a /reply takeover), because deleting changes what the chat sees. It cannot delete another session\'s messages, messages the user typed (including the Page button\'s), the pager\'s or away replies, or other people\'s messages. It cannot be undone, so use it only to take back something that should not be there, e.g. a wrong or private detail; for a small fix use telegram_edit_message. Each delete is logged.',
+    input: z.object({
+      chat: chatRef,
+      messageId: z.number().int().describe('Id of the message to delete.'),
+    }),
+  },
   telegram_send_file: {
     description:
       'Send a local file (any type) with an optional caption. Same rules as telegram_send_message: auto-send chats get it now, others ask the user first, blocked chats are refused; the footer goes on the caption. A file to a chat this session is watching always asks the user first, even on auto-send. Credentials (SSH keys, .env files, cloud logins, this tool\'s own session) are always refused.',
