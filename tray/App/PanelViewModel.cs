@@ -70,7 +70,7 @@ public sealed class PanelViewModel : Observable
             ContactsPage = false;
             AwayPage = false;
         });
-        SetAwayEnabled = new Command(p => AwayEnabled = p as string == "on");
+        SetAwayEnabled = new Command(p => _ = ToggleAwayAsync(p as string == "on"), _ => !_awaySaving && AwayShown);
         SaveAway = new Command(_ => _ = SaveAwayAsync(), _ => !_awaySaving && AwayError is null && AwayShown);
         ClearSearch = new Command(_ => Search = "");
         OpenRules = new Command(_ => OpenFile("config.json"));
@@ -205,6 +205,34 @@ public sealed class PanelViewModel : Observable
         AwayUntil = a.Until;
         AwayMessage = a.Message;
         Raise(nameof(AwayPreview));
+    }
+
+    /// <summary>
+    /// On/Off saves at once, on its own: hours and message still wait for Save, so a half-typed
+    /// time never goes out with it. Shows the new state straight away and puts it back if the daemon says no.
+    /// </summary>
+    async Task ToggleAwayAsync(bool on)
+    {
+        if (_awaySaving || _awaySaved is null || on == _awayEnabled) return;
+        var before = _awayEnabled;
+        AwayEnabled = on;
+        ActionResult r;
+        _awaySaving = true;
+        CommandManager.InvalidateRequerySuggested();
+        try
+        {
+            r = await _api.SaveAwayAsync(new AwayChange(Enabled: on));
+        }
+        finally
+        {
+            _awaySaving = false;
+            CommandManager.InvalidateRequerySuggested();
+        }
+        // Read the baseline after the await: the page may have reloaded it meanwhile.
+        if (r.Ok && _awaySaved is { } saved) _awaySaved = saved with { Enabled = on };
+        else AwayEnabled = before;
+        ShowFlash(r.Text);
+        await PollAsync();
     }
 
     /// <summary>Sends only what differs from what was loaded or last saved. After a save the fields stay as typed.</summary>
