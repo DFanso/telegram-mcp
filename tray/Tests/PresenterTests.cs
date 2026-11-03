@@ -84,8 +84,9 @@ public class PresenterTests
     {
         var quiet = Fixtures.DemoState() with { Approvals = [], Sessions = [] };
 
-        Assert.Equal(new IconState(false, "!"), Presenter.Icon(null, false));
-        Assert.Equal(new IconState(false, "!"), Presenter.Icon(quiet with { Telegram = new TelegramState("connecting", null, null, 1) }, true));
+        Assert.Equal(new IconState(false, "!", StatusKind.Off), Presenter.Icon(null, false));
+        Assert.Equal(new IconState(false, "!", StatusKind.Busy), Presenter.Icon(quiet with { Telegram = new TelegramState("connecting", null, null, 1) }, true));
+        Assert.Equal(new IconState(false, "!", StatusKind.Bad), Presenter.Icon(quiet with { Telegram = new TelegramState("logged_out", null, null, 0) }, true));
         Assert.Equal(new IconState(false, null), Presenter.Icon(quiet, true));
     }
 
@@ -97,6 +98,45 @@ public class PresenterTests
             Presenter.Tooltip(Fixtures.DemoState() with { Approvals = [Fixtures.DemoState().Approvals[0]] }, true, null));
         Assert.Equal("Telegram MCP: Connected as Me (@me_user)",
             Presenter.Tooltip(Fixtures.DemoState() with { Approvals = [] }, true, null));
+    }
+
+    static UiSession Session(string id, bool connected, params long[] chats) =>
+        new(id, id, connected, false, 1, 0, chats.Select(c => new WatchSpec($"w{c}", c, $"chat {c}", null, null, null)).ToList());
+
+    static UiContact Contact(string nick, bool autoReply) =>
+        new(nick, nick.Length, null, null, "user", null, [], null, "autoSend", autoReply, "autoSend", []);
+
+    [Fact]
+    public void Stats_count_waiting_listened_chats_and_contacts()
+    {
+        var s = Fixtures.DemoState() with
+        {
+            Sessions = [Session("a", true, 1, 2), Session("b", true, 2), Session("idle", true)],
+            Contacts = [Contact("leo", true), Contact("anna", false)],
+        };
+
+        Assert.Equal(
+            [
+                new Stat("Waiting", "2", new Tag("needs you", TagKind.Warn)),
+                new Stat("Listening", "2", new Tag("2 sessions", TagKind.Good)), // chat 2 counts once
+                new Stat("Contacts", "2", new Tag("1 auto-reply", TagKind.Info)),
+            ],
+            Presenter.Stats(s));
+    }
+
+    [Fact]
+    public void Stats_when_quiet_say_so()
+    {
+        var s = Fixtures.DemoState() with { Approvals = [], Sessions = [], Contacts = null };
+
+        Assert.Equal(
+            [
+                new Stat("Waiting", "0", new Tag("all clear", TagKind.Good)),
+                new Stat("Listening", "0", new Tag("idle", TagKind.Muted)),
+                new Stat("Contacts", "–", new Tag("saved", TagKind.Muted)), // an older daemon sends no contacts
+            ],
+            Presenter.Stats(s));
+        Assert.Equal(new Tag("session gone", TagKind.Muted), Presenter.Stats(s with { Sessions = [Session("x", false, 7)] })[1].Chip);
     }
 
     [Fact]

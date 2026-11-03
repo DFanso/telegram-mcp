@@ -61,6 +61,29 @@ public class FormatTests
         Assert.Equal(expected, Format.ViaLabel(via));
     }
 
+    [Theory]
+    [InlineData("Leo Gavin", "LG")]
+    [InlineData("leo", "L")]
+    [InlineData("team-qa", "TQ")]
+    [InlineData("@anna_k", "AK")]
+    [InlineData("Ruchira and Ruchira", "RR")]
+    [InlineData("✨ Zuse Gaming Club", "ZC")]
+    [InlineData("✨", "?")]
+    [InlineData("", "?")]
+    public void Initials_are_one_or_two_letters(string name, string expected)
+    {
+        Assert.Equal(expected, Format.Initials(name));
+    }
+
+    [Fact]
+    public void Avatar_colour_is_stable_and_in_range()
+    {
+        var a = Format.AvatarIndex("leo", 8);
+        Assert.Equal(a, Format.AvatarIndex("LEO", 8));
+        Assert.InRange(a, 0, 7);
+        Assert.True(Enumerable.Range(0, 50).Select(i => Format.AvatarIndex($"chat{i}", 8)).Distinct().Count() >= 6); // spread out
+    }
+
     [Fact]
     public void A_long_draft_runs_past_four_lines()
     {
