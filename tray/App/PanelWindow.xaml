@@ -173,14 +173,30 @@
                             <DataTemplate DataType="{x:Type local:WatchVM}">
                                 <Border CornerRadius="11" Background="{DynamicResource Subtle2}" Padding="8,3" Margin="0,2,6,2" ToolTip="{Binding Tooltip}">
                                     <StackPanel Orientation="Horizontal">
-                                        <Ellipse Width="6" Height="6" Fill="{DynamicResource Blue}" Margin="0,0,6,0" VerticalAlignment="Center" />
-                                        <TextBlock Text="{Binding ChatLabel}" FontSize="11" TextTrimming="CharacterEllipsis" MaxWidth="180" />
+                                        <Ellipse x:Name="Dot" Width="6" Height="6" Fill="{DynamicResource Blue}" Margin="0,0,6,0" VerticalAlignment="Center" />
+                                        <TextBlock x:Name="Name" Text="{Binding ChatLabel}" FontSize="11" TextTrimming="CharacterEllipsis" MaxWidth="160" />
+                                        <TextBlock x:Name="PausedText" Text="paused" FontSize="10" Foreground="{DynamicResource Fg3}" Margin="6,0,0,0"
+                                                   VerticalAlignment="Center" Visibility="Collapsed" />
+                                        <!-- Pause / resume: flips the chat's auto-reply, which gates its messages to sessions. -->
+                                        <Button Style="{StaticResource Flat}" Command="{Binding Toggle}" CommandParameter="{Binding}"
+                                                Margin="7,0,0,0" ToolTip="{Binding ToggleTip}" AutomationProperties.Name="{Binding ToggleName}"
+                                                Visibility="{Binding CanToggle, Converter={StaticResource Visible}}">
+                                            <local:SvgIcon x:Name="ToggleIcon" Kind="{Binding ToggleIcon}" Width="11" Height="11" Foreground="{DynamicResource Fg2}" />
+                                        </Button>
                                         <TextBlock Text="{Binding From}" FontSize="10" Foreground="{DynamicResource Fg3}" Margin="6,0,0,0" VerticalAlignment="Center"
                                                    Visibility="{Binding From, Converter={StaticResource IfSet}}" />
                                         <TextBlock Text="{Binding Topic}" FontSize="10" Foreground="{DynamicResource Fg3}" Margin="6,0,0,0" VerticalAlignment="Center"
                                                    Visibility="{Binding Topic, Converter={StaticResource IfSet}}" />
                                     </StackPanel>
                                 </Border>
+                                <DataTemplate.Triggers>
+                                    <DataTrigger Binding="{Binding Paused}" Value="True">
+                                        <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource Fg3}" />
+                                        <Setter TargetName="Name" Property="Foreground" Value="{DynamicResource Fg2}" />
+                                        <Setter TargetName="PausedText" Property="Visibility" Value="Visible" />
+                                        <Setter TargetName="ToggleIcon" Property="Foreground" Value="{DynamicResource Green}" />
+                                    </DataTrigger>
+                                </DataTemplate.Triggers>
                             </DataTemplate>
                         </ItemsControl.ItemTemplate>
                     </ItemsControl>

@@ -176,19 +176,39 @@ public sealed class ApprovalVM : Observable
     public ICommand ToggleText { get; }
 }
 
-public sealed record WatchVM(string ChatLabel, string? From, string? Topic, string Tooltip);
+/// <summary>
+/// A chat a session listens to. <see cref="Nickname"/>: its saved name, whose auto-reply switch pauses
+/// and resumes listening (null when the chat isn't saved, so there is no button).
+/// </summary>
+public sealed record WatchVM(string ChatLabel, string? From, string? Topic, string Tooltip, string? Nickname, bool Paused, ICommand Toggle)
+{
+    public bool CanToggle => Nickname is not null;
+    public string ToggleIcon => Paused ? "play" : "pause";
+    public string ToggleName => Paused ? $"Resume listening to {ChatLabel}" : $"Pause listening to {ChatLabel}";
+    public string ToggleTip => Paused
+        ? $"Resume: {ChatLabel}'s messages reach Claude again (turns auto-reply back on)"
+        : $"Pause: stop passing {ChatLabel}'s messages to Claude (turns auto-reply off; the watch stays)";
+}
 
 /// <summary>A Claude session listening to chats.</summary>
 public sealed record SessionVM(string Label, Tag Tag, IReadOnlyList<WatchVM> Watches)
 {
-    public static SessionVM From(UiSession s) => new(
+    public static SessionVM From(UiSession s, UiState state, ICommand toggle) => new(
         s.Label,
         Presenter.SessionTag(s),
-        s.Watches.Select(w => new WatchVM(
-            w.ChatLabel,
-            w.FromLabel is null ? null : $"from {w.FromLabel}",
-            w.TopicId is null ? null : $"topic {w.TopicId}",
-            w.Note ?? w.ChatLabel)).ToList());
+        s.Watches.Select(w =>
+        {
+            var contact = Presenter.ListeningSwitch(state, w.ChatId);
+            var paused = contact is { AutoReply: false };
+            return new WatchVM(
+                w.ChatLabel,
+                w.FromLabel is null ? null : $"from {w.FromLabel}",
+                w.TopicId is null ? null : $"topic {w.TopicId}",
+                paused ? $"{w.Note ?? w.ChatLabel} (paused)" : w.Note ?? w.ChatLabel,
+                contact?.Nickname,
+                paused,
+                toggle);
+        }).ToList());
 }
 
 public sealed record RecentMessageVM(string Body, string Meta);

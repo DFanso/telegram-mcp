@@ -73,6 +73,7 @@ public sealed class PanelViewModel : Observable
         OpenRules = new Command(_ => OpenFile("config.json"));
         OpenLog = new Command(_ => OpenFile("daemon.log"));
         Quit = new Command(_ => QuitRequested?.Invoke());
+        ToggleListening = Command.Async(p => p is WatchVM w ? ToggleListeningAsync(w) : Task.CompletedTask);
     }
 
     /// <summary>After every poll: the tray icon, tooltip and notifications follow.</summary>
@@ -341,6 +342,9 @@ public sealed class PanelViewModel : Observable
     public ICommand OpenLog { get; }
     public ICommand Quit { get; }
 
+    /// <summary>A listened chat's pause / resume button (Home → Listening).</summary>
+    public ICommand ToggleListening { get; }
+
     // ---- talking to the daemon ------------------------------------------------------------
 
     public async Task PollAsync()
@@ -413,6 +417,18 @@ public sealed class PanelViewModel : Observable
         await PollAsync();
     }
 
+    /// <summary>
+    /// Pause or resume listening to a chat by flipping its auto-reply: the daemon only passes a chat's
+    /// messages to sessions while it is on, and the sessions keep their watches either way.
+    /// </summary>
+    async Task ToggleListeningAsync(WatchVM watch)
+    {
+        if (watch.Nickname is null) return;
+        var r = await _api.EditContactAsync(new ContactChange(watch.Nickname, AutoReply: watch.Paused));
+        ShowFlash(r.Ok ? (watch.Paused ? $"Listening to {watch.ChatLabel} again." : $"Paused listening to {watch.ChatLabel}.") : r.Text, r.Ok);
+        await PollAsync();
+    }
+
     void ToggleRecent(RecentChatVM row)
     {
         row.IsOpen = !row.IsOpen;
@@ -443,9 +459,11 @@ public sealed class PanelViewModel : Observable
 
         // Sessions and recent sends have nothing editable: rebuild them when they change (or a minute passes, for "ago").
         IReadOnlyList<UiSession> sessions = s is null ? [] : Presenter.Listening(s);
-        if (Changed(ref _sessionsKey, JsonSerializer.Serialize(sessions)))
+        // Each chat's pause button follows its contact's auto-reply, so that is part of the key too.
+        var switches = sessions.SelectMany(x => x.Watches).Select(w => Presenter.ListeningSwitch(s!, w.ChatId)).Select(c => c is null ? "-" : $"{c.Nickname}:{c.AutoReply}");
+        if (Changed(ref _sessionsKey, JsonSerializer.Serialize(sessions) + string.Join(",", switches)))
         {
-            ListSync.Apply(Listening, sessions.Select(SessionVM.From).ToList());
+            ListSync.Apply(Listening, sessions.Select(x => SessionVM.From(x, s!, ToggleListening)).ToList());
         }
         IReadOnlyList<RecentChat> recent = s is null ? [] : Presenter.RecentChats(s.Recent);
         if (Changed(ref _recentKey, JsonSerializer.Serialize(recent) + now.ToString("yyyyMMddHHmm", System.Globalization.CultureInfo.InvariantCulture)))

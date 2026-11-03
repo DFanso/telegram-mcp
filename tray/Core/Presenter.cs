@@ -74,6 +74,14 @@ public static class Presenter
 
     public static IReadOnlyList<UiSession> Listening(UiState state) => state.Sessions.Where(s => s.Watches.Count > 0).ToList();
 
+    /// <summary>
+    /// The saved chat a watch listens to. Its auto-reply switch is what lets the daemon pass that chat's
+    /// messages to sessions, so turning it off pauses listening (the watch stays) and on resumes it.
+    /// Null when the chat isn't saved, or the daemon is older than the Contacts page.
+    /// </summary>
+    public static UiContact? ListeningSwitch(UiState state, long chatId) =>
+        state.Contacts?.FirstOrDefault(c => c.ChatId == chatId);
+
     public static Tag SessionTag(UiSession s)
     {
         if (!s.Connected) return new("session gone", TagKind.Muted);

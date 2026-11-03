@@ -8,6 +8,25 @@ public class PresenterTests
     static UiState WithPhase(string phase, Peer? me = null) =>
         Fixtures.DemoState() with { Telegram = new TelegramState(phase, me, null, 0) };
 
+    static UiContact Contact(string nickname, long chatId, bool autoReply) =>
+        new(nickname, chatId, nickname, null, "user", null, [], null, "autoSend", autoReply, "auto-send", []);
+
+    [Fact]
+    public void ListeningSwitch_is_the_saved_chat_with_that_id()
+    {
+        var s = Fixtures.DemoState() with { Contacts = [Contact("leo", 10, autoReply: true), Contact("iddhi", 12, autoReply: false)] };
+
+        Assert.Equal("leo", Presenter.ListeningSwitch(s, 10)?.Nickname);
+        Assert.False(Presenter.ListeningSwitch(s, 12)!.AutoReply);
+        Assert.Null(Presenter.ListeningSwitch(s, 99));
+    }
+
+    [Fact]
+    public void ListeningSwitch_is_null_from_a_daemon_without_contacts()
+    {
+        Assert.Null(Presenter.ListeningSwitch(Fixtures.DemoState() with { Contacts = null }, 10));
+    }
+
     [Fact]
     public void Header_when_the_daemon_is_unreachable()
     {
