@@ -76,6 +76,9 @@ public sealed class PanelViewModel : Observable
     public string? ShownProblem => ShowContent ? null : Problem;
     public string? ConfigError => ShowContent ? State?.ConfigError : null;
 
+    /// <summary>Home's tiles: waiting, listening, contacts.</summary>
+    public IReadOnlyList<Stat> Stats => ShowContent ? Presenter.Stats(State!) : [];
+
     public ObservableCollection<ApprovalVM> Approvals { get; } = [];
     public ObservableCollection<SessionVM> Listening { get; } = [];
     public ObservableCollection<RecentChatVM> Recent { get; } = [];
@@ -267,7 +270,7 @@ public sealed class PanelViewModel : Observable
 
         foreach (var name in new[]
                  {
-                     nameof(Header), nameof(ShowContent), nameof(ShownProblem), nameof(ConfigError), nameof(ApprovalCount),
+                     nameof(Header), nameof(Stats), nameof(ShowContent), nameof(ShownProblem), nameof(ConfigError), nameof(ApprovalCount),
                      nameof(NoApprovals), nameof(NoListening), nameof(NoRecent), nameof(ContactsSummary), nameof(WaitingBanner),
                  })
         {
