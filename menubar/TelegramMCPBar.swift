@@ -50,6 +50,8 @@ struct UiSession: Decodable, Identifiable {
 
 struct UiApproval: Decodable, Identifiable {
     let id: String
+    /// The chat it goes to, for its avatar. Nil from a daemon older than avatars.
+    let chatId: Int?
     let to: String
     let detail: String
     let text: String
@@ -328,6 +330,47 @@ final class Store: ObservableObject {
             reachable = false
             problem = "The daemon is not running. It restarts by itself; or run tgmcp install."
         }
+    }
+
+    // MARK: Avatars
+
+    /// Contacts' profile photos by chat id, as the daemon serves them (GET /ui/avatars/:chatId).
+    @Published private(set) var avatars: [Int: NSImage] = [:]
+    private var avatarAskedAt: [Int: Date] = [:]
+    private var avatarLoading = Set<Int>()
+
+    /// The chat's photo once it has loaded, else nil (the avatar shows initials). The first time a
+    /// chat's avatar shows, and then at most every 6 hours, it asks the daemon, never on each poll.
+    func avatar(_ chatId: Int?) -> NSImage? {
+        guard let chatId else { return nil }
+        if !avatarLoading.contains(chatId), Date().timeIntervalSince(avatarAskedAt[chatId] ?? .distantPast) > 6 * 3600 {
+            avatarLoading.insert(chatId)
+            Task { @MainActor in await self.loadAvatar(chatId) } // after this view update, never during it
+        }
+        return avatars[chatId]
+    }
+
+    func loadAvatar(_ chatId: Int) async {
+        avatarLoading.insert(chatId)
+        defer {
+            avatarLoading.remove(chatId)
+            avatarAskedAt[chatId] = Date()
+        }
+        guard let req = await request("/ui/avatars/\(chatId)"),
+              let got = try? await URLSession.shared.data(for: req),
+              (got.1 as? HTTPURLResponse)?.statusCode == 200,
+              let image = NSImage(data: got.0) else { return } // no photo, an older daemon, or offline: initials stay
+        avatars[chatId] = image
+    }
+
+    /// Snapshots render at once, so they load every avatar on screen first.
+    func loadAllAvatars() async {
+        guard let s = state else { return }
+        var ids = Set(s.contacts?.map(\.chatId) ?? [])
+        ids.formUnion(s.approvals.compactMap(\.chatId))
+        ids.formUnion(s.recent.map(\.chatId))
+        ids.formUnion((s.pages ?? []).compactMap(\.chatId))
+        for id in ids { await loadAvatar(id) }
     }
 
     private func showPages(_ next: [UiPage]) {
@@ -1227,22 +1270,27 @@ struct CountBadge: View {
     }
 }
 
-/// A round avatar: initials on a colour picked by name, or a glyph (groups, channels, bots).
+/// A round avatar: the chat's profile photo when it has one, else initials on a colour picked by
+/// name, or a glyph (groups, channels, bots).
 struct AvatarView: View {
     let name: String
     var glyph: String? = nil
     var size: CGFloat = 34
+    /// From `store.avatar(chatId)`: nil until it loads, and when the chat has no photo.
+    var photo: NSImage? = nil
     var body: some View {
         ZStack {
             Circle().fill(Palette.avatar(name))
-            Circle().strokeBorder(Color.white.opacity(0.2))
-            if let glyph {
+            if let photo {
+                Image(nsImage: photo).resizable().scaledToFill().frame(width: size, height: size).clipShape(Circle())
+            } else if let glyph {
                 LucideIcon(glyph, size: size / 2).foregroundStyle(.white)
             } else {
                 Text(verbatim: initials(name))
                     .font(.system(size: size * 0.36, weight: .semibold))
                     .foregroundStyle(.white)
             }
+            Circle().strokeBorder(Color.white.opacity(0.2))
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
@@ -1890,7 +1938,7 @@ struct ApprovalCard: View {
 
     private var top: some View {
         HStack(alignment: .top, spacing: 10) {
-            AvatarView(name: item.nickname ?? item.to)
+            AvatarView(name: item.nickname ?? item.to, photo: store.avatar(item.chatId))
             VStack(alignment: .leading, spacing: 1) {
                 Text(verbatim: item.to).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                 Text(verbatim: item.detail).font(.system(size: 11)).foregroundStyle(p.fg3).lineLimit(1)
@@ -2181,7 +2229,7 @@ struct ContactSwitchRow: View {
         let p = Palette(scheme)
         let on = store.listens(contact)
         HStack(spacing: 10) {
-            AvatarView(name: contact.nickname, glyph: contactGlyph(contact), size: 28)
+            AvatarView(name: contact.nickname, glyph: contactGlyph(contact), size: 28, photo: store.avatar(contact.chatId))
             VStack(alignment: .leading, spacing: 1) {
                 Text(verbatim: contact.nickname).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                 Text(verbatim: on ? listenWords(contact) : "Claude can\u{2019}t listen here")
@@ -2347,7 +2395,7 @@ struct ContactRow: View {
         HStack(spacing: 10) {
             Button(action: toggleOpen) {
                 HStack(spacing: 10) {
-                    AvatarView(name: contact.nickname, glyph: contactGlyph(contact))
+                    AvatarView(name: contact.nickname, glyph: contactGlyph(contact), photo: store.avatar(contact.chatId))
                     VStack(alignment: .leading, spacing: 2) {
                         Text(verbatim: contact.nickname).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                         if !subtitle.isEmpty {
@@ -2752,7 +2800,7 @@ struct RecentChatRow: View {
                 withAnimation(.easeOut(duration: 0.12)) { open.toggle() }
             } label: {
                 HStack(spacing: 10) {
-                    AvatarView(name: chat.label)
+                    AvatarView(name: chat.label, photo: store.avatar(chat.id))
                     VStack(alignment: .leading, spacing: 1) {
                         Text(verbatim: chat.label).font(.system(size: 12, weight: .semibold)).lineLimit(1)
                         Text(verbatim: summary).font(.system(size: 11)).foregroundStyle(p.fg3).lineLimit(1)
@@ -3107,7 +3155,7 @@ struct PageCard: View {
         let p = Palette(scheme)
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                AvatarView(name: page.from)
+                AvatarView(name: page.from, photo: store.avatar(page.chatId))
                 VStack(alignment: .leading, spacing: 1) {
                     Text(verbatim: page.from).font(.system(size: 13, weight: .semibold)).lineLimit(1)
                     if let chat = page.chat {
@@ -3189,6 +3237,7 @@ enum Snapshot {
         let store = Store(polling: false)
         Task { @MainActor in
             await store.poll()
+            await store.loadAllAvatars()
             let view = PanelView().environmentObject(store)
                 .background(Color(nsColor: .windowBackgroundColor))
                 .environment(\.colorScheme, ProcessInfo.processInfo.environment["SNAPSHOT_DARK"] == "1" ? .dark : .light)
