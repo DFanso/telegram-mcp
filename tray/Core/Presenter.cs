@@ -19,15 +19,19 @@ public sealed record IconState(bool Filled, string? Badge, StatusKind Health = S
 /// <summary>A chat you sent to recently, with the messages sent there (newest first).</summary>
 public sealed record RecentChat(long ChatId, string Label, IReadOnlyList<SentRecord> Messages);
 
-/// <summary>A tile at the top of Home: "Waiting 2 · needs you".</summary>
+/// <summary>What Home shows under its tiles: one section at a time, so the panel stays short.</summary>
+public enum HomeSection { Waiting, Listening, Sent }
+
+/// <summary>A tile at the top of Home:"Waiting 2 · needs you".</summary>
 public sealed record Stat(string Label, string Value, Tag Chip);
 
 /// <summary>What the panel and the tray icon say, worked out from the daemon's state.</summary>
 public static class Presenter
 {
     /// <summary>
-    /// Home's three tiles: drafts waiting, chats being listened to, saved chats. The chip says in a
-    /// word whether that needs you ("needs you", "idle"...).
+    /// Home's three tiles, in <see cref="HomeSection"/> order: drafts waiting, chats being listened to,
+    /// messages sent lately. Each picks the section shown below the tiles. The chip says in a word
+    /// whether that needs you ("needs you", "1 paused", "idle"...).
     /// </summary>
     public static IReadOnlyList<Stat> Stats(UiState state)
     {
@@ -35,19 +39,28 @@ public static class Presenter
         var sessions = Listening(state);
         var chats = sessions.SelectMany(s => s.Watches).Select(w => w.ChatId).Distinct().Count();
         var connected = sessions.Count(s => s.Connected);
-        var contacts = state.Contacts;
-        var replying = contacts?.Count(c => c.AutoReply) ?? 0;
+        var paused = PausedChats(state);
+        var sent = state.Recent.Count;
         return
         [
             new("Waiting", Count(waiting), waiting > 0 ? new("needs you", TagKind.Warn) : new("all clear", TagKind.Good)),
-            new("Listening", Count(chats), connected > 0
-                ? new($"{connected} session{(connected == 1 ? "" : "s")}", TagKind.Good)
-                : new(sessions.Count > 0 ? "session gone" : "idle", TagKind.Muted)),
-            new("Contacts", contacts is null ? "–" : Count(contacts.Count), replying > 0
-                ? new($"{replying} auto-reply", TagKind.Info)
-                : new("saved", TagKind.Muted)),
+            new("Listening", Count(chats), connected == 0
+                ? new(sessions.Count > 0 ? "session gone" : "idle", TagKind.Muted)
+                : paused > 0
+                    ? new($"{paused} paused", TagKind.Warn)
+                    : new($"{connected} session{(connected == 1 ? "" : "s")}", TagKind.Good)),
+            new("Sent", Count(sent), sent > 0 ? new("lately", TagKind.Info) : new("none yet", TagKind.Muted)),
         ];
     }
+
+    /// <summary>Chats sessions watch whose listen switch (auto-reply) is off: their messages are held back.</summary>
+    public static int PausedChats(UiState state) =>
+        Listening(state).SelectMany(s => s.Watches).Select(w => w.ChatId).Distinct()
+            .Count(id => ListeningSwitch(state, id) is { AutoReply: false });
+
+    /// <summary>A new draft needs you more than whatever section was showing.</summary>
+    public static HomeSection SectionAfterPoll(HomeSection current, int waitingBefore, int waitingNow) =>
+        waitingNow > waitingBefore ? HomeSection.Waiting : current;
 
     static string Count(int n) => n.ToString(System.Globalization.CultureInfo.InvariantCulture);
 

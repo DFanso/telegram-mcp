@@ -26,15 +26,26 @@
             </Grid>
         </DataTemplate>
 
-        <!-- A tile at the top of Home: label, big number, chip. -->
-        <DataTemplate x:Key="StatTemplate" DataType="{x:Type core:Stat}">
-            <Border Style="{StaticResource CardStyle}" Padding="12,10" Margin="4,0">
-                <StackPanel>
-                    <TextBlock Text="{Binding Label}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Fg2}" />
-                    <TextBlock Text="{Binding Value}" FontFamily="{StaticResource DisplayFont}" FontSize="24" FontWeight="SemiBold" Margin="0,2,0,4" />
-                    <ContentControl Content="{Binding Chip}" Focusable="False" HorizontalAlignment="Left" Margin="-4,0,0,0" />
-                </StackPanel>
-            </Border>
+        <!-- A tile at the top of Home: label, big number, chip. Click it to show its section below; the
+             one showing is tinted with the accent. -->
+        <DataTemplate x:Key="StatTemplate" DataType="{x:Type local:StatVM}">
+            <Button Style="{StaticResource Flat}" Command="{Binding Pick}" Margin="4,0" ToolTip="{Binding Tip}"
+                    AutomationProperties.Name="{Binding Name}">
+                <Border x:Name="Tile" Style="{StaticResource CardStyle}" Padding="12,10">
+                    <StackPanel>
+                        <TextBlock Text="{Binding Label}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Fg2}" />
+                        <TextBlock Text="{Binding Value}" FontFamily="{StaticResource DisplayFont}" FontSize="24" FontWeight="SemiBold" Margin="0,2,0,4" />
+                        <ContentControl Content="{Binding Chip}" Focusable="False" HorizontalAlignment="Left" Margin="-4,0,0,0" />
+                    </StackPanel>
+                </Border>
+            </Button>
+            <DataTemplate.Triggers>
+                <DataTrigger Binding="{Binding Selected}" Value="True">
+                    <Setter TargetName="Tile" Property="Background" Value="{DynamicResource AccentSoft}" />
+                    <Setter TargetName="Tile" Property="BorderBrush" Value="{DynamicResource Accent}" />
+                    <Setter TargetName="Tile" Property="BorderThickness" Value="1.5" />
+                </DataTrigger>
+            </DataTemplate.Triggers>
         </DataTemplate>
 
         <!-- "You're all caught up": a glyph in a soft circle, a line, and what would show up here. -->
@@ -603,7 +614,7 @@
                             </ItemsControl>
 
                             <!-- Waiting for approval -->
-                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12" Visibility="{Binding WaitingShown, Converter={StaticResource Visible}}">
                                 <StackPanel>
                                     <DockPanel>
                                         <Border DockPanel.Dock="Right" CornerRadius="9" Background="{DynamicResource BadgeBg}" Padding="7,1" VerticalAlignment="Center"
@@ -627,7 +638,7 @@
                             </Border>
 
                             <!-- Listening -->
-                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12" Visibility="{Binding ListeningShown, Converter={StaticResource Visible}}">
                                 <StackPanel>
                                     <TextBlock Style="{StaticResource CardTitle}" Text="Listening now" />
                                     <DockPanel Margin="0,12,0,0" Visibility="{Binding NoListening, Converter={StaticResource Visible}}">
@@ -645,7 +656,7 @@
                             </Border>
 
                             <!-- Recently sent -->
-                            <Border Style="{StaticResource CardStyle}">
+                            <Border Style="{StaticResource CardStyle}" Visibility="{Binding SentShown, Converter={StaticResource Visible}}">
                                 <StackPanel>
                                     <TextBlock Style="{StaticResource CardTitle}" Text="Recently sent" />
                                     <DockPanel Margin="0,12,0,0" Visibility="{Binding NoRecent, Converter={StaticResource Visible}}">

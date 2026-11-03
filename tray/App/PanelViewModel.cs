@@ -37,6 +37,9 @@ public sealed class PanelViewModel : Observable
     string? _flash;
     bool _flashOk = true;
     IReadOnlyList<Stat> _stats = [];
+    IReadOnlyList<StatVM> _tiles = [];
+    HomeSection _section = HomeSection.Waiting;
+    int _lastWaiting;
     bool _contactsPage;
     bool _awayPage, _awayLoaded, _awaySaving;
     bool _awayEnabled;
@@ -95,8 +98,36 @@ public sealed class PanelViewModel : Observable
     public string? ShownProblem => ShowContent ? null : Problem;
     public string? ConfigError => ShowContent ? State?.ConfigError : null;
 
-    /// <summary>Home's tiles: waiting, listening, contacts. Replaced only when a number changes, so the tiles aren't rebuilt every poll.</summary>
-    public IReadOnlyList<Stat> Stats => _stats;
+    /// <summary>Home's tiles: waiting, listening, sent. Replaced only when a number or the section changes, so the tiles aren't rebuilt every poll.</summary>
+    public IReadOnlyList<StatVM> Stats => _tiles;
+
+    /// <summary>Which section Home shows under its tiles.</summary>
+    public HomeSection Section
+    {
+        get => _section;
+        set
+        {
+            if (!Set(ref _section, value)) return;
+            Raise(nameof(WaitingShown));
+            Raise(nameof(ListeningShown));
+            Raise(nameof(SentShown));
+            BuildTiles();
+        }
+    }
+
+    public bool WaitingShown => _section == HomeSection.Waiting;
+    public bool ListeningShown => _section == HomeSection.Listening;
+    public bool SentShown => _section == HomeSection.Sent;
+
+    void BuildTiles()
+    {
+        _tiles = _stats.Select((stat, i) =>
+        {
+            var section = (HomeSection)i;
+            return new StatVM(stat, section, section == _section, new Command(_ => Section = section));
+        }).ToList();
+        Raise(nameof(Stats));
+    }
 
     public ObservableCollection<ApprovalVM> Approvals { get; } = [];
     public ObservableCollection<SessionVM> Listening { get; } = [];
@@ -484,11 +515,16 @@ public sealed class PanelViewModel : Observable
 // The page was opened before the daemon answered: fill the fields once it does.
         if (_awayPage && !_awayLoaded) LoadAway();
 
+        if (s is not null)
+        {
+            Section = Presenter.SectionAfterPoll(_section, _lastWaiting, approvals.Count);
+            _lastWaiting = approvals.Count;
+        }
         IReadOnlyList<Stat> stats = s is null ? [] : Presenter.Stats(s);
         if (!stats.SequenceEqual(_stats))
         {
             _stats = stats;
-            Raise(nameof(Stats));
+            BuildTiles();
         }
 
         foreach (var name in new[]

@@ -126,19 +126,20 @@ public class PresenterTests
         new(nick, nick.Length, null, null, "user", null, [], null, "autoSend", autoReply, "autoSend", []);
 
     [Fact]
-    public void Stats_count_waiting_listened_chats_and_contacts()
+    public void Stats_count_waiting_listened_chats_and_sent_messages()
     {
         var s = Fixtures.DemoState() with
         {
             Sessions = [Session("a", true, 1, 2), Session("b", true, 2), Session("idle", true)],
             Contacts = [Contact("leo", true), Contact("anna", false)],
         };
+        var sent = s.Recent.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         Assert.Equal(
             [
                 new Stat("Waiting", "2", new Tag("needs you", TagKind.Warn)),
                 new Stat("Listening", "2", new Tag("2 sessions", TagKind.Good)), // chat 2 counts once
-                new Stat("Contacts", "2", new Tag("1 auto-reply", TagKind.Info)),
+                new Stat("Sent", sent, new Tag("lately", TagKind.Info)),
             ],
             Presenter.Stats(s));
     }
@@ -146,16 +147,40 @@ public class PresenterTests
     [Fact]
     public void Stats_when_quiet_say_so()
     {
-        var s = Fixtures.DemoState() with { Approvals = [], Sessions = [], Contacts = null };
+        var s = Fixtures.DemoState() with { Approvals = [], Sessions = [], Recent = [], Contacts = null };
 
         Assert.Equal(
             [
                 new Stat("Waiting", "0", new Tag("all clear", TagKind.Good)),
                 new Stat("Listening", "0", new Tag("idle", TagKind.Muted)),
-                new Stat("Contacts", "–", new Tag("saved", TagKind.Muted)), // an older daemon sends no contacts
+                new Stat("Sent", "0", new Tag("none yet", TagKind.Muted)),
             ],
             Presenter.Stats(s));
         Assert.Equal(new Tag("session gone", TagKind.Muted), Presenter.Stats(s with { Sessions = [Session("x", false, 7)] })[1].Chip);
+    }
+
+    [Fact]
+    public void Listening_tile_counts_paused_chats()
+    {
+        // "x" is chat 1 and its auto-reply is off, so listening there is paused; "leo" (chat 3) isn't watched.
+        var s = Fixtures.DemoState() with
+        {
+            Sessions = [Session("a", true, 1, 2), Session("b", true, 1)],
+            Contacts = [Contact("x", false), Contact("leo", false)],
+        };
+
+        Assert.Equal(1, Presenter.PausedChats(s));
+        Assert.Equal(new Tag("1 paused", TagKind.Warn), Presenter.Stats(s)[1].Chip);
+        Assert.Equal(0, Presenter.PausedChats(s with { Contacts = null }));
+    }
+
+    [Theory]
+    [InlineData(HomeSection.Sent, 1, 2, HomeSection.Waiting)] // a new draft
+    [InlineData(HomeSection.Listening, 2, 2, HomeSection.Listening)]
+    [InlineData(HomeSection.Sent, 2, 1, HomeSection.Sent)] // one was decided
+    public void A_new_draft_switches_Home_to_Waiting(HomeSection current, int before, int now, HomeSection expected)
+    {
+        Assert.Equal(expected, Presenter.SectionAfterPoll(current, before, now));
     }
 
     [Fact]

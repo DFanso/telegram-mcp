@@ -91,6 +91,16 @@ public static class AvatarPhotos
     }
 }
 
+/// <summary>A tile at the top of Home. Clicking it shows its <see cref="Section"/> below the tiles.</summary>
+public sealed record StatVM(Stat Stat, HomeSection Section, bool Selected, ICommand Pick)
+{
+    public string Label => Stat.Label;
+    public string Value => Stat.Value;
+    public Tag Chip => Stat.Chip;
+    public string Name => $"{Stat.Label}: {Stat.Value}, {Stat.Chip.Text}";
+    public string Tip => $"Show {Stat.Label.ToLowerInvariant()} below";
+}
+
 /// <summary>A draft waiting for approval. Kept across polls, so a nickname being typed survives.</summary>
 public sealed class ApprovalVM : Observable
 {
