@@ -101,22 +101,22 @@
                                          ToolTip="The nickname you'll use for this chat, e.g. “send to leo”"
                                          Visibility="{Binding AsksNickname, Converter={StaticResource Visible}}" />
                             </DockPanel>
+                            <!-- The two ways to send it, side by side under the explanation they answer. -->
+                            <UniformGrid Columns="2" Margin="0,10,0,0">
+                                <local:PillButton x:Name="AskNext" Content="Send, ask next time" Tint="{DynamicResource Orange}" Margin="0,0,4,0"
+                                                  HorizontalAlignment="Stretch" Command="{Binding AskEveryTime}" IsEnabled="{Binding Idle}"
+                                                  ToolTip="Send now. Future messages to this chat wait for you too (Ask every time)." />
+                                <local:PillButton x:Name="Always" Content="Send, always allow" Filled="True" Tint="{DynamicResource GreenFill}" Margin="4,0,0,0"
+                                                  HorizontalAlignment="Stretch" Command="{Binding AlwaysAllow}" IsEnabled="{Binding Idle}"
+                                                  ToolTip="Send now and trust this chat: future messages send without asking" />
+                            </UniformGrid>
                         </StackPanel>
                     </Border>
 
-                    <!-- Buttons say what they do: every choice but Deny sends this message now. They wrap
-                         to a second line rather than squeeze. -->
+                    <!-- Deny, and Send for a chat that has a rule (a new chat's two ways to send are in its box above). -->
                     <WrapPanel HorizontalAlignment="Right" Margin="0,8,0,0">
-                        <local:PillButton Content="Deny" Tint="{DynamicResource Red}" Command="{Binding Deny}" IsEnabled="{Binding Idle}" Margin="8,4,0,0"
+                        <local:PillButton Content="Deny" Tint="{DynamicResource Red}" Command="{Binding Deny}" IsEnabled="{Binding Idle}" Margin="8,4,0,0" MinWidth="76"
                                           ToolTip="Don't send it. Claude is told you said no." />
-                        <local:PillButton x:Name="AskNext" Content="Send, ask next time" Tint="{DynamicResource Orange}" Margin="8,4,0,0"
-                                          Command="{Binding AskEveryTime}" IsEnabled="{Binding Idle}"
-                                          ToolTip="Send now. Future messages to this chat wait for you too (Ask every time)."
-                                          Visibility="{Binding FirstTime, Converter={StaticResource Visible}}" />
-                        <local:PillButton x:Name="Always" Content="Send, always allow" Filled="True" Tint="{DynamicResource GreenFill}" Margin="8,4,0,0"
-                                          Command="{Binding AlwaysAllow}" IsEnabled="{Binding Idle}"
-                                          ToolTip="Send now and trust this chat: future messages send without asking"
-                                          Visibility="{Binding FirstTime, Converter={StaticResource Visible}}" />
                         <local:PillButton x:Name="Approve" Filled="True" Tint="{DynamicResource GreenFill}" Margin="8,4,0,0"
                                           Command="{Binding Approve}" IsEnabled="{Binding Idle}" ToolTip="Send this message now"
                                           Visibility="{Binding FirstTime, Converter={StaticResource Hidden}}">
