@@ -746,6 +746,14 @@
                                     </Grid>
                                 </StackPanel>
 
+                                <TextBlock Style="{StaticResource SettingTitle}" Text="Quiet after you write" />
+                                <TextBlock Style="{StaticResource SettingHint}" Text="No away reply in a chat for this long after anything is sent from your account there, by you or by Claude. 0 turns this off." />
+                                <StackPanel Orientation="Horizontal">
+                                    <TextBox Width="72" Text="{Binding AwayQuiet, UpdateSourceTrigger=PropertyChanged}" MaxLength="4" HorizontalContentAlignment="Center"
+                                             AutomationProperties.Name="Quiet minutes" />
+                                    <TextBlock Text="minutes" Foreground="{DynamicResource Fg2}" VerticalAlignment="Center" Margin="8,0,0,0" />
+                                </StackPanel>
+
                                 <TextBlock Style="{StaticResource SettingTitle}" Text="Message" />
                                 <TextBlock Style="{StaticResource SettingHint}" Text="{}{name} becomes your first name." />
                                 <TextBox Text="{Binding AwayMessage, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap"
@@ -764,8 +772,8 @@
                                 </DockPanel>
                                 <DockPanel Margin="0,12,0,0">
                                     <local:PillButton DockPanel.Dock="Right" Content="Save" Filled="True" Tint="{DynamicResource AccentFill}" MinWidth="76" Command="{Binding SaveAway}"
-                                                      ToolTip="Save the hours and the message" />
-                                    <TextBlock Style="{StaticResource Caption}" Text="Hours and message save with Save." VerticalAlignment="Center" />
+                                                      ToolTip="Save the hours, quiet minutes and message" />
+                                    <TextBlock Style="{StaticResource Caption}" Text="Hours, quiet minutes and message save with Save." VerticalAlignment="Center" />
                                 </DockPanel>
                             </StackPanel>
                         </Border>
