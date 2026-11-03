@@ -299,7 +299,7 @@ export class Service {
     file: OutgoingFile | undefined,
     opts: SendFileOptions,
     sticker?: StickerRef,
-    /** False for the Page button: a page is not you speaking, so it must not silence the away reply (R7). */
+    /** False for the Page button and the pager's fixed replies: neither is you speaking, so neither may silence the away reply (R7). */
     countsAsSpeaking = true,
   ): Promise<MessageInfo> {
     const { tg } = this.d
@@ -511,7 +511,8 @@ export class Service {
     const rule = decideSend(config, peer, { isWatching: false })
     if (rule.action === 'block' || isListed(config, 'requireApproval', peer)) return
     const footed = withFooter(text, config.footer)
-    const sent = await this.#deliver(peer.id, footed, undefined, { replyTo: replyTo ?? undefined, parseMode: 'plain' })
+    // A fixed reply is not you speaking: it must not silence the away reply (R7).
+    const sent = await this.#deliver(peer.id, footed, undefined, { replyTo: replyTo ?? undefined, parseMode: 'plain' }, undefined, false)
     const nickname = nicknameFor(config, peer.id)
     this.#record({ chatId: peer.id, chatLabel: nickname ? `${peer.name} [${nickname}]` : peer.name, text: footed, messageId: sent.id, via: 'auto', sessionLabel: 'pager' })
   }

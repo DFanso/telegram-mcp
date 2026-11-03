@@ -579,6 +579,14 @@ describe('away in the service', () => {
     expect(await away.onIncoming(m, false)).toBe('sent')
   })
 
+  test("the pager's fixed reply to the sender is not you speaking", async () => {
+    const away = withAway({ ...baseConfig, away: awayOn })
+    await svc.tellPageSender(LEO.id, 'Paging Chamodh now', null)
+    expect(tg.sent).toHaveLength(1)
+    const m = { ...tg.emit(LEO.id, 'hi'), outgoing: false }
+    expect(await away.onIncoming(m, false)).toBe('sent')
+  })
+
   test('editAway reports a broken config file instead of throwing', () => {
     setup(baseConfig)
     writeFileSync(path, '{ not json')
