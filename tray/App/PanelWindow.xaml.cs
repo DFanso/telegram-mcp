@@ -9,6 +9,33 @@ using Screen = System.Windows.Forms.Screen;
 
 namespace TelegramMCPTray;
 
+/// <summary>The panel's smoked glass, for any borderless window of the app (the panel, the page alarm).</summary>
+static class Glass
+{
+    /// <summary>
+    /// Acrylic behind the window where Windows has it; otherwise the theme's tints are drawn opaque.
+    /// Call once the window has a handle, and again when the app mode (light/dark) changes.
+    /// </summary>
+    public static void Apply(Window w)
+    {
+        var hwnd = new WindowInteropHelper(w).Handle;
+        if (hwnd == IntPtr.Zero) return;
+        if (Theme.Translucent && Native.Acrylic(hwnd, Theme.AppsDark))
+        {
+            if (HwndSource.FromHwnd(hwnd)?.CompositionTarget is { } target) target.BackgroundColor = Colors.Transparent;
+            w.Background = Brushes.Transparent;
+            return;
+        }
+        if (Theme.Translucent)
+        {
+            // Windows said no: paint the same tints opaque from now on.
+            Theme.Translucent = false;
+            Theme.Apply(Application.Current.Resources);
+        }
+        w.SetResourceReference(Window.BackgroundProperty, "PanelBg");
+    }
+}
+
 /// <summary>
 /// The panel, shown like a Windows flyout: next to the tray (whichever edge the taskbar is on),
 /// on top, gone when you click elsewhere or press Esc. At most as tall as the screen: the middle
@@ -79,24 +106,7 @@ public partial class PanelWindow : Window
     /// Acrylic behind the panel where Windows has it; otherwise the theme's tints are drawn opaque.
     /// Called again when the app mode (light/dark) changes.
     /// </summary>
-    public void ApplyBackdrop()
-    {
-        var hwnd = new WindowInteropHelper(this).Handle;
-        if (hwnd == IntPtr.Zero) return;
-        if (Theme.Translucent && Native.Acrylic(hwnd, Theme.AppsDark))
-        {
-            if (HwndSource.FromHwnd(hwnd)?.CompositionTarget is { } target) target.BackgroundColor = Colors.Transparent;
-            Background = Brushes.Transparent;
-            return;
-        }
-        if (Theme.Translucent)
-        {
-            // Windows said no: paint the same tints opaque from now on.
-            Theme.Translucent = false;
-            Theme.Apply(Application.Current.Resources);
-        }
-        SetResourceReference(BackgroundProperty, "PanelBg");
-    }
+    public void ApplyBackdrop() => Glass.Apply(this);
 
     /// <summary>When the panel last went away (a tray click right after shouldn't reopen it).</summary>
     public DateTime LastHidden { get; private set; }
