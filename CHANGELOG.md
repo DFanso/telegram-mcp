@@ -3,7 +3,7 @@
 Each release's section here becomes its "What's new" on GitHub. Add the next one as
 `## <version>` before tagging (see [Releasing](README.md#releasing)).
 
-## Unreleased
+## 1.1.0
 
 - **Who has read my message**: `telegram_message_readers` says whether one of your own sent messages has been read. In a private chat it says whether the other person has read it; in a group of up to 100 people it lists who read it and when, for about a week after it was sent. It only reports what Telegram tells your account, so people who hide their read receipts, bigger groups and channels aren't shown. It only reads: it sends, edits and deletes nothing.
 - **Delete a sent message**: `telegram_delete_message` deletes, for everyone in the chat, a message the calling session sent recently (its sends, files and stickers, a `/reply` answer or an approved draft). It follows the edit rules: only that session's own messages (never the Page button's, the pager's, an away reply or another session's), and only where sending needs no approval (auto-send, a watched auto-reply chat or a `/reply` takeover). It can't be undone, so the tool says to use it only to take back something that shouldn't be there. The message leaves Recently sent and `daemon.log` records each delete.
