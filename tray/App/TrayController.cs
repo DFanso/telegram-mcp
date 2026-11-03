@@ -28,8 +28,7 @@ sealed class TrayController : IDisposable
         ITokenSource tokens = settings.FileSecrets ? new FileTokenSource(settings.TokenFile) : new CredentialTokenSource(settings.TokenTarget);
         _vm = new PanelViewModel(new DaemonApi(new HttpClient(), settings.Port, tokens), settings);
         _panel = new PanelWindow { DataContext = _vm };
-        var accent = Application.Current.Resources["Accent"] is SolidColorBrush b ? b.Color : Colors.SteelBlue;
-        _toasts = new Toasts(IconRenderer.NotificationLogo(accent));
+        _toasts = new Toasts(IconRenderer.NotificationLogo());
 
         _vm.Polled += OnPolled;
         _vm.QuitRequested += () => Exit?.Invoke();
@@ -140,6 +139,7 @@ sealed class TrayController : IDisposable
         Application.Current.Dispatcher.InvokeAsync(() =>
         {
             Theme.Apply(Application.Current.Resources);
+            _panel.ApplyBackdrop(); // acrylic follows light/dark too
             _shownState = null; // redraw for the taskbar's colour
             UpdateIcon();
         });

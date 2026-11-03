@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
+using System.Windows.Documents;
 using System.Windows.Input;
 using System.Windows.Media;
 
@@ -29,6 +30,57 @@ public sealed class PillButton : Button
 
     /// <summary>One of a set of choices: not filled reads as neutral grey rather than tinted.</summary>
     public bool Choice { get => (bool)GetValue(ChoiceProperty); set => SetValue(ChoiceProperty, value); }
+}
+
+/// <summary>
+/// A Lucide outline icon by name (Icons.xaml), drawn in the inherited Foreground at any size:
+/// <c>&lt;local:SvgIcon Kind="send" Width="14" /&gt;</c>. Kind can be bound ("chevron-up"...).
+/// </summary>
+public sealed class SvgIcon : FrameworkElement
+{
+    public static readonly DependencyProperty KindProperty = DependencyProperty.Register(
+        nameof(Kind), typeof(string), typeof(SvgIcon),
+        new FrameworkPropertyMetadata(null, FrameworkPropertyMetadataOptions.AffectsRender, (d, _) => ((SvgIcon)d)._geometry = null));
+
+    public static readonly DependencyProperty ForegroundProperty =
+        TextElement.ForegroundProperty.AddOwner(typeof(SvgIcon),
+            new FrameworkPropertyMetadata(Brushes.Gray, FrameworkPropertyMetadataOptions.Inherits | FrameworkPropertyMetadataOptions.AffectsRender));
+
+    /// <summary>The stroke on Lucide's 24-unit grid; 2 is Lucide's own weight.</summary>
+    public static readonly DependencyProperty StrokeWeightProperty = DependencyProperty.Register(
+        nameof(StrokeWeight), typeof(double), typeof(SvgIcon), new FrameworkPropertyMetadata(2.0, FrameworkPropertyMetadataOptions.AffectsRender));
+
+    Geometry? _geometry;
+
+    static SvgIcon()
+    {
+        WidthProperty.OverrideMetadata(typeof(SvgIcon), new FrameworkPropertyMetadata(16.0));
+        HeightProperty.OverrideMetadata(typeof(SvgIcon), new FrameworkPropertyMetadata(16.0));
+        VerticalAlignmentProperty.OverrideMetadata(typeof(SvgIcon), new FrameworkPropertyMetadata(VerticalAlignment.Center));
+        SnapsToDevicePixelsProperty.OverrideMetadata(typeof(SvgIcon), new FrameworkPropertyMetadata(false));
+    }
+
+    public string? Kind { get => (string?)GetValue(KindProperty); set => SetValue(KindProperty, value); }
+    public Brush Foreground { get => (Brush)GetValue(ForegroundProperty); set => SetValue(ForegroundProperty, value); }
+    public double StrokeWeight { get => (double)GetValue(StrokeWeightProperty); set => SetValue(StrokeWeightProperty, value); }
+
+    protected override Size MeasureOverride(Size available) => new(
+        double.IsNaN(Width) ? 16 : Width, double.IsNaN(Height) ? 16 : Height);
+
+    protected override void OnRender(DrawingContext dc)
+    {
+        if (Kind is null) return;
+        _geometry ??= TryFindResource("icon." + Kind) as Geometry;
+        if (_geometry is null) return;
+        var scale = Math.Min(ActualWidth, ActualHeight) / 24;
+        if (scale <= 0) return;
+        var pen = new Pen(Foreground, StrokeWeight) { StartLineCap = PenLineCap.Round, EndLineCap = PenLineCap.Round, LineJoin = PenLineJoin.Round };
+        dc.PushTransform(new TranslateTransform((ActualWidth - 24 * scale) / 2, (ActualHeight - 24 * scale) / 2));
+        dc.PushTransform(new ScaleTransform(scale, scale));
+        dc.DrawGeometry(null, pen, _geometry);
+        dc.Pop();
+        dc.Pop();
+    }
 }
 
 /// <summary>Collapsed when true: the opposite of BooleanToVisibilityConverter.</summary>
