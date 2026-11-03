@@ -24,7 +24,7 @@ import { join } from 'node:path'
 import { checkSendable, describeOutgoing, fileDigest, fmtBytes, safeFileName, type OutgoingFile } from '../shared/media'
 import { looksLikeReplyCommand, parseReplyCommand } from '../shared/takeover'
 import type { IncomingMessage, MessageInfo, PeerInfo, SendMode, SentRecord, TgEvent, ToolResult, UiContact, UiPage, UiState } from '../shared/protocol'
-import { TOOLS, isToolName, type ToolInput, type ToolName } from '../shared/tools'
+import { CHAT_KINDS, TOOLS, chatKindOf, isToolName, type ToolInput, type ToolName } from '../shared/tools'
 import { uiAway, type AwayResponder } from './away'
 import type { Approvals, DecideOptions, PendingSend } from './approvals'
 import { visibleText } from './formatting'
@@ -115,6 +115,8 @@ const STICKER_TEXT = '[sticker]'
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 const fail = (text: string): ToolResult => ({ text, isError: true })
+
+const KIND_HEADINGS = { private: 'Private chats', groups: 'Groups', channels: 'Channels', bots: 'Bots' } as const
 
 export function fmtPeer(p: PeerInfo): string {
   return [p.name, p.username ? `@${p.username}` : null, `id ${p.id}`, p.type, p.isForum ? 'forum' : null]
@@ -814,14 +816,30 @@ export class Service {
 
     telegram_list_chats: async (_sid, p) => {
       const c = this.d.store.get()
-      const dialogs = await this.d.tg.listDialogs(p)
-      if (dialogs.length === 0) return { text: p.unreadOnly ? 'No unread chats.' : 'No chats.' }
-      const lines = dialogs.map(d => {
+      const dialogs = await this.d.tg.listDialogs({ limit: p.limit, unreadOnly: p.unreadOnly, type: p.type })
+      if (dialogs.length === 0) {
+        const what = p.type === 'all' ? 'chats' : KIND_HEADINGS[p.type].toLowerCase()
+        return { text: p.unreadOnly ? `No unread ${what}.` : `No ${what}.` }
+      }
+      // Telegram's own order is "recent"; the other sorts are stable, so ties keep it.
+      if (p.sort === 'unread') dialogs.sort((a, b) => b.unread - a.unread)
+      else if (p.sort === 'name') dialogs.sort((a, b) => a.peer.name.localeCompare(b.peer.name, undefined, { sensitivity: 'base' }))
+      const line = (d: (typeof dialogs)[number]) => {
         const nick = nicknameFor(c, d.peer.id)
         const last = d.lastMessage ? ` · last: ${d.lastMessage.outgoing ? 'me: ' : ''}"${clip(d.lastMessage.text || '[media]', 60)}"` : ''
         return `• ${fmtPeer(d.peer)}${nick ? ` · [${nick}]` : ''}${d.unread ? ` · ${d.unread} unread` : ''} · ${policyLabel(c, d.peer)}${last}`
-      })
-      return { text: lines.join('\n') }
+      }
+      if (!p.categorize) return { text: dialogs.map(line).join('\n') }
+      const out: string[] = []
+      for (const kind of CHAT_KINDS) {
+        if (kind === 'all') continue
+        const group = dialogs.filter(d => chatKindOf(d.peer.type) === kind)
+        if (group.length === 0) continue
+        const unread = group.reduce((n, d) => n + d.unread, 0)
+        if (out.length) out.push('')
+        out.push(`${KIND_HEADINGS[kind]} (${group.length}${unread ? `, ${unread} unread` : ''})`, ...group.map(line))
+      }
+      return { text: out.join('\n') }
     },
 
     telegram_search_chats: async (_sid, p) => {
