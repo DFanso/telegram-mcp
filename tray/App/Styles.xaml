@@ -32,6 +32,13 @@
     <SolidColorBrush x:Key="BlueWash" Color="#264FB8F2" />
     <SolidColorBrush x:Key="GrayWash" Color="#269A938E" />
     <SolidColorBrush x:Key="Brand" Color="#FF1B92D1" />
+    <!-- Solid fills behind white text: each at least 4.5:1 with white (WCAG AA). -->
+    <SolidColorBrush x:Key="AccentFill" Color="#FFE0501F" />
+    <SolidColorBrush x:Key="GreenFill" Color="#FF157A41" />
+    <SolidColorBrush x:Key="OrangeFill" Color="#FFA85A00" />
+    <SolidColorBrush x:Key="RedFill" Color="#FFC42B2B" />
+    <SolidColorBrush x:Key="BlueFill" Color="#FF1565A8" />
+    <SolidColorBrush x:Key="GrayFill" Color="#FF6B6560" />
 
     <!-- The app icon's paper plane (docs/icon.svg), on a 100×100 box. The tray icon draws the same path. -->
     <Geometry x:Key="PlaneGeometry">M88.723,12.142C76.419,17.238,23.661,39.091,9.084,45.047c-9.776,3.815-4.053,7.392-4.053,7.392s8.345,2.861,15.499,5.007c7.153,2.146,10.968-0.238,10.968-0.238l33.62-22.652c11.922-8.107,9.061-1.431,6.199,1.431c-6.199,6.2-16.452,15.975-25.036,23.844c-3.815,3.338-1.908,6.199-0.238,7.63c6.199,5.246,23.129,15.976,24.082,16.691c5.037,3.566,14.945,8.699,16.452-2.146c0,0,5.961-37.435,5.961-37.435c1.908-12.637,3.815-24.321,4.053-27.659C97.307,8.804,88.723,12.142,88.723,12.142z</Geometry>
@@ -69,10 +76,13 @@
         <Setter Property="TextWrapping" Value="Wrap" />
     </Style>
 
-    <!-- A capsule button. Filled: solid tint, white text. Not filled: a faint tint, tinted text.
-         Choice (a segmented choice): not filled is neutral instead. -->
+    <!-- A capsule button. Filled: a solid fill (pass a *Fill brush as Tint, dark enough for white text
+         at 4.5:1). Not filled: a faint tint behind tinted text. Choice (a segmented choice): not filled
+         is neutral instead. The text colour is set on the button itself, so content written inline
+         (an icon and a label) gets it too, not only a plain string. -->
     <Style TargetType="local:PillButton">
         <Setter Property="Tint" Value="{DynamicResource Green}" />
+        <Setter Property="Foreground" Value="{Binding Tint, RelativeSource={RelativeSource Self}}" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="Focusable" Value="True" />
         <Setter Property="FocusVisualStyle" Value="{x:Null}" />
@@ -82,9 +92,9 @@
                     <Grid x:Name="Root" MinHeight="30">
                         <Border x:Name="Bg" CornerRadius="15" Background="{TemplateBinding Tint}" Opacity="0.16" />
                         <Border x:Name="Focus" CornerRadius="15" BorderBrush="{DynamicResource Fg}" BorderThickness="1.5" Opacity="0" />
-                        <ContentPresenter x:Name="Label" Margin="14,5" HorizontalAlignment="Center" VerticalAlignment="Center"
+                        <ContentPresenter Margin="14,5" HorizontalAlignment="Center" VerticalAlignment="Center"
                                           TextElement.FontSize="12" TextElement.FontWeight="SemiBold"
-                                          TextElement.Foreground="{TemplateBinding Tint}" />
+                                          TextElement.Foreground="{TemplateBinding Foreground}" />
                     </Grid>
                     <ControlTemplate.Triggers>
                         <MultiTrigger>
@@ -94,58 +104,77 @@
                             </MultiTrigger.Conditions>
                             <Setter TargetName="Bg" Property="Background" Value="Transparent" />
                             <Setter TargetName="Bg" Property="Opacity" Value="1" />
-                            <Setter TargetName="Label" Property="TextElement.Foreground" Value="{DynamicResource Fg2}" />
                         </MultiTrigger>
                         <Trigger Property="Filled" Value="True">
                             <Setter TargetName="Bg" Property="Opacity" Value="1" />
-                            <Setter TargetName="Label" Property="TextElement.Foreground" Value="{DynamicResource OnAccent}" />
                         </Trigger>
                         <Trigger Property="IsKeyboardFocused" Value="True">
-                            <Setter TargetName="Focus" Property="Opacity" Value="0.7" />
+                            <Setter TargetName="Focus" Property="Opacity" Value="0.8" />
                         </Trigger>
                         <Trigger Property="IsMouseOver" Value="True">
-                            <Setter TargetName="Root" Property="Opacity" Value="0.86" />
+                            <Setter TargetName="Root" Property="Opacity" Value="0.88" />
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True">
-                            <Setter TargetName="Root" Property="Opacity" Value="0.7" />
+                            <Setter TargetName="Root" Property="Opacity" Value="0.75" />
                         </Trigger>
                         <Trigger Property="IsEnabled" Value="False">
-                            <Setter TargetName="Root" Property="Opacity" Value="0.45" />
+                            <Setter TargetName="Root" Property="Opacity" Value="0.5" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
+        <Style.Triggers>
+            <MultiTrigger>
+                <MultiTrigger.Conditions>
+                    <Condition Property="Choice" Value="True" />
+                    <Condition Property="Filled" Value="False" />
+                </MultiTrigger.Conditions>
+                <Setter Property="Foreground" Value="{DynamicResource Fg2}" />
+            </MultiTrigger>
+            <Trigger Property="Filled" Value="True">
+                <Setter Property="Foreground" Value="{DynamicResource OnAccent}" />
+            </Trigger>
+        </Style.Triggers>
     </Style>
 
-    <!-- A tab in the segmented bar under the header: the open one is a solid orange capsule. -->
+    <!-- A tab in the segmented bar under the header. The open one is a solid deep-orange capsule with
+         white text (4.8:1); the others are light text on the glass (Fg2, 6:1+), brighter on hover. -->
     <Style x:Key="Tab" TargetType="local:PillButton">
+        <Setter Property="Foreground" Value="{DynamicResource Fg2}" />
         <Setter Property="Cursor" Value="Hand" />
         <Setter Property="FocusVisualStyle" Value="{x:Null}" />
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="local:PillButton">
-                    <Border x:Name="Bg" CornerRadius="15" Background="Transparent" MinHeight="30" Padding="14,5">
-                        <ContentPresenter x:Name="Label" HorizontalAlignment="Center" VerticalAlignment="Center"
+                    <Border x:Name="Bg" CornerRadius="15" Background="Transparent" MinHeight="30" Padding="14,5"
+                            BorderBrush="Transparent" BorderThickness="1.5">
+                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
                                           TextElement.FontSize="12" TextElement.FontWeight="SemiBold"
-                                          TextElement.Foreground="{DynamicResource Fg2}" />
+                                          TextElement.Foreground="{TemplateBinding Foreground}" />
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="Bg" Property="Background" Value="{DynamicResource Subtle2}" />
                         </Trigger>
                         <Trigger Property="Filled" Value="True">
-                            <Setter TargetName="Bg" Property="Background" Value="{DynamicResource Accent}" />
-                            <Setter TargetName="Label" Property="TextElement.Foreground" Value="{DynamicResource OnAccent}" />
+                            <Setter TargetName="Bg" Property="Background" Value="{DynamicResource AccentFill}" />
                         </Trigger>
                         <Trigger Property="IsKeyboardFocused" Value="True">
                             <Setter TargetName="Bg" Property="BorderBrush" Value="{DynamicResource Fg}" />
-                            <Setter TargetName="Bg" Property="BorderThickness" Value="1.5" />
                         </Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value>
         </Setter>
+        <Style.Triggers>
+            <Trigger Property="IsMouseOver" Value="True">
+                <Setter Property="Foreground" Value="{DynamicResource Fg}" />
+            </Trigger>
+            <Trigger Property="Filled" Value="True">
+                <Setter Property="Foreground" Value="{DynamicResource OnAccent}" />
+            </Trigger>
+        </Style.Triggers>
     </Style>
 
     <!-- A round glass button with a glyph (the header's Rules and Log). -->

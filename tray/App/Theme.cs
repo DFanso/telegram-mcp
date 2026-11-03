@@ -82,10 +82,11 @@ static class Theme
             Put("Green", 0xFF3DD68C);   // online, active, allowed
             Put("Orange", 0xFFFFB020);  // pending: waiting for you, ask every time
             Put("Yellow", 0xFFF5D547);  // reconnecting
-            Put("Red", 0xFFFF5C5C);     // logged out, blocked, errors
+            Put("Red", 0xFFFF7A7A);     // logged out, blocked, errors (light enough for red text on the glass)
             Put("Blue", 0xFF4FB8F2);    // listening, auto-reply (the icon's Telegram blue)
             Put("Gray", 0xFF9A938E);    // offline, idle, not set
             Washes(res, 0x26);
+            Put("AccentFill", 0xFFE0501F); // white on it: 4.8:1
         }
         else
         {
@@ -109,8 +110,16 @@ static class Theme
             Put("Blue", 0xFF1B85C4);
             Put("Gray", 0xFF7D756F);
             Washes(res, 0x22);
+            Put("AccentFill", 0xFFC93C14); // white on it: 5.1:1
         }
         Put("OnAccent", 0xFFFFFFFF);
+        // Solid fills behind white text (Send, Always allow, the chosen segment...): each at least
+        // 4.5:1 with white, so filled buttons pass WCAG AA in both themes.
+        Put("GreenFill", 0xFF157A41);
+        Put("OrangeFill", 0xFFA85A00);
+        Put("RedFill", 0xFFC42B2B);
+        Put("BlueFill", 0xFF1565A8);
+        Put("GrayFill", 0xFF6B6560);
         var brand = new LinearGradientBrush(C(0xFF37AEE2), C(0xFF1B92D1), new Point(0, 0), new Point(1, 1));
         brand.Freeze();
         res["Brand"] = brand;

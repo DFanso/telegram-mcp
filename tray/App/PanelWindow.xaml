@@ -106,11 +106,11 @@
                                           Command="{Binding AskEveryTime}" IsEnabled="{Binding Idle}"
                                           ToolTip="Send now; future messages to this chat need approval too"
                                           Visibility="{Binding FirstTime, Converter={StaticResource Visible}}" />
-                        <local:PillButton x:Name="Always" Content="Always allow" Filled="True" Tint="{DynamicResource Green}" Margin="8,0,0,0"
+                        <local:PillButton x:Name="Always" Content="Always allow" Filled="True" Tint="{DynamicResource GreenFill}" Margin="8,0,0,0"
                                           Command="{Binding AlwaysAllow}" IsEnabled="{Binding Idle}"
                                           ToolTip="Send now and trust this chat: future messages send without asking"
                                           Visibility="{Binding FirstTime, Converter={StaticResource Visible}}" />
-                        <local:PillButton x:Name="Approve" Filled="True" Tint="{DynamicResource Green}" Margin="8,0,0,0"
+                        <local:PillButton x:Name="Approve" Filled="True" Tint="{DynamicResource GreenFill}" Margin="8,0,0,0"
                                           Command="{Binding Approve}" IsEnabled="{Binding Idle}" ToolTip="Send this message now"
                                           Visibility="{Binding FirstTime, Converter={StaticResource Hidden}}">
                             <StackPanel Orientation="Horizontal">
@@ -283,11 +283,11 @@
                         <TextBlock Style="{StaticResource SettingHint}" Text="Always allow sends at once; Ask every time waits for you here; Blocked never sends." />
                         <Border Style="{StaticResource Segments}">
                             <StackPanel Orientation="Horizontal">
-                                <local:PillButton Content="Always allow" Choice="True" Tint="{DynamicResource Green}" Filled="{Binding IsAutoSend, Mode=OneWay}"
+                                <local:PillButton Content="Always allow" Choice="True" Tint="{DynamicResource GreenFill}" Filled="{Binding IsAutoSend, Mode=OneWay}"
                                                   Command="{Binding SetMode}" CommandParameter="autoSend" />
-                                <local:PillButton Content="Ask every time" Choice="True" Tint="{DynamicResource Orange}" Filled="{Binding IsAsk, Mode=OneWay}"
+                                <local:PillButton Content="Ask every time" Choice="True" Tint="{DynamicResource OrangeFill}" Filled="{Binding IsAsk, Mode=OneWay}"
                                                   Command="{Binding SetMode}" CommandParameter="requireApproval" />
-                                <local:PillButton Content="Blocked" Choice="True" Tint="{DynamicResource Red}" Filled="{Binding IsBlocked, Mode=OneWay}"
+                                <local:PillButton Content="Blocked" Choice="True" Tint="{DynamicResource RedFill}" Filled="{Binding IsBlocked, Mode=OneWay}"
                                                   Command="{Binding SetMode}" CommandParameter="blocked" />
                             </StackPanel>
                         </Border>
@@ -296,9 +296,9 @@
                         <TextBlock Style="{StaticResource SettingHint}" Text="Lets a Claude session listen to this chat and answer new messages." />
                         <Border Style="{StaticResource Segments}">
                             <StackPanel Orientation="Horizontal">
-                                <local:PillButton Content="On" MinWidth="60" Choice="True" Tint="{DynamicResource Blue}" Filled="{Binding ReplyOn, Mode=OneWay}"
+                                <local:PillButton Content="On" MinWidth="60" Choice="True" Tint="{DynamicResource BlueFill}" Filled="{Binding ReplyOn, Mode=OneWay}"
                                                   Command="{Binding SetAutoReply}" CommandParameter="on" />
-                                <local:PillButton Content="Off" MinWidth="60" Choice="True" Tint="{DynamicResource Gray}" Filled="{Binding ReplyOff, Mode=OneWay}"
+                                <local:PillButton Content="Off" MinWidth="60" Choice="True" Tint="{DynamicResource GrayFill}" Filled="{Binding ReplyOff, Mode=OneWay}"
                                                   Command="{Binding SetAutoReply}" CommandParameter="off" />
                             </StackPanel>
                         </Border>
@@ -308,10 +308,10 @@
                             <TextBlock Style="{StaticResource SettingHint}" Text="Their /page rings an alarm on this PC until you answer it." />
                             <Border Style="{StaticResource Segments}">
                                 <StackPanel Orientation="Horizontal">
-                                    <local:PillButton Content="On" MinWidth="60" Choice="True" Tint="{DynamicResource Orange}" Filled="{Binding PageOn, Mode=OneWay}"
+                                    <local:PillButton Content="On" MinWidth="60" Choice="True" Tint="{DynamicResource OrangeFill}" Filled="{Binding PageOn, Mode=OneWay}"
                                                       Command="{Binding SetPageFrom}" CommandParameter="on"
                                                       ToolTip="Their /page rings your desktop until you ack it (paging.pageFrom)" />
-                                    <local:PillButton Content="Off" MinWidth="60" Choice="True" Tint="{DynamicResource Gray}" Filled="{Binding PageOff, Mode=OneWay}"
+                                    <local:PillButton Content="Off" MinWidth="60" Choice="True" Tint="{DynamicResource GrayFill}" Filled="{Binding PageOff, Mode=OneWay}"
                                                       Command="{Binding SetPageFrom}" CommandParameter="off" />
                                 </StackPanel>
                             </Border>
@@ -319,7 +319,7 @@
                             <TextBlock Style="{StaticResource SettingTitle}" Text="{Binding PageTitle}" />
                             <TextBlock Style="{StaticResource SettingHint}" Text="Sends them “/page &lt;reason&gt;” from your account. It rings if you're on their list." />
                             <DockPanel>
-                                <local:PillButton DockPanel.Dock="Right" Content="{Binding PageButtonText}" Filled="True" Tint="{DynamicResource Red}" Margin="8,0,0,0"
+                                <local:PillButton DockPanel.Dock="Right" Content="{Binding PageButtonText}" Filled="True" Tint="{DynamicResource RedFill}" Margin="8,0,0,0"
                                                   Command="{Binding SendPage}"
                                                   ToolTip="Sends “/page &lt;reason&gt;” from your account. It rings them if you're on their pageFrom." />
                                 <Grid>
