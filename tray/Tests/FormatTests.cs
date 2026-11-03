@@ -53,6 +53,7 @@ public class FormatTests
 
     [Theory]
     [InlineData("auto", "auto-sent")]
+    [InlineData("away", "away reply")]
     [InlineData("menubar", "approved in the tray")]
     [InlineData("dialog", "approved in the dialog")]
     [InlineData("chat", "approved in chat")]

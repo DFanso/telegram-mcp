@@ -54,7 +54,14 @@ public sealed record UiState(
     /// <summary>Null from a daemon older than the Contacts page.</summary>
     IReadOnlyList<UiContact>? Contacts = null, string? DefaultPolicy = null,
     /// <summary>Null from a daemon older than pages.</summary>
-    IReadOnlyList<UiPage>? Pages = null);
+    IReadOnlyList<UiPage>? Pages = null,
+    /// <summary>Null from a daemon older than away hours.</summary>
+    UiAway? Away = null);
+
+/// <summary>The away auto-reply settings and where the clock puts them (UiAway in src/shared/protocol.ts).</summary>
+public sealed record UiAway(
+    bool Enabled, string From, string Until, string Message, int QuietMinutes,
+    bool Active, DateTimeOffset? NextChange, string Preview);
 
 public static class Json
 {

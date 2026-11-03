@@ -63,6 +63,38 @@ public class JsonTests
     }
 
     [Fact]
+    public void Parses_away()
+    {
+        var a = Fixtures.DemoState().Away!;
+
+        Assert.True(a.Enabled);
+        Assert.Equal("18:00", a.From);
+        Assert.Equal("09:00", a.Until);
+        Assert.Equal(30, a.QuietMinutes);
+        Assert.False(a.Active);
+        Assert.Equal(DateTimeOffset.Parse("2026-11-02T18:00:00Z"), a.NextChange);
+        Assert.StartsWith("Me is off the grid", a.Preview);
+    }
+
+    [Fact]
+    public void A_daemon_without_away_leaves_it_null()
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(Fixtures.WithContacts("\"defaultPolicy\": \"approve\""))!.AsObject();
+        node.Remove("away");
+
+        Assert.Null(Json.ParseState(node.ToJsonString()).Away);
+    }
+
+    [Fact]
+    public void A_null_next_change_parses()
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(Fixtures.WithContacts("\"defaultPolicy\": \"approve\""))!.AsObject();
+        node["away"]!["nextChange"] = null;
+
+        Assert.Null(Json.ParseState(node.ToJsonString()).Away!.NextChange);
+    }
+
+    [Fact]
     public void A_daemon_without_contacts_leaves_them_null()
     {
         var s = Fixtures.DemoState();

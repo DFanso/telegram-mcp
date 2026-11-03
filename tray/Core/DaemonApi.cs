@@ -49,6 +49,9 @@ public sealed record PollResult(UiState? State, string? Problem)
 public sealed record Decision(bool Approve, string? Remember = null, string? Nickname = null);
 
 /// <summary>A Contacts-page edit; null fields stay as they are.</summary>
+/// <summary>POST /ui/away: only the fields that are set go in the body.</summary>
+public sealed record AwayChange(bool? Enabled = null, string? From = null, string? Until = null, string? Message = null, int? QuietMinutes = null);
+
 public sealed record ContactChange(string Nickname, string? SendMode = null, bool? AutoReply = null, string? Rename = null, bool? PageFrom = null);
 
 /// <summary>The daemon's answer to an action, in words. <see cref="Nickname"/>: a contact's name after the edit.</summary>
@@ -128,6 +131,17 @@ public sealed class DaemonApi(HttpClient http, int port, ITokenSource tokens, Ti
         if (change.PageFrom is { } pages) body["pageFrom"] = pages;
         if (change.Rename is not null) body["rename"] = change.Rename;
         return PostAsync("/ui/contacts", body, ok => ok ? "Saved." : "Not changed.", ct, notFound: Contacts.OlderDaemon);
+    }
+
+    public Task<ActionResult> SaveAwayAsync(AwayChange change, CancellationToken ct = default)
+    {
+        var body = new JsonObject();
+        if (change.Enabled is { } on) body["enabled"] = on;
+        if (change.From is not null) body["from"] = change.From;
+        if (change.Until is not null) body["until"] = change.Until;
+        if (change.Message is not null) body["message"] = change.Message;
+        if (change.QuietMinutes is { } quiet) body["quietMinutes"] = quiet;
+        return PostAsync("/ui/away", body, ok => ok ? "Saved." : "Not changed.", ct, notFound: Away.OlderDaemon);
     }
 
     /// <summary>The Page button: the daemon sends "/page &lt;reason&gt;" to that person from your account.</summary>
