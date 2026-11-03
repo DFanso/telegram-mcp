@@ -140,6 +140,7 @@ sealed class TrayController : IDisposable
         {
             Theme.Apply(Application.Current.Resources);
             _panel.ApplyBackdrop(); // acrylic follows light/dark too
+            _alarm.ApplyBackdrop();
             _shownState = null; // redraw for the taskbar's colour
             UpdateIcon();
         });
