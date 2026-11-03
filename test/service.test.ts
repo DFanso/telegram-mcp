@@ -621,3 +621,45 @@ describe('away in the service', () => {
     expect(svc.uiState().away).toMatchObject({ enabled: false, active: false, nextChange: null })
   })
 })
+
+describe('editing a sent message', () => {
+  beforeEach(() => setup(baseConfig))
+
+  async function sentId(to: string, text = 'first'): Promise<number> {
+    const r = await svc.call('s1', 'telegram_send_message', { to, text })
+    return Number(/message #(\d+)/.exec(r.text)![1])
+  }
+
+  test('an autoSend chat gets the new text, with the footer once', async () => {
+    const id = await sentId('leo')
+    const r = await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: id, text: 'fixed' })
+    expect(r.isError).toBeFalsy()
+    expect(r.text).toContain(`Edited message #${id}`)
+    expect(tg.edits).toEqual([{ chatId: LEO.id, messageId: id, text: `fixed${FOOTER}`, parseMode: 'plain' }])
+  })
+
+  test('a chat that needs approval is refused, and nothing is edited', async () => {
+    const r = await svc.call('s1', 'telegram_edit_message', { chat: 'qa', messageId: 1, text: 'fixed' })
+    expect(r.isError).toBe(true)
+    expect(tg.edits).toEqual([])
+  })
+
+  test('a message this daemon did not send is refused', async () => {
+    const r = await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: 99999, text: 'fixed' })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('was not sent by this daemon')
+    expect(tg.edits).toEqual([])
+  })
+
+  test('text that starts with /reply is refused', async () => {
+    const id = await sentId('leo')
+    const r = await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: id, text: '/reply stop' })
+    expect(r.isError).toBe(true)
+    expect(tg.edits).toEqual([])
+  })
+
+  test('a blocked chat is refused', async () => {
+    const r = await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: 1, text: 'x' })
+    expect(r.isError).toBe(true)
+  })
+})
