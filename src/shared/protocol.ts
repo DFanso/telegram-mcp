@@ -126,6 +126,8 @@ export interface SentRecord {
 
 export interface UiApproval {
   id: string
+  /** The chat it goes to, for its avatar (GET /ui/avatars/:chatId). */
+  chatId: number
   to: string
   detail: string
   text: string
