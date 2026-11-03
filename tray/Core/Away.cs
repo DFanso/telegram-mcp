@@ -33,4 +33,18 @@ public static class Away
         if (message.Length > MessageMax) return $"The message is too long ({MessageMax} characters at most).";
         return null;
     }
+
+    /// <summary>
+    /// What the message would send: {name} becomes the first word of your name (left as is when it is unknown),
+    /// then the footer is added unless the text already ends with it. Mirrors withFooter in src/shared/policy.ts.
+    /// </summary>
+    public static string Preview(string message, string? meName, string footer)
+    {
+        var first = meName?.Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries).FirstOrDefault();
+        var text = first is null ? message : message.Replace("{name}", first, StringComparison.Ordinal);
+        var mark = footer.Trim();
+        if (mark == "") return text;
+        var body = text.TrimEnd();
+        return body.EndsWith(mark, StringComparison.Ordinal) ? body : body + footer;
+    }
 }

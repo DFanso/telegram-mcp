@@ -280,13 +280,22 @@
                         <TextBlock Text="{Binding Header.Text}" FontSize="11" Foreground="{DynamicResource Fg2}" TextTrimming="CharacterEllipsis" MaxWidth="220" />
                     </StackPanel>
                 </StackPanel>
-                <Button Grid.Column="2" Style="{StaticResource IconButton}" Command="{Binding ShowContacts}" VerticalAlignment="Center"
-                        ToolTip="Saved chats and the rules for each">
-                    <StackPanel Orientation="Horizontal">
-                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE716;" Margin="0,0,5,0" />
-                        <TextBlock Text="Contacts" />
-                    </StackPanel>
-                </Button>
+                <StackPanel Grid.Column="2" Orientation="Horizontal" VerticalAlignment="Center">
+                    <Button Style="{StaticResource IconButton}" Command="{Binding ShowAway}"
+                            ToolTip="Reply for you while you are away for the night">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE708;" Margin="0,0,5,0" />
+                            <TextBlock Text="Away" />
+                        </StackPanel>
+                    </Button>
+                    <Button Style="{StaticResource IconButton}" Command="{Binding ShowContacts}" Margin="6,0,0,0"
+                            ToolTip="Saved chats and the rules for each">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE716;" Margin="0,0,5,0" />
+                            <TextBlock Text="Contacts" />
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
             </Grid>
 
             <StackPanel Visibility="{Binding ContactsPage, Converter={StaticResource Visible}}">
@@ -316,6 +325,21 @@
                     </Button>
                 </Grid>
             </StackPanel>
+
+            <Grid Visibility="{Binding AwayPage, Converter={StaticResource Visible}}">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto" />
+                    <ColumnDefinition Width="*" />
+                </Grid.ColumnDefinitions>
+                <Button Style="{StaticResource IconButton}" Command="{Binding ShowMain}" ToolTip="Back" VerticalAlignment="Center">
+                    <TextBlock Style="{StaticResource Glyph}" Text="&#xE76B;" FontSize="12" Margin="2,3" />
+                </Button>
+                <StackPanel Grid.Column="1" Margin="10,0,0,0">
+                    <TextBlock Text="Away" FontSize="13" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding AwayStatus}" FontSize="11" Foreground="{DynamicResource Fg2}" TextTrimming="CharacterEllipsis"
+                               Visibility="{Binding AwayStatus, Converter={StaticResource IfSet}}" />
+                </StackPanel>
+            </Grid>
 
             <Grid Margin="0,12,0,0" Visibility="{Binding Flash, Converter={StaticResource IfSet}}">
                 <Border CornerRadius="8" Background="{DynamicResource Accent}" Opacity="0.12" />
@@ -364,6 +388,12 @@
                             <TextBlock Text="{Binding ConfigError}" FontSize="11" Foreground="{DynamicResource Orange}" TextWrapping="Wrap" />
                         </DockPanel>
 
+                        <DockPanel Margin="0,0,0,14" Visibility="{Binding AwayBadge, Converter={StaticResource IfSet}}">
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE708;" FontSize="11" Foreground="{DynamicResource Accent}" Margin="0,1,6,0" VerticalAlignment="Top" />
+                            <TextBlock Text="{Binding AwayBadge}" FontSize="11" Foreground="{DynamicResource Accent}" TextWrapping="Wrap"
+                                       ToolTip="Friends who write get one reply saying you are away" />
+                        </DockPanel>
+
                         <StackPanel Orientation="Horizontal" Margin="0,0,0,8">
                             <TextBlock Style="{StaticResource SectionTitle}" Text="WAITING FOR APPROVAL" />
                             <Border CornerRadius="7" Background="{DynamicResource Orange}" Padding="5,0" Margin="6,0,0,0"
@@ -384,6 +414,74 @@
                         <TextBlock Style="{StaticResource Placeholder}" Text="Nothing sent yet"
                                    Visibility="{Binding NoRecent, Converter={StaticResource Visible}}" />
                         <ItemsControl ItemsSource="{Binding Recent}" ItemTemplate="{StaticResource RecentTemplate}" Focusable="False" />
+                    </StackPanel>
+                </StackPanel>
+
+                <!-- Away page -->
+                <StackPanel Visibility="{Binding AwayPage, Converter={StaticResource Visible}}">
+                    <TextBlock Text="{Binding ShownProblem}" Foreground="{DynamicResource Fg2}" TextWrapping="Wrap"
+                               Visibility="{Binding ShownProblem, Converter={StaticResource IfSet}}" />
+                    <TextBlock Style="{StaticResource Placeholder}" Text="{Binding AwayPlaceholder}"
+                               Visibility="{Binding AwayPlaceholder, Converter={StaticResource IfSet}}" />
+                    <StackPanel Visibility="{Binding AwayShown, Converter={StaticResource Visible}}">
+                        <TextBlock Style="{StaticResource Label}" Text="Reply while I am away" Margin="0,0,0,4" />
+                        <StackPanel Orientation="Horizontal">
+                            <local:PillButton Content="On" Choice="True" Tint="{DynamicResource Green}" Filled="{Binding AwayEnabled, Mode=OneWay}"
+                                              Command="{Binding SetAwayEnabled}" CommandParameter="on" />
+                            <local:PillButton Content="Off" Choice="True" Tint="{DynamicResource Gray}" Filled="{Binding AwayDisabled, Mode=OneWay}"
+                                              Command="{Binding SetAwayEnabled}" CommandParameter="off" Margin="6,0,0,0" />
+                        </StackPanel>
+
+                        <TextBlock Style="{StaticResource Label}" Text="Hours (your time)" />
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="From" Foreground="{DynamicResource Fg2}" VerticalAlignment="Center" Margin="0,0,6,0" />
+                            <Grid>
+                                <TextBox Width="60" Text="{Binding AwayFrom, UpdateSourceTrigger=PropertyChanged}" MaxLength="5" HorizontalContentAlignment="Center" />
+                                <TextBlock Text="HH:MM" Foreground="{DynamicResource Fg3}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding AwayFrom}" Value="">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                            <TextBlock Text="until" Foreground="{DynamicResource Fg2}" VerticalAlignment="Center" Margin="12,0,6,0" />
+                            <Grid>
+                                <TextBox Width="60" Text="{Binding AwayUntil, UpdateSourceTrigger=PropertyChanged}" MaxLength="5" HorizontalContentAlignment="Center" />
+                                <TextBlock Text="HH:MM" Foreground="{DynamicResource Fg3}" HorizontalAlignment="Center" VerticalAlignment="Center" IsHitTestVisible="False">
+                                    <TextBlock.Style>
+                                        <Style TargetType="TextBlock">
+                                            <Setter Property="Visibility" Value="Collapsed" />
+                                            <Style.Triggers>
+                                                <DataTrigger Binding="{Binding AwayUntil}" Value="">
+                                                    <Setter Property="Visibility" Value="Visible" />
+                                                </DataTrigger>
+                                            </Style.Triggers>
+                                        </Style>
+                                    </TextBlock.Style>
+                                </TextBlock>
+                            </Grid>
+                        </StackPanel>
+
+                        <TextBlock Style="{StaticResource Label}" Text="Message" />
+                        <TextBox Text="{Binding AwayMessage, UpdateSourceTrigger=PropertyChanged}" AcceptsReturn="True" TextWrapping="Wrap"
+                                 MinHeight="64" MaxHeight="140" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top" />
+                        <TextBlock Text="{}{name} becomes your first name" FontSize="10" Foreground="{DynamicResource Fg3}" Margin="0,4,0,0" />
+
+                        <TextBlock Style="{StaticResource Label}" Text="Preview" />
+                        <Border CornerRadius="7" Background="{DynamicResource Subtle}" Padding="8">
+                            <TextBlock Text="{Binding AwayPreview}" TextWrapping="Wrap" FontSize="11" />
+                        </Border>
+
+                        <TextBlock Text="{Binding AwayError}" Foreground="{DynamicResource Red}" FontSize="11" TextWrapping="Wrap" Margin="0,10,0,0"
+                                   Visibility="{Binding AwayError, Converter={StaticResource IfSet}}" />
+                        <local:PillButton Content="Save" Filled="True" Tint="{DynamicResource Accent}" Command="{Binding SaveAway}"
+                                          HorizontalAlignment="Right" Margin="0,10,0,0" />
                     </StackPanel>
                 </StackPanel>
 
