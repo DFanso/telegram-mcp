@@ -1,10 +1,24 @@
 import { z } from 'zod'
+import type { PeerType } from './config'
 
 /** One definition per tool, shared by the proxy (to list them) and the daemon (to validate them). */
 
 const chatRef = z
   .union([z.string().min(1), z.number().int()])
   .describe('A saved nickname or alias (e.g. "leo"), an @username, a numeric chat id, or "me" for Saved Messages.')
+
+/** The kinds `telegram_list_chats` can filter by. */
+export const CHAT_KINDS = ['all', 'private', 'groups', 'channels', 'bots'] as const
+export type ChatKind = (typeof CHAT_KINDS)[number]
+
+/** The kind a chat of this peer type belongs to: users are private chats, the rest by their own type. */
+export function chatKindOf(type: PeerType): Exclude<ChatKind, 'all'> {
+  return type === 'user' ? 'private' : type === 'group' ? 'groups' : type === 'channel' ? 'channels' : 'bots'
+}
+
+export function matchesChatKind(type: PeerType, kind: ChatKind): boolean {
+  return kind === 'all' || chatKindOf(type) === kind
+}
 
 export const TOOLS = {
   telegram_status: {
@@ -18,10 +32,20 @@ export const TOOLS = {
     input: z.object({}),
   },
   telegram_list_chats: {
-    description: 'Recent chats (dialogs) with unread counts, saved nicknames and what sending there would do.',
+    description:
+      'Recent chats (dialogs) with unread counts, saved nicknames and what sending there would do. Filter by kind (private chats, groups, channels, bots), sort by recent activity, unread count or name, and optionally group the list under a heading per kind.',
     input: z.object({
       limit: z.number().int().min(1).max(200).default(30),
       unreadOnly: z.boolean().default(false),
+      type: z
+        .enum(CHAT_KINDS)
+        .default('all')
+        .describe('"private" = one-to-one chats with people, "groups", "channels", "bots", or "all".'),
+      sort: z
+        .enum(['recent', 'unread', 'name'])
+        .default('recent')
+        .describe('"recent" = Telegram\'s order (pinned, then latest message), "unread" = most unread first, "name" = A to Z.'),
+      categorize: z.boolean().default(false).describe('Group the list under a heading per kind (Private chats, Groups, Channels, Bots) with counts.'),
     }),
   },
   telegram_search_chats: {

@@ -730,3 +730,41 @@ describe('editing a sent message', () => {
     expect((await svc.call('s2', 'telegram_edit_message', { chat: 'leo', messageId: id, text: 'nope' })).isError).toBe(true)
   })
 })
+
+describe('listing chats by kind', () => {
+  const BOT = { id: 77, type: 'bot' as const, name: 'Helper Bot', username: 'helper_bot' }
+  const NEWS = { id: -1009990001111, type: 'channel' as const, name: 'Acme News', username: 'acme_news' }
+  beforeEach(() => {
+    setup(baseConfig)
+    tg.add(BOT, NEWS)
+    tg.unread.set(ANNA.id, 3).set(TEAM_QA.id, 7)
+  })
+  const names = (text: string) => text.split('\n').filter(l => l.startsWith('• ')).map(l => l.slice(2).split(' · ')[0])
+
+  test('all chats by default, in Telegram order', async () => {
+    const r = await svc.call('s1', 'telegram_list_chats', {})
+    expect(names(r.text)).toEqual([LEO.name, LEONARDO.name, ANNA.name, TEAM_QA.name, ALL_HANDS.name, BOT.name, NEWS.name])
+  })
+
+  test('filters private chats, groups, channels and bots', async () => {
+    expect(names((await svc.call('s1', 'telegram_list_chats', { type: 'private' })).text)).toEqual([LEO.name, LEONARDO.name, ANNA.name])
+    expect(names((await svc.call('s1', 'telegram_list_chats', { type: 'groups' })).text)).toEqual([TEAM_QA.name, ALL_HANDS.name])
+    expect(names((await svc.call('s1', 'telegram_list_chats', { type: 'channels' })).text)).toEqual([NEWS.name])
+    expect(names((await svc.call('s1', 'telegram_list_chats', { type: 'bots' })).text)).toEqual([BOT.name])
+    expect((await svc.call('s1', 'telegram_list_chats', { type: 'channels', unreadOnly: true })).text).toBe('No unread channels.')
+  })
+
+  test('sorts by unread count or by name', async () => {
+    const byUnread = await svc.call('s1', 'telegram_list_chats', { sort: 'unread' })
+    expect(names(byUnread.text).slice(0, 3)).toEqual([TEAM_QA.name, ANNA.name, LEO.name])
+    const byName = await svc.call('s1', 'telegram_list_chats', { type: 'private', sort: 'name' })
+    expect(names(byName.text)).toEqual([ANNA.name, LEO.name, LEONARDO.name])
+  })
+
+  test('categorize groups the list under a heading per kind', async () => {
+    const r = await svc.call('s1', 'telegram_list_chats', { categorize: true, sort: 'name' })
+    const headings = r.text.split('\n').filter(l => l && !l.startsWith('• '))
+    expect(headings).toEqual(['Private chats (3, 3 unread)', 'Groups (2, 7 unread)', 'Channels (1)', 'Bots (1)'])
+    expect(r.text).toContain(`Groups (2, 7 unread)\n• ${ALL_HANDS.name}`)
+  })
+})
