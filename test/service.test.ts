@@ -781,6 +781,113 @@ describe('who has read a message', () => {
   })
 })
 
+describe('deleting a sent message', () => {
+  beforeEach(() => setup(baseConfig))
+
+  async function sentId(to: string, text = 'first'): Promise<number> {
+    const r = await svc.call('s1', 'telegram_send_message', { to, text })
+    return Number(/message #(\d+)/.exec(r.text)![1])
+  }
+
+  test('the sending session deletes its own message; it leaves Recently sent and the log has a line', async () => {
+    const logs: string[] = []
+    svc = new Service({ store, tg, hub, approvals: new Approvals(), eventsUrl: () => 'ws://x', log: m => logs.push(m) })
+    const id = await sentId('leo')
+    const r = await svc.call('s1', 'telegram_delete_message', { chat: 'leo', messageId: id })
+    expect(r.isError).toBeFalsy()
+    expect(r.text).toContain(`Deleted message #${id}`)
+    expect(tg.deleted).toEqual([{ chatId: LEO.id, messageId: id }])
+    expect(svc.uiState().recent.some(x => x.messageId === id)).toBe(false)
+    expect(logs.filter(l => l.startsWith(`delete: message #${id}`))).toHaveLength(1)
+  })
+
+  test('a deleted message cannot be edited or deleted again', async () => {
+    const id = await sentId('leo')
+    await svc.call('s1', 'telegram_delete_message', { chat: 'leo', messageId: id })
+    expect((await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: id, text: 'x' })).isError).toBe(true)
+    expect((await svc.call('s1', 'telegram_delete_message', { chat: 'leo', messageId: id })).isError).toBe(true)
+    expect(tg.deleted).toHaveLength(1)
+    expect(tg.edits).toEqual([])
+  })
+
+  test('a chat moved to ask every time or blocked after the send is refused by its rule', async () => {
+    for (const [sendMode, said] of [['requireApproval', 'requireApproval list'], ['blocked', 'blocked list']] as const) {
+      setup(baseConfig)
+      const id = await sentId('leo')
+      svc.editContact({ nickname: 'leo', sendMode })
+      const r = await svc.call('s1', 'telegram_delete_message', { chat: 'leo', messageId: id })
+      expect(r.isError).toBe(true)
+      expect(r.text).toContain(said)
+      expect(tg.deleted).toEqual([])
+    }
+  })
+
+  test('a message no session sent is refused', async () => {
+    const r = await svc.call('s1', 'telegram_delete_message', { chat: 'leo', messageId: 99999 })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('not one a Claude session sent there')
+    expect(tg.deleted).toEqual([])
+  })
+
+  test("the Page button's message, the pager's reply and an away reply can't be deleted", async () => {
+    expect((await svc.pageContact('leo', 'prod is down, call me')).ok).toBe(true)
+    const page = svc.uiState().recent[0]!.messageId
+    await svc.tellPageSender(LEO.id, 'Paging Iddhi now.', null)
+    const pager = svc.uiState().recent[0]!.messageId
+    svc.recordSent({ chatId: LEO.id, chatLabel: 'Leo', text: 'away', messageId: 4242, via: 'away', sessionLabel: null })
+    for (const messageId of [page, pager, 4242]) {
+      expect((await svc.call('s1', 'telegram_delete_message', { chat: 'leo', messageId })).isError).toBe(true)
+    }
+    expect(tg.deleted).toEqual([])
+  })
+
+  test("another session's message is refused", async () => {
+    const id = await sentId('leo')
+    const r = await svc.call('s2', 'telegram_delete_message', { chat: 'leo', messageId: id })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('sent by another session (one)')
+    expect(tg.deleted).toEqual([])
+  })
+
+  test('a file the session sent can be deleted', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'tgmcp-')), 'report.pdf')
+    writeFileSync(file, '%PDF-1.7 hello')
+    const sent = await svc.call('s1', 'telegram_send_file', { to: 'leo', path: file, caption: 'Q3' })
+    const id = Number(/message #(\d+)/.exec(sent.text)![1])
+    expect((await svc.call('s1', 'telegram_delete_message', { chat: 'leo', messageId: id })).isError).toBeFalsy()
+    expect(tg.deleted).toEqual([{ chatId: LEO.id, messageId: id }])
+  })
+
+  test('a file in a chat the session watches follows the file rule, a text message there does not', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'tgmcp-')), 'report.pdf')
+    writeFileSync(file, '%PDF-1.7 hello')
+    const sent = await svc.call('s1', 'telegram_send_file', { to: 'leo', path: file, caption: 'Q3' })
+    const fileId = Number(/message #(\d+)/.exec(sent.text)![1])
+    const textId = await sentId('leo')
+    await svc.call('s1', 'telegram_watch', { chat: 'leo' })
+    const r = await svc.call('s1', 'telegram_delete_message', { chat: 'leo', messageId: fileId })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('files to a chat this session is watching always need approval')
+    expect((await svc.call('s1', 'telegram_delete_message', { chat: 'leo', messageId: textId })).isError).toBeFalsy()
+    expect(tg.deleted).toEqual([{ chatId: LEO.id, messageId: textId }])
+  })
+
+  test('a chat that needs approval is refused', async () => {
+    const r = await svc.call('s1', 'telegram_delete_message', { chat: 'qa', messageId: 1 })
+    expect(r.isError).toBe(true)
+    expect(tg.deleted).toEqual([])
+  })
+
+  test('after a restart, the session can still delete its message but another session cannot', async () => {
+    const recentPath = join(mkdtempSync(join(tmpdir(), 'tgmcp-')), 'recent.json')
+    svc = new Service({ store, tg, hub, approvals: new Approvals(), eventsUrl: () => 'ws://x', recentPath })
+    const id = await sentId('leo')
+    svc = new Service({ store, tg, hub, approvals: new Approvals(), eventsUrl: () => 'ws://x', recentPath })
+    expect((await svc.call('s2', 'telegram_delete_message', { chat: 'leo', messageId: id })).isError).toBe(true)
+    expect((await svc.call('s1', 'telegram_delete_message', { chat: 'leo', messageId: id })).isError).toBeFalsy()
+  })
+})
+
 describe('listing chats by kind', () => {
   const BOT = { id: 77, type: 'bot' as const, name: 'Helper Bot', username: 'helper_bot' }
   const NEWS = { id: -1009990001111, type: 'channel' as const, name: 'Acme News', username: 'acme_news' }

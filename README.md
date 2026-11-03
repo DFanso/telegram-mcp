@@ -145,6 +145,7 @@ Nothing is sent unless you accept. Drafts expire after 20 minutes. The rules are
 | `telegram_search_chats` | find a person or group to save |
 | `telegram_read_messages` | read a chat or forum topic |
 | `telegram_send_message` | send, following the rules |
+| `telegram_delete_message` | delete a message this session sent recently, for everyone in the chat; same limits as edit (its own messages only, where sending needs no approval), logged, can't be undone |
 | `telegram_edit_message` | change the text of a text message this session sent recently (chat and message id); only where sending needs no approval, since the chat sees the new text. Never another session's message, yours (the Page button's included), the pager's or an away reply. The footer is added again, Recently sent shows it as edited and keeps the original, and `daemon.log` has a line for each edit |
 | `telegram_send_file` | send a local file with a caption, following the same rules (but see files to watched chats, above); credentials and this tool's own files are always refused |
 | `telegram_send_sticker` | re-send a sticker someone posted (by chat and message id), following the same rules; stickers take no caption, so no footer |

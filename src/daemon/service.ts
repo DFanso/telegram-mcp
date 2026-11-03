@@ -939,6 +939,39 @@ export class Service {
       return { text: `Edited message #${edited.id} in ${t.label}. Allowed because ${decision.reason}.` }
     },
 
+    telegram_delete_message: async (sid, p) => {
+      const config = this.d.store.get()
+      const t = await this.#resolve(p.chat, true)
+      // Same ownership rule as an edit: only a message this very session wrote. The pager's replies,
+      // away replies and the Page button carry no session, so no session can take them back.
+      const rec = this.#recent.find(r => r.chatId === t.peer.id && r.messageId === p.messageId)
+      if (!rec?.sessionId) {
+        return fail(`Not deleted: message #${p.messageId} in ${t.label} is not one a Claude session sent there recently. Only a session's own recent messages can be deleted, never the user's, the pager's or an away reply.`)
+      }
+      if (rec.sessionId !== sid) {
+        return fail(`Not deleted: message #${p.messageId} in ${t.label} was sent by another session (${rec.sessionLabel ?? 'unknown'}). Only the session that sent a message can delete it.`)
+      }
+      // Deleting changes what the chat sees and has no approval step, so, as with an edit, anything
+      // but an outright "send" is refused. A file follows the file rule: in a chat this session is
+      // watching (or took over), sending one needs approval, so deleting one is refused there too.
+      const decision = decideSend(config, t.peer, {
+        isWatching: this.d.hub.isWatching(sid, t.peer.id),
+        file: rec.kind === 'file',
+        takenOver: this.d.hub.isTakenOverBy(sid, t.peer.id),
+      })
+      if (decision.action === 'block') return fail(`Not deleted in ${t.label}: ${decision.reason}.`)
+      if (decision.action !== 'send') {
+        return fail(`Not deleted in ${t.label}: ${decision.reason}. Deleting changes what the chat already sees, so it only works where sending needs no approval.`)
+      }
+      await this.d.tg.deleteMessage(t.peer.id, p.messageId)
+      // It is gone from the chat, so it leaves Recently sent too; daemon.log keeps a line for it.
+      this.#recent = this.#recent.filter(r => !(r.chatId === t.peer.id && r.messageId === p.messageId))
+      this.#ownSent.delete(`${t.peer.id}:${p.messageId}`)
+      this.#saveRecent()
+      this.d.log?.(`delete: message #${p.messageId} in ${t.label} (${t.peer.id}) by ${this.d.hub.label(sid) ?? sid}`)
+      return { text: `Deleted message #${p.messageId} in ${t.label}. Allowed because ${decision.reason}.` }
+    },
+
     telegram_page: async (sid, p) => {
       const { pager, hub } = this.d
       if (!pager) return fail('Paging is not available in this daemon.')
