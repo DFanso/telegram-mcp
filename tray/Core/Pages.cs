@@ -6,6 +6,17 @@ public static class Pages
     public static IReadOnlyList<UiPage> Ringing(IReadOnlyList<UiPage>? pages) =>
         pages is null ? [] : pages.Where(p => p.Ringing).ToList();
 
+    /// <summary>
+    /// Whether a poll brings a page the window hasn't shown yet. Only that brings the window forward
+    /// and takes focus, so polling every few seconds never pulls focus from what you're typing.
+    /// </summary>
+    public static bool HasNew(IReadOnlyCollection<string> shown, IReadOnlyList<UiPage> ringing) =>
+        ringing.Any(p => !shown.Contains(p.Id));
+
+    /// <summary>Changes when the window's content should: a page comes, goes, or is now unanswered.</summary>
+    public static string Signature(IReadOnlyList<UiPage> ringing) =>
+        string.Join(",", ringing.Select(p => $"{p.Id}:{p.State}"));
+
     /// <summary>Opens the message in Telegram: users by id, supergroups through t.me/c, basic groups by chat id.</summary>
     public static Uri? MessageUri(long? chatId, long? messageId)
     {

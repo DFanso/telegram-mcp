@@ -12,6 +12,9 @@ import { Service, describeMessage } from './service'
 import { SessionHub, type HubOptions } from './sessions'
 import { MtcuteTelegram, type TelegramPort } from './telegram'
 
+/** How old an incoming /page or keyword can be and still page. */
+export const PAGE_MAX_AGE_MS = 2 * 60_000
+
 export interface DaemonOptions {
   paths: Paths
   port: number
@@ -50,11 +53,8 @@ export async function createDaemon(o: DaemonOptions) {
     paging: () => store.get().paging,
     ownerName: () => tg.state().me?.name.split(' ')[0] || 'They',
     channel: () => bot,
-    // The fixed replies go out from your account, so never to a chat you blocked.
-    tellSender: async (chatId, text, replyTo) => {
-      if (isListed(store.get(), 'blocked', { id: chatId })) return
-      await tg.sendText(chatId, text, replyTo ? { replyTo } : {})
-    },
+    // The fixed replies go out from your account, through the same rules as any send.
+    tellSender: (chatId, text, replyTo) => service.tellPageSender(chatId, text, replyTo),
     auditPath: o.paths.pages,
     log,
   })
@@ -107,7 +107,12 @@ export async function createDaemon(o: DaemonOptions) {
       return
     }
     const trigger = pageTrigger(store.get(), msg)
-    if (trigger) {
+    // Messages that arrive late (the catch-up after a restart or a long disconnect) never page:
+    // whatever it was is old news, and the sender would hear "Paging Leo now" an hour on.
+    const age = Date.now() - Date.parse(msg.date)
+    if (trigger && age > PAGE_MAX_AGE_MS) {
+      log(`page from ${msg.from!.id} in ${msg.chatId} skipped: the message is ${Math.round(age / 60_000)} min old`)
+    } else if (trigger) {
       void pager
         .page({
           source: trigger.source,
@@ -142,6 +147,7 @@ export async function createDaemon(o: DaemonOptions) {
     tg,
     hub,
     pager,
+    service,
     async stop() {
       clearInterval(timer)
       clearInterval(pageTimer)
