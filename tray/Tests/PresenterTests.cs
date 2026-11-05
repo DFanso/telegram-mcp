@@ -8,6 +8,25 @@ public class PresenterTests
     static UiState WithPhase(string phase, Peer? me = null) =>
         Fixtures.DemoState() with { Telegram = new TelegramState(phase, me, null, 0) };
 
+    static UiContact Contact(string nickname, long chatId, bool autoReply) =>
+        new(nickname, chatId, nickname, null, "user", null, [], null, "autoSend", autoReply, "auto-send", []);
+
+    [Fact]
+    public void ListeningSwitch_is_the_saved_chat_with_that_id()
+    {
+        var s = Fixtures.DemoState() with { Contacts = [Contact("leo", 10, autoReply: true), Contact("iddhi", 12, autoReply: false)] };
+
+        Assert.Equal("leo", Presenter.ListeningSwitch(s, 10)?.Nickname);
+        Assert.False(Presenter.ListeningSwitch(s, 12)!.AutoReply);
+        Assert.Null(Presenter.ListeningSwitch(s, 99));
+    }
+
+    [Fact]
+    public void ListeningSwitch_is_null_from_a_daemon_without_contacts()
+    {
+        Assert.Null(Presenter.ListeningSwitch(Fixtures.DemoState() with { Contacts = null }, 10));
+    }
+
     [Fact]
     public void Header_when_the_daemon_is_unreachable()
     {
@@ -107,19 +126,20 @@ public class PresenterTests
         new(nick, nick.Length, null, null, "user", null, [], null, "autoSend", autoReply, "autoSend", []);
 
     [Fact]
-    public void Stats_count_waiting_listened_chats_and_contacts()
+    public void Stats_count_waiting_listened_chats_and_sent_messages()
     {
         var s = Fixtures.DemoState() with
         {
             Sessions = [Session("a", true, 1, 2), Session("b", true, 2), Session("idle", true)],
             Contacts = [Contact("leo", true), Contact("anna", false)],
         };
+        var sent = s.Recent.Count.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
         Assert.Equal(
             [
                 new Stat("Waiting", "2", new Tag("needs you", TagKind.Warn)),
                 new Stat("Listening", "2", new Tag("2 sessions", TagKind.Good)), // chat 2 counts once
-                new Stat("Contacts", "2", new Tag("1 auto-reply", TagKind.Info)),
+                new Stat("Sent", sent, new Tag("lately", TagKind.Info)),
             ],
             Presenter.Stats(s));
     }
@@ -127,16 +147,43 @@ public class PresenterTests
     [Fact]
     public void Stats_when_quiet_say_so()
     {
-        var s = Fixtures.DemoState() with { Approvals = [], Sessions = [], Contacts = null };
+        var s = Fixtures.DemoState() with { Approvals = [], Sessions = [], Recent = [], Contacts = null };
 
         Assert.Equal(
             [
                 new Stat("Waiting", "0", new Tag("all clear", TagKind.Good)),
                 new Stat("Listening", "0", new Tag("idle", TagKind.Muted)),
-                new Stat("Contacts", "–", new Tag("saved", TagKind.Muted)), // an older daemon sends no contacts
+                new Stat("Sent", "0", new Tag("none yet", TagKind.Muted)),
             ],
             Presenter.Stats(s));
         Assert.Equal(new Tag("session gone", TagKind.Muted), Presenter.Stats(s with { Sessions = [Session("x", false, 7)] })[1].Chip);
+    }
+
+    [Fact]
+    public void Listening_tile_counts_paused_chats()
+    {
+        // "x" is chat 1 and its auto-reply is off, so listening there is paused; "leo" (chat 3) isn't watched.
+        var s = Fixtures.DemoState() with
+        {
+            Sessions = [Session("a", true, 1, 2), Session("b", true, 1)],
+            Contacts = [Contact("x", false), Contact("leo", false)],
+        };
+
+        Assert.Equal(1, Presenter.PausedChats(s));
+        Assert.Equal(new Tag("1 paused", TagKind.Warn), Presenter.Stats(s)[1].Chip);
+        Assert.Equal(0, Presenter.PausedChats(s with { Contacts = null }));
+    }
+
+    [Theory]
+    [InlineData(HomeSection.Sent, "a", "a,b", HomeSection.Waiting)] // a new draft
+    [InlineData(HomeSection.Listening, "a,b", "a,b", HomeSection.Listening)]
+    [InlineData(HomeSection.Sent, "a,b", "a", HomeSection.Sent)] // one was decided
+    [InlineData(HomeSection.Listening, "a", "b", HomeSection.Waiting)] // one decided and a new one came, within one poll
+    [InlineData(HomeSection.Listening, "", "", HomeSection.Listening)]
+    public void A_new_draft_switches_Home_to_Waiting(HomeSection current, string before, string now, HomeSection expected)
+    {
+        static string[] Ids(string s) => s.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(expected, Presenter.SectionAfterPoll(current, Ids(before), Ids(now)));
     }
 
     [Fact]

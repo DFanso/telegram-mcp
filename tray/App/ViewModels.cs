@@ -91,6 +91,41 @@ public static class AvatarPhotos
     }
 }
 
+/// <summary>
+/// A tile at the top of Home. Clicking it shows its <see cref="Section"/> below the tiles. The panel
+/// keeps the same three and updates them in place, so the tile with keyboard focus keeps it.
+/// </summary>
+public sealed class StatVM(HomeSection section, Stat stat, ICommand pick) : Observable
+{
+    Stat _stat = stat;
+    bool _selected;
+
+    public HomeSection Section { get; } = section;
+    public ICommand Pick { get; } = pick;
+
+    public Stat Stat
+    {
+        get => _stat;
+        set
+        {
+            if (!Set(ref _stat, value)) return;
+            Raise(nameof(Label));
+            Raise(nameof(Value));
+            Raise(nameof(Chip));
+            Raise(nameof(Name));
+            Raise(nameof(Tip));
+        }
+    }
+
+    public bool Selected { get => _selected; set => Set(ref _selected, value); }
+
+    public string Label => _stat.Label;
+    public string Value => _stat.Value;
+    public Tag Chip => _stat.Chip;
+    public string Name => $"{_stat.Label}: {_stat.Value}, {_stat.Chip.Text}";
+    public string Tip => $"Show {_stat.Label.ToLowerInvariant()} below";
+}
+
 /// <summary>A draft waiting for approval. Kept across polls, so a nickname being typed survives.</summary>
 public sealed class ApprovalVM : Observable
 {
@@ -176,19 +211,84 @@ public sealed class ApprovalVM : Observable
     public ICommand ToggleText { get; }
 }
 
-public sealed record WatchVM(string ChatLabel, string? From, string? Topic, string Tooltip);
-
-/// <summary>A Claude session listening to chats.</summary>
-public sealed record SessionVM(string Label, Tag Tag, IReadOnlyList<WatchVM> Watches)
+/// <summary>
+/// A chat a session listens to. <see cref="Contact"/>: its saved chat, whose Listen switch (auto-reply)
+/// pauses and resumes listening; null when the chat isn't saved, so there is no switch. The switch,
+/// "listening" / "paused" and the dot bind to the contact itself, so they show what is saved (or being
+/// saved) right now, and a click there is the same as one on Contacts.
+/// </summary>
+public sealed record WatchVM(string ChatLabel, string? From, string? Topic, string Tooltip, ContactVM? Contact, bool ContactsKnown)
 {
-    public static SessionVM From(UiSession s) => new(
-        s.Label,
-        Presenter.SessionTag(s),
-        s.Watches.Select(w => new WatchVM(
+    public bool CanToggle => Contact is not null;
+
+    /// <summary>
+    /// After "listening" or "paused": " · from Anna · topic 42", and " · not a saved chat" when the daemon
+    /// lists contacts and this one isn't among them. An older daemon lists none, so that can't be told.
+    /// </summary>
+    public string DetailRest => string.Concat(new[] { From, Topic, Contact is null && ContactsKnown ? "not a saved chat" : null }
+        .Where(s => s is not null).Select(s => " · " + s));
+}
+
+/// <summary>
+/// A Claude session listening to chats. With two or more saved chats it gets an "all" switch for them
+/// together. Rebuilt only when its watches change; <see cref="Sync"/> keeps the switch in step.
+/// </summary>
+public sealed class SessionVM : Observable
+{
+    readonly IReadOnlyList<ContactVM> _contacts;
+    bool _anyOn, _idle = true;
+
+    SessionVM(PanelViewModel panel, string label, Tag tag, IReadOnlyList<WatchVM> watches, IReadOnlyList<ContactVM> contacts)
+    {
+        Label = label;
+        Tag = tag;
+        Watches = watches;
+        _contacts = contacts;
+        // Worked out at the click from what the switches show now, not from when this was built.
+        ToggleAll = new Command(_ => _ = panel.SetListeningAsync(contacts.Select(c => c.Nickname).ToList(), !contacts.Any(c => c.Listens),
+            $"every chat {label} listens to"));
+        Sync();
+    }
+
+    public string Label { get; }
+    public Tag Tag { get; }
+    public IReadOnlyList<WatchVM> Watches { get; }
+    public bool HasAll => _contacts.Count > 1;
+    public ICommand ToggleAll { get; }
+
+    public bool AnyOn
+    {
+        get => _anyOn;
+        private set
+        {
+            if (Set(ref _anyOn, value)) Raise(nameof(AllName));
+        }
+    }
+
+    /// <summary>Off while any of its chats is saving a change: the "all" switch waits for it.</summary>
+    public bool Idle { get => _idle; private set => Set(ref _idle, value); }
+
+    public string AllName => _anyOn ? $"Pause every chat {Label} listens to" : $"Resume every chat {Label} listens to";
+
+    internal void Sync()
+    {
+        AnyOn = _contacts.Any(c => c.Listens);
+        Idle = _contacts.All(c => c.Idle);
+    }
+
+    /// <param name="contactFor">The Contacts row for a chat id, or null when it isn't saved.</param>
+    public static SessionVM From(PanelViewModel panel, UiSession s, bool contactsKnown, Func<long, ContactVM?> contactFor)
+    {
+        var watches = s.Watches.Select(w => new WatchVM(
             w.ChatLabel,
             w.FromLabel is null ? null : $"from {w.FromLabel}",
             w.TopicId is null ? null : $"topic {w.TopicId}",
-            w.Note ?? w.ChatLabel)).ToList());
+            w.Note ?? w.ChatLabel,
+            contactFor(w.ChatId),
+            contactsKnown)).ToList();
+        var contacts = watches.Select(w => w.Contact).OfType<ContactVM>().Distinct().OrderBy(c => c.Nickname, StringComparer.Ordinal).ToList();
+        return new(panel, s.Label, Presenter.SessionTag(s), watches, contacts);
+    }
 }
 
 public sealed record RecentMessageVM(string Body, string Meta);
@@ -255,6 +355,7 @@ public sealed class ContactVM : Observable
     string _pageReason = "";
     bool _busy;
     bool _paging;
+    bool? _pending;
 
     public ContactVM(PanelViewModel panel, UiContact contact, string? defaultPolicy)
     {
@@ -265,17 +366,50 @@ public sealed class ContactVM : Observable
         Toggle = new Command(_ => _panel.OpenNickname = IsOpen ? null : Nickname);
         Rename = new Command(_ => _ = Edit(new ContactChange(Nickname, Rename: RenameText.Trim())), _ => CanRename);
         SetMode = new Command(p => { if (p is string mode && mode != _c.SendMode) _ = Edit(new ContactChange(Nickname, SendMode: mode)); });
-        SetAutoReply = new Command(p =>
-        {
-            var on = p is "on";
-            if (on != _c.AutoReply) _ = Edit(new ContactChange(Nickname, AutoReply: on));
-        });
         SetPageFrom = new Command(p =>
         {
             var on = p is "on";
             if (on != _c.PagesMe) _ = Edit(new ContactChange(Nickname, PageFrom: on));
         });
         SendPage = new Command(_ => _ = _panel.PageContactAsync(this), _ => CanSendPage);
+        ToggleListen = new Command(_ => _ = _panel.SetListeningAsync([Nickname], !Listens, Nickname));
+    }
+
+    /// <summary>
+    /// The Listen switch: Claude may listen to this chat (its auto-reply). While a change is being saved
+    /// it shows the value clicked, so a click then is worked out from what the switch shows, not from a
+    /// poll that may predate the change.
+    /// </summary>
+    public bool Listens => _pending ?? _c.AutoReply;
+    public string ListenCaption => Contacts.ListenCaption(_c with { AutoReply = Listens });
+    public string ListenName => $"Let Claude listen to {_c.Nickname}";
+    /// <summary>Home → Listening now: the state word before a watched chat's details.</summary>
+    public string ListenWord => Listens ? "listening" : "paused";
+    public string ListenTip => Listens
+        ? $"Pause: stop passing {_c.Nickname}'s messages to Claude (turns auto-reply off; the watch stays)"
+        : $"Resume: {_c.Nickname}'s messages reach Claude again (turns auto-reply back on)";
+    public ICommand ToggleListen { get; }
+
+    /// <summary>The value a listen switch is saving, or null once a poll after it shows what was saved.</summary>
+    internal bool? Pending
+    {
+        set
+        {
+            if (_pending == value) return;
+            _pending = value;
+            Resync();
+        }
+    }
+
+    /// <summary>Shows the listen state again: after a change, or a click that was refused.</summary>
+    internal void Resync()
+    {
+        Raise(nameof(Listens));
+        Raise(nameof(ListenCaption));
+        Raise(nameof(ListenWord));
+        Raise(nameof(ListenTip));
+        Raise(nameof(Explanation));
+        _panel.ListenChanged();
     }
 
     System.Threading.Tasks.Task Edit(ContactChange change) => _panel.EditContactAsync(this, change);
@@ -304,17 +438,14 @@ public sealed class ContactVM : Observable
         ContactKind.Person => "user",
         _ => "message-circle",
     };
-    public Tag? AutoReplyTag => Contacts.AutoReplyTag(_c);
     public Tag? PageFromTag => Contacts.PageFromTag(_c);
     public Tag ModeTag => Contacts.ModeTag(_c, _defaultPolicy);
-    public string Explanation => Contacts.Explanation(_c, _defaultPolicy);
+    public string Explanation => Contacts.Explanation(_c with { AutoReply = Listens }, _defaultPolicy);
     public string Details => Contacts.Details(_c);
 
     public bool IsAutoSend => _c.SendMode == "autoSend";
     public bool IsAsk => _c.SendMode == "requireApproval";
     public bool IsBlocked => _c.SendMode == "blocked";
-    public bool ReplyOn => _c.AutoReply;
-    public bool ReplyOff => !_c.AutoReply;
 
     /// <summary>A person: the "Can page me" choice and the Page button show.</summary>
     public bool CanPage => _c.CanPage;
@@ -366,6 +497,7 @@ public sealed class ContactVM : Observable
             Raise(nameof(Idle));
             Raise(nameof(CanRename));
             CommandManager.InvalidateRequerySuggested(); // Rename's enabled state
+            _panel.ListenChanged(); // the "all" switches wait for every chat they cover
         }
     }
 
@@ -374,7 +506,6 @@ public sealed class ContactVM : Observable
     public ICommand Toggle { get; }
     public ICommand Rename { get; }
     public ICommand SetMode { get; }
-    public ICommand SetAutoReply { get; }
     public ICommand SetPageFrom { get; }
     public ICommand SendPage { get; }
 }

@@ -3,6 +3,10 @@
 Each release's section here becomes its "What's new" on GitHub. Add the next one as
 `## <version>` before tagging (see [Releasing](README.md#releasing)).
 
+## Unreleased
+
+- **Tray: choose who Claude listens to, and one section at a time**: Home's tiles are now **Waiting / Listening / Sent**, and the one you click is the section shown below them (a new draft switches back to Waiting). Under **Listening now** each watched chat has a switch to pause or resume it, a session watching several saved chats has an **all** switch, and **Chats Claude may listen to** lists every saved chat with its switch. Contacts rows get a **Listen** switch and an **All / Listening / Not listening** filter. A switch is the chat's auto-reply, so pausing stops its messages reaching every session at once while the watches stay.
+
 ## 1.1.0
 
 - **Who has read my message**: `telegram_message_readers` says whether one of your own sent messages has been read. In a private chat it says whether the other person has read it; in a group of up to 100 people it lists who read it and when, for about a week after it was sent. It only reports what Telegram tells your account, so people who hide their read receipts, bigger groups and channels aren't shown. It only reads: it sends, edits and deletes nothing.

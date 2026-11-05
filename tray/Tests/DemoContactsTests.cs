@@ -33,12 +33,14 @@ public class DemoContactsTests(DemoDaemon demo) : IClassFixture<DemoDaemon>
     {
         var api = Api();
 
-        var r = await api.EditContactAsync(new ContactChange("team-qa", SendMode: "autoSend"), Ct);
-        var after = Find((await api.PollAsync(Ct)).State!, "team-qa");
+        // anna, not team-qa: these tests share one demo daemon in no fixed order, and the listing test
+        // above checks team-qa's rule.
+        var r = await api.EditContactAsync(new ContactChange("anna", SendMode: "requireApproval"), Ct);
+        var after = Find((await api.PollAsync(Ct)).State!, "anna");
 
         Assert.True(r.Ok, r.Text);
-        Assert.StartsWith("\"team-qa\": always allow", r.Text);
-        Assert.Equal("autoSend", after.SendMode);
+        Assert.StartsWith("\"anna\": ask every time", r.Text);
+        Assert.Equal("requireApproval", after.SendMode);
     }
 
     [Fact]

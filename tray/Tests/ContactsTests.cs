@@ -23,13 +23,6 @@ public class ContactsTests
         Assert.Equal(new Tag(text, kind), Contacts.ModeTag(C(sendMode: mode), defaultPolicy));
     }
 
-    [Fact]
-    public void Auto_reply_tag_only_when_on()
-    {
-        Assert.Equal(new Tag("auto-reply", TagKind.Info), Contacts.AutoReplyTag(C(autoReply: true)));
-        Assert.Null(Contacts.AutoReplyTag(C(autoReply: false)));
-    }
-
     [Theory]
     [InlineData("Anna K", "anna_k", "Anna K · @anna_k")]
     [InlineData("Team QA", null, "Team QA")]
@@ -86,10 +79,79 @@ public class ContactsTests
     }
 
     [Fact]
-    public void Summary_counts_saved_chats()
+    public void Summary_counts_saved_chats_and_those_Claude_may_listen_to()
     {
-        Assert.Equal("1 saved chat · changes save to config.json at once", Contacts.Summary(1));
-        Assert.Equal("4 saved chats · changes save to config.json at once", Contacts.Summary(4));
+        Assert.Equal("1 saved chat · Claude may listen to 0 · changes save to config.json at once", Contacts.Summary(1, 0));
+        Assert.Equal("4 saved chats · Claude may listen to 2 · changes save to config.json at once", Contacts.Summary(4, 2));
+    }
+
+    [Theory]
+    [InlineData(ListenFilter.All, "a,b,c")]
+    [InlineData(ListenFilter.On, "a,c")]
+    [InlineData(ListenFilter.Off, "b")]
+    public void Listen_filter_keeps_chats_by_auto_reply(ListenFilter filter, string expected)
+    {
+        UiContact[] all = [C("a", autoReply: true), C("b", autoReply: false), C("c", autoReply: true)];
+
+        Assert.Equal(expected, string.Join(",", Contacts.FilterListening(all, filter).Select(c => c.Nickname)));
+    }
+
+    [Theory]
+    [InlineData("", ListenFilter.On, "Claude may listen to none of your chats. Switch one on to let it.")]
+    [InlineData(" leo ", ListenFilter.On, "No chat Claude may listen to matches “leo”")]
+    [InlineData("", ListenFilter.Off, "Claude may listen to every saved chat.")]
+    [InlineData("leo", ListenFilter.Off, "No chat Claude can't listen to matches “leo”")]
+    public void None_shown_says_why(string query, ListenFilter filter, string expected)
+    {
+        Assert.Equal(expected, Contacts.NoneShown(query, filter));
+        Assert.Equal(Contacts.NoMatch("leo"), Contacts.NoneShown("leo", ListenFilter.All));
+    }
+
+    [Theory]
+    [InlineData("autoSend", true, "May listen and reply without asking")]
+    [InlineData("requireApproval", true, "May listen; replies still ask you")]
+    [InlineData("blocked", true, "May listen, but can't reply")]
+    [InlineData("autoSend", false, "Claude can't listen here")]
+    public void Listen_caption_says_what_listening_comes_to(string mode, bool autoReply, string expected)
+    {
+        Assert.Equal(expected, Contacts.ListenCaption(C(sendMode: mode, autoReply: autoReply)));
+    }
+
+    [Fact]
+    public void Listen_flash_says_what_the_switch_did()
+    {
+        Assert.Equal("Claude may listen to leo again.", Contacts.ListenFlash(true, "leo"));
+        Assert.Equal("Paused leo: new messages there aren't passed to Claude.", Contacts.ListenFlash(false, "leo"));
+    }
+
+    [Fact]
+    public void A_switch_that_stops_partway_says_what_it_already_changed()
+    {
+        const string why = "Not changed: No saved chat called \"c\".";
+        Assert.Equal(why, Contacts.ListenStopped(false, [], why));
+        Assert.Equal($"Paused a and b, then stopped. {why}", Contacts.ListenStopped(false, ["a", "b"], why));
+        Assert.Equal($"Resumed a, b and c, then stopped. {why}", Contacts.ListenStopped(true, ["a", "b", "c"], why));
+    }
+
+    [Theory]
+    [InlineData("autoSend", true, ListenRule.Replies)]
+    [InlineData("none", true, ListenRule.Replies)] // on the autoReply list, so the default rule doesn't apply
+    [InlineData("requireApproval", true, ListenRule.AsksFirst)]
+    [InlineData("blocked", true, ListenRule.CantReply)]
+    [InlineData("requireApproval", false, ListenRule.Off)]
+    public void Caption_and_explanation_share_one_listen_rule(string mode, bool autoReply, ListenRule expected)
+    {
+        var c = C(sendMode: mode, autoReply: autoReply);
+        Assert.Equal(expected, Contacts.Listening(c));
+        var (caption, explanation) = expected switch
+        {
+            ListenRule.Off => ("Claude can't listen here", "Sessions can't listen to this chat."),
+            ListenRule.AsksFirst => ("May listen; replies still ask you", "Sessions may listen here, but their replies still ask first."),
+            ListenRule.CantReply => ("May listen, but can't reply", "Sessions may listen here, but can't reply."),
+            _ => ("May listen and reply without asking", "Sessions may listen here and reply without asking while they do."),
+        };
+        Assert.Equal(caption, Contacts.ListenCaption(c));
+        Assert.Contains(explanation, Contacts.Explanation(c, "approve"));
     }
 
     [Theory]

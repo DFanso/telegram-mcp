@@ -29,7 +29,8 @@ public sealed class PanelViewModel : Observable
     string _sessionsKey = "", _recentKey = "";
     /// <summary>Recently sent chats the user clicked open, by chat id: kept when the rows are rebuilt.</summary>
     readonly HashSet<long> _openRecent = [];
-    bool _polling;
+    /// <summary>The poll in flight, which a second caller joins instead of starting another.</summary>
+    Task? _poll;
 
     UiState? _state;
     bool _reachable;
@@ -37,6 +38,8 @@ public sealed class PanelViewModel : Observable
     string? _flash;
     bool _flashOk = true;
     IReadOnlyList<Stat> _stats = [];
+    HomeSection _section = HomeSection.Waiting;
+    IReadOnlyCollection<string> _lastWaiting = [];
     bool _contactsPage;
     bool _awayPage, _awayLoaded, _awaySaving;
     bool _awayEnabled;
@@ -45,6 +48,10 @@ public sealed class PanelViewModel : Observable
     (bool Enabled, string From, string Until, string Message, int Quiet)? _awaySaved;
     string _search = "";
     string? _openNickname;
+    ListenFilter _filter = ListenFilter.All;
+    bool _showAllListen;
+    /// <summary>"Chats Claude may listen to" shows this many until Show all.</summary>
+    const int ShortList = 6;
 
     public PanelViewModel(DaemonApi api, Settings settings)
     {
@@ -61,6 +68,7 @@ public sealed class PanelViewModel : Observable
         };
         ShowContacts = new Command(_ => ContactsPage = true);
         ShowMain = new Command(_ => ContactsPage = false);
+        ReviewWaiting = new Command(_ => ShowWaiting());
         ShowAway = new Command(_ =>
         {
             ContactsPage = false;
@@ -73,6 +81,12 @@ public sealed class PanelViewModel : Observable
         OpenRules = new Command(_ => OpenFile("config.json"));
         OpenLog = new Command(_ => OpenFile("daemon.log"));
         Quit = new Command(_ => QuitRequested?.Invoke());
+        ToggleMayListen = new Command(_ =>
+        {
+            _showAllListen = !_showAllListen;
+            SyncContacts();
+        });
+        SetFilter = new Command(p => Filter = p switch { "on" => ListenFilter.On, "off" => ListenFilter.Off, _ => ListenFilter.All });
     }
 
     /// <summary>After every poll: the tray icon, tooltip and notifications follow.</summary>
@@ -94,8 +108,54 @@ public sealed class PanelViewModel : Observable
     public string? ShownProblem => ShowContent ? null : Problem;
     public string? ConfigError => ShowContent ? State?.ConfigError : null;
 
-    /// <summary>Home's tiles: waiting, listening, contacts. Replaced only when a number changes, so the tiles aren't rebuilt every poll.</summary>
-    public IReadOnlyList<Stat> Stats => _stats;
+    /// <summary>
+    /// Home's tiles: waiting, listening, sent. The same three are updated in place (numbers, chips, which
+    /// one is selected), so the one with keyboard focus keeps it.
+    /// </summary>
+    public ObservableCollection<StatVM> Stats { get; } = [];
+
+    /// <summary>Which section Home shows under its tiles.</summary>
+    public HomeSection Section
+    {
+        get => _section;
+        set
+        {
+            if (!Set(ref _section, value)) return;
+            Raise(nameof(WaitingShown));
+            Raise(nameof(ListeningShown));
+            Raise(nameof(SentShown));
+            SyncTiles();
+        }
+    }
+
+    public bool WaitingShown => _section == HomeSection.Waiting;
+    public bool ListeningShown => _section == HomeSection.Listening;
+    public bool SentShown => _section == HomeSection.Sent;
+
+    /// <summary>Home on Waiting: from the Contacts page's "Review" and from a draft's notification.</summary>
+    public void ShowWaiting()
+    {
+        ContactsPage = false;
+        Section = HomeSection.Waiting;
+    }
+
+    void SyncTiles()
+    {
+        if (Stats.Count != _stats.Count)
+        {
+            Stats.Clear();
+            for (var i = 0; i < _stats.Count; i++)
+            {
+                var section = (HomeSection)i;
+                Stats.Add(new StatVM(section, _stats[i], new Command(_ => Section = section)));
+            }
+        }
+        for (var i = 0; i < Stats.Count; i++)
+        {
+            Stats[i].Stat = _stats[i];
+            Stats[i].Selected = Stats[i].Section == _section;
+        }
+    }
 
     public ObservableCollection<ApprovalVM> Approvals { get; } = [];
     public ObservableCollection<SessionVM> Listening { get; } = [];
@@ -319,15 +379,44 @@ public sealed class PanelViewModel : Observable
         }
     }
 
-    public string ContactsSummary => Contacts.Summary(State?.Contacts?.Count ?? 0);
+    public string ContactsSummary => Contacts.Summary(State?.Contacts?.Count ?? 0, State?.Contacts?.Count(c => c.AutoReply) ?? 0);
 
     /// <summary>Instead of rows: no contacts yet, none matching, or a daemon without the Contacts page.</summary>
     public string? ContactsPlaceholder =>
         !ShowContent ? null
         : State!.Contacts is null ? Contacts.OlderDaemon
         : State.Contacts.Count == 0 ? Contacts.Empty
-        : ContactRows.Count == 0 ? Contacts.NoMatch(_search)
+        : ContactRows.Count == 0 ? Contacts.NoneShown(_search, _filter)
         : null;
+
+    /// <summary>The Contacts tab's filter: all, those Claude may listen to, or the rest.</summary>
+    public ListenFilter Filter
+    {
+        get => _filter;
+        set
+        {
+            if (!Set(ref _filter, value)) return;
+            Raise(nameof(FilterAll));
+            Raise(nameof(FilterOn));
+            Raise(nameof(FilterOff));
+            SyncContacts();
+        }
+    }
+
+    public bool FilterAll => _filter == ListenFilter.All;
+    public bool FilterOn => _filter == ListenFilter.On;
+    public bool FilterOff => _filter == ListenFilter.Off;
+
+    /// <summary>Home → Listening: every saved chat with its listen switch, alphabetical so a row doesn't jump when switched.</summary>
+    public ObservableCollection<ContactVM> MayListen { get; } = [];
+
+    /// <summary>"Show all 9" / "Show fewer" under that list, or null when it's short.</summary>
+    public string? MayListenMore =>
+        (State?.Contacts?.Count ?? 0) <= ShortList ? null : _showAllListen ? "Show fewer" : $"Show all {State!.Contacts!.Count}";
+
+    /// <summary>Instead of that list: no saved chats yet, or a daemon without the Contacts page.</summary>
+    public string? MayListenPlaceholder =>
+        !ShowContent ? null : State!.Contacts is null ? Contacts.OlderDaemon : State.Contacts.Count == 0 ? Contacts.Empty : null;
 
     public string? WaitingBanner => Reachable && State is { Approvals.Count: > 0 } s ? Format.Waiting(s.Approvals.Count) : null;
 
@@ -336,30 +425,38 @@ public sealed class PanelViewModel : Observable
     public ICommand SetAwayEnabled { get; }
     public ICommand SaveAway { get; }
     public ICommand ShowMain { get; }
+    /// <summary>The Contacts page's "N drafts waiting · Review": Home, on Waiting.</summary>
+    public ICommand ReviewWaiting { get; }
     public ICommand ClearSearch { get; }
     public ICommand OpenRules { get; }
     public ICommand OpenLog { get; }
     public ICommand Quit { get; }
+    public ICommand ToggleMayListen { get; }
+    public ICommand SetFilter { get; }
 
     // ---- talking to the daemon ------------------------------------------------------------
 
-    public async Task PollAsync()
+    /// <summary>Polls the daemon, or joins the poll already in flight.</summary>
+    public Task PollAsync() => _poll is { IsCompleted: false } running ? running : _poll = RunPollAsync();
+
+    /// <summary>
+    /// A poll that starts after now. One already in flight may have read the state before a change that
+    /// just saved, so wait it out and poll again.
+    /// </summary>
+    async Task PollFreshAsync()
     {
-        if (_polling) return;
-        _polling = true;
-        try
-        {
-            var r = await _api.PollAsync();
-            Reachable = r.Reachable;
-            Problem = r.Problem;
-            if (r.State is { } s) State = s;
-            Refresh();
-            Polled?.Invoke();
-        }
-        finally
-        {
-            _polling = false;
-        }
+        if (_poll is { IsCompleted: false } running) await running;
+        await PollAsync();
+    }
+
+    async Task RunPollAsync()
+    {
+        var r = await _api.PollAsync();
+        Reachable = r.Reachable;
+        Problem = r.Problem;
+        if (r.State is { } s) State = s;
+        Refresh();
+        Polled?.Invoke();
     }
 
     public async Task DecideAsync(ApprovalVM approval, Decision decision)
@@ -413,6 +510,63 @@ public sealed class PanelViewModel : Observable
         await PollAsync();
     }
 
+    /// <summary>
+    /// The listen switches: turn auto-reply on or off for these saved chats. The daemon passes a chat's
+    /// messages to sessions only while it's on, so off pauses listening there (the watches stay) and on
+    /// resumes it. One flash for the lot; it stops at the first one the daemon refuses, says which it had
+    /// already switched (those stay switched), and the switches then show what is saved.
+    /// These chats' switches stay disabled, showing the value clicked, until a poll that started after the
+    /// change has brought what the daemon saved.
+    /// </summary>
+    public async Task SetListeningAsync(IReadOnlyList<string> nicknames, bool on, string label)
+    {
+        var rows = nicknames.Select(n => _contacts.GetValueOrDefault(n)).OfType<ContactVM>().ToList();
+        // One of them is still saving a change (its switches are disabled, so this is a quick second
+        // click): refuse, and put back the switch that was clicked.
+        if (nicknames.Count == 0 || rows.Any(r => r.Busy))
+        {
+            foreach (var r in rows) r.Resync();
+            return;
+        }
+        foreach (var r in rows)
+        {
+            r.Busy = true;
+            r.Pending = on;
+        }
+        try
+        {
+            List<string> done = [];
+            ActionResult? failed = null;
+            foreach (var n in nicknames)
+            {
+                var r = await _api.EditContactAsync(new ContactChange(n, AutoReply: on));
+                if (!r.Ok)
+                {
+                    failed = r;
+                    break;
+                }
+                done.Add(n);
+            }
+            if (failed is { } f) ShowFlash(Contacts.ListenStopped(on, done, f.Text), ok: false);
+            else ShowFlash(Contacts.ListenFlash(on, label));
+            await PollFreshAsync();
+        }
+        finally
+        {
+            foreach (var r in rows)
+            {
+                r.Pending = null;
+                r.Busy = false;
+            }
+        }
+    }
+
+    /// <summary>A chat's listen state or busy state changed: the sessions' "all" switches follow.</summary>
+    internal void ListenChanged()
+    {
+        foreach (var s in Listening) s.Sync();
+    }
+
     void ToggleRecent(RecentChatVM row)
     {
         row.IsOpen = !row.IsOpen;
@@ -441,12 +595,36 @@ public sealed class PanelViewModel : Observable
         foreach (var vm in rows) vm.Ago = Format.Ago(vm.Item.CreatedAt, now);
         ListSync.Apply(Approvals, rows);
 
-        // Sessions and recent sends have nothing editable: rebuild them when they change (or a minute passes, for "ago").
-        IReadOnlyList<UiSession> sessions = s is null ? [] : Presenter.Listening(s);
-        if (Changed(ref _sessionsKey, JsonSerializer.Serialize(sessions)))
+        // Contacts first: the sessions' switches are the contact rows' own.
+        IReadOnlyList<UiContact> contacts = s?.Contacts ?? [];
+        var replaced = false;
+        foreach (var gone in _contacts.Keys.Except(contacts.Select(c => c.Nickname)).ToList())
         {
-            ListSync.Apply(Listening, sessions.Select(SessionVM.From).ToList());
+            _contacts.Remove(gone);
+            replaced = true;
         }
+        foreach (var c in contacts)
+        {
+            if (_contacts.TryGetValue(c.Nickname, out var vm)) vm.Update(c, s!.DefaultPolicy);
+            else
+            {
+                _contacts[c.Nickname] = new ContactVM(this, c, s!.DefaultPolicy);
+                replaced = true;
+            }
+        }
+        SyncContacts();
+
+        // Sessions and recent sends: rebuilt when they change (or a minute passes, for "ago"). A session's
+        // switches bind to the contact rows, so a chat switched on or off doesn't rebuild it (and the
+        // switch keeps keyboard focus); which row each watch uses is part of the key.
+        IReadOnlyList<UiSession> sessions = s is null ? [] : Presenter.Listening(s);
+        var rowFor = sessions.SelectMany(x => x.Watches).Select(w => Presenter.ListeningSwitch(s!, w.ChatId)?.Nickname ?? "-");
+        if (Changed(ref _sessionsKey, JsonSerializer.Serialize(sessions) + string.Join(",", rowFor) + (s?.Contacts is null ? "?" : "")) || replaced)
+        {
+            ListSync.Apply(Listening, sessions.Select(x => SessionVM.From(this, x, s!.Contacts is not null,
+                id => Presenter.ListeningSwitch(s!, id) is { } c ? _contacts.GetValueOrDefault(c.Nickname) : null)).ToList());
+        }
+        ListenChanged();
         IReadOnlyList<RecentChat> recent = s is null ? [] : Presenter.RecentChats(s.Recent);
         if (Changed(ref _recentKey, JsonSerializer.Serialize(recent) + now.ToString("yyyyMMddHHmm", System.Globalization.CultureInfo.InvariantCulture)))
         {
@@ -454,24 +632,17 @@ public sealed class PanelViewModel : Observable
             ListSync.Apply(Recent, recent.Select(c => RecentChatVM.From(c, s!.Footer, now, _openRecent.Contains(c.ChatId), ToggleRecent)).ToList());
         }
 
-        IReadOnlyList<UiContact> contacts = s?.Contacts ?? [];
-        foreach (var gone in _contacts.Keys.Except(contacts.Select(c => c.Nickname)).ToList()) _contacts.Remove(gone);
-        foreach (var c in contacts)
-        {
-            if (_contacts.TryGetValue(c.Nickname, out var vm)) vm.Update(c, s!.DefaultPolicy);
-            else _contacts[c.Nickname] = new ContactVM(this, c, s!.DefaultPolicy);
-        }
-        SyncContacts();
-
 // The page was opened before the daemon answered: fill the fields once it does.
         if (_awayPage && !_awayLoaded) LoadAway();
 
-        IReadOnlyList<Stat> stats = s is null ? [] : Presenter.Stats(s);
-        if (!stats.SequenceEqual(_stats))
+        _stats = s is null ? [] : Presenter.Stats(s);
+        if (s is not null)
         {
-            _stats = stats;
-            Raise(nameof(Stats));
+            var waiting = approvals.Select(a => a.Id).ToList();
+            Section = Presenter.SectionAfterPoll(_section, _lastWaiting, waiting);
+            _lastWaiting = waiting;
         }
+        SyncTiles();
 
         foreach (var name in new[]
                  {
@@ -486,9 +657,17 @@ public sealed class PanelViewModel : Observable
 
     void SyncContacts()
     {
-        var shown = Contacts.Filter(State?.Contacts ?? [], _search);
+        IReadOnlyList<UiContact> all = State?.Contacts ?? [];
+        var shown = Contacts.Filter(Contacts.FilterListening(all, _filter), _search);
         ListSync.Apply(ContactRows, shown.Where(c => _contacts.ContainsKey(c.Nickname)).Select(c => _contacts[c.Nickname]).ToList());
         Raise(nameof(ContactsPlaceholder));
+
+        var sorted = all.Where(c => _contacts.ContainsKey(c.Nickname))
+            .OrderBy(c => c.Nickname, StringComparer.CurrentCultureIgnoreCase)
+            .Select(c => _contacts[c.Nickname]);
+        ListSync.Apply(MayListen, (_showAllListen ? sorted : sorted.Take(ShortList)).ToList());
+        Raise(nameof(MayListenMore));
+        Raise(nameof(MayListenPlaceholder));
     }
 
     static bool Changed(ref string key, string now)
