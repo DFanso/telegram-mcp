@@ -367,10 +367,10 @@
                         <Border Style="{StaticResource Segments}">
                             <StackPanel Orientation="Horizontal">
                                 <local:PillButton Content="On" MinWidth="60" Choice="True" Tint="{DynamicResource BlueFill}" Filled="{Binding Listens, Mode=OneWay}"
-                                                  Command="{Binding SetListen}" CommandParameter="on"
+                                                  Command="{Binding SetListen}" CommandParameter="on" AutomationProperties.Name="Auto-reply on"
                                                   ToolTip="A Claude session may watch this chat and answer new messages (the autoReply list)" />
                                 <local:PillButton Content="Off" MinWidth="60" Choice="True" Tint="{DynamicResource GrayFill}" Filled="{Binding NotListens, Mode=OneWay}"
-                                                  Command="{Binding SetListen}" CommandParameter="off"
+                                                  Command="{Binding SetListen}" CommandParameter="off" AutomationProperties.Name="Auto-reply off"
                                                   ToolTip="No session can listen here; a watch on it pauses" />
                             </StackPanel>
                         </Border>
