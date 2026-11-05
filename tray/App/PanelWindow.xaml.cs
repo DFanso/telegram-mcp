@@ -100,6 +100,11 @@ public partial class PanelWindow : Window
             away.ShowAway.Execute(null);
             e.Handled = true;
         }
+        else if (ctrl && e.Key is Key.D4 or Key.NumPad4 && Vm is { } footer)
+        {
+            footer.ShowFooter.Execute(null);
+            e.Handled = true;
+        }
     }
 
     /// <summary>

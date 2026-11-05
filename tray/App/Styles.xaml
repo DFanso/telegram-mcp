@@ -150,7 +150,7 @@
         <Setter Property="Template">
             <Setter.Value>
                 <ControlTemplate TargetType="local:PillButton">
-                    <Border x:Name="Bg" CornerRadius="15" Background="Transparent" MinHeight="30" Padding="14,5"
+                    <Border x:Name="Bg" CornerRadius="15" Background="Transparent" MinHeight="30" Padding="6,5"
                             BorderBrush="Transparent" BorderThickness="1.5">
                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"
                                           TextElement.FontSize="12" TextElement.FontWeight="SemiBold"

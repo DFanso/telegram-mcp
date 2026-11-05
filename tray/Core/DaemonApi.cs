@@ -162,6 +162,15 @@ public sealed class DaemonApi(HttpClient http, int port, ITokenSource tokens, Ti
         return PostAsync("/ui/away", body, ok => ok ? "Saved." : "Not changed.", ct, notFound: Away.OlderDaemon);
     }
 
+    /// <summary>The footer: its whole text (leading line breaks included) and/or on or off. Off keeps the text.</summary>
+    public Task<ActionResult> SaveFooterAsync(string? footer, bool? enabled, CancellationToken ct = default)
+    {
+        var body = new JsonObject();
+        if (footer is not null) body["footer"] = footer;
+        if (enabled is { } on) body["enabled"] = on;
+        return PostAsync("/ui/footer", body, ok => ok ? "Saved." : "Not changed.", ct, notFound: Footer.OlderDaemon);
+    }
+
     /// <summary>The Page button: the daemon sends "/page &lt;reason&gt;" to that person from your account.</summary>
     public Task<ActionResult> PageContactAsync(string nickname, string reason, CancellationToken ct = default) =>
         PostAsync("/ui/contacts/page", new JsonObject { ["nickname"] = nickname, ["reason"] = reason },

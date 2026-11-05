@@ -257,6 +257,23 @@ public class DaemonApiTests
     }
 
     [Fact]
+    public async Task Save_footer_posts_the_text_and_the_switch()
+    {
+        _net.Answer(HttpStatusCode.OK, """{"ok":true,"text":"Saved. The footer is off."}""")
+            .Answer(HttpStatusCode.NotFound, "not found\n");
+        var api = Api(new FakeTokens(Good));
+
+        var r = await api.SaveFooterAsync("\n\nme", false, Ct);
+        var old = await api.SaveFooterAsync(null, true, Ct);
+
+        Assert.Equal(new ActionResult(true, "Saved. The footer is off."), r);
+        Assert.Equal("http://127.0.0.1:47901/ui/footer", _net.Requests[0].Uri.ToString());
+        Assert.Equal("""{"footer":"\n\nme","enabled":false}""", _net.Requests[0].Body);
+        Assert.Equal("""{"enabled":true}""", _net.Requests[1].Body);
+        Assert.Equal(new ActionResult(false, Footer.OlderDaemon), old);
+    }
+
+    [Fact]
     public async Task Save_away_on_an_older_daemon_asks_for_a_restart()
     {
         _net.Answer(HttpStatusCode.NotFound, "not found\n");

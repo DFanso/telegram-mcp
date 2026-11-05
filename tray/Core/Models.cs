@@ -75,7 +75,10 @@ public sealed record UiState(
     /// <summary>Null from a daemon older than pages.</summary>
     IReadOnlyList<UiPage>? Pages = null,
     /// <summary>Null from a daemon older than away hours.</summary>
-    UiAway? Away = null);
+    UiAway? Away = null,
+    /// <summary>The footer's text even while it's off. Null from a daemon older than the footer editor.</summary>
+    string? FooterText = null,
+    bool? FooterOn = null);
 
 /// <summary>
 /// The away auto-reply settings and where the clock puts them (UiAway in src/shared/protocol.ts).

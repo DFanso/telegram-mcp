@@ -42,6 +42,11 @@ public sealed class PanelViewModel : Observable
     IReadOnlyCollection<string> _lastWaiting = [];
     bool _contactsPage;
     bool _awayPage, _awaySaving, _showTemplates, _awayQuietLoaded;
+    bool _footerPage, _footerLoaded, _footerSaving;
+    /// <summary>The footer's On / Off being saved, until a poll after it shows what was saved.</summary>
+    bool? _footerPending;
+    string _footerBody = "";
+    FooterSpacing _footerSpacing = FooterSpacing.BlankLine;
     /// <summary>The value the away switch is saving, until a poll after it shows what was saved.</summary>
     bool? _awayPending;
     string _awayQuiet = "";
@@ -77,6 +82,34 @@ public sealed class PanelViewModel : Observable
             ContactsPage = false;
             AwayPage = true;
         });
+        ShowFooter = new Command(_ =>
+        {
+            ContactsPage = false;
+            LoadFooter();
+            FooterPage = true;
+        });
+        SetFooterOn = new Command(p => _ = SetFooterOnAsync(p is "on"), _ => FooterIdle && FooterShown);
+        ToggleFooter = new Command(_ => _ = SetFooterOnAsync(!FooterOn), _ => FooterIdle && FooterShown);
+        SaveFooter = new Command(_ => _ = SaveFooterAsync(), _ => FooterIdle && FooterShown && FooterError is null && FooterDirty);
+        DiscardFooter = new Command(_ => LoadFooter(), _ => FooterDirty);
+        ResetFooter = new Command(_ =>
+        {
+            var (spacing, body) = Footer.Split(Footer.Default);
+            _footerSpacing = spacing;
+            FooterBody = body;
+        });
+        UseFooterIdea = new Command(p => { if (p is string idea) FooterBody = idea; });
+        SetFooterSpacingCommand = new Command(p => { if (p is ChoiceVM c) SetFooterSpacing((FooterSpacing)c.Value); });
+        SetFooterStyle = new Command(p => { if (p is ChoiceVM c) FooterBody = Footer.Restyle(_footerBody, (FooterStyle)c.Value); });
+        foreach (var (label, sp, tip) in new[]
+                 {
+                     ("Blank line", FooterSpacing.BlankLine, "An empty line between the message and the footer"),
+                     ("New line", FooterSpacing.NewLine, "The footer on the line under the message"),
+                     ("Same line", FooterSpacing.SameLine, "The footer right after the last word"),
+                 })
+            SpacingChoices.Add(new ChoiceVM(label, (int)sp, tip));
+        foreach (var st in Enum.GetValues<FooterStyle>())
+            StyleChoices.Add(new ChoiceVM(Footer.StyleLabel(st), (int)st, "Turn the letters into this style (emoji and symbols stay)"));
         ToggleAwayQuick = new Command(_ => _ = QuickAwayAsync(!AwayOn));
         ShowAdd = new Command(_ => ShowTemplates = !ShowTemplates, _ => CanAddSchedule);
         SaveQuiet = new Command(_ => _ = SaveQuietAsync(), _ => !_awaySaving && QuietError is null && QuietDirty);
@@ -188,13 +221,14 @@ public sealed class PanelViewModel : Observable
         set
         {
             AwayPage = false;
+            FooterPage = false;
             if (!Set(ref _contactsPage, value)) return;
             Raise(nameof(MainPage));
             if (!value) Search = "";
         }
     }
 
-    public bool MainPage => !_contactsPage && !_awayPage;
+    public bool MainPage => !_contactsPage && !_awayPage && !_footerPage;
 
     // ---- the Away page --------------------------------------------------------------------
 
@@ -446,6 +480,138 @@ public sealed class PanelViewModel : Observable
         Raise(nameof(QuietDirty));
     }
 
+    // ---- the Footer page ----------------------------------------------------------------
+
+    public bool FooterPage
+    {
+        get => _footerPage;
+        private set
+        {
+            if (!Set(ref _footerPage, value)) return;
+            Raise(nameof(MainPage));
+        }
+    }
+
+    /// <summary>The daemon sent the footer's text, so the page can edit it.</summary>
+    public bool FooterShown => ShowContent && State?.FooterText is not null;
+    public string? FooterPlaceholder => ShowContent && State!.FooterText is null ? Footer.OlderDaemon : null;
+
+    /// <summary>On or off, showing the value being saved until a poll brings it back.</summary>
+    public bool FooterOn => _footerPending ?? State?.FooterOn ?? false;
+    public bool FooterOff => !FooterOn;
+    public bool FooterIdle => !_footerSaving && _footerPending is null;
+
+    public string FooterBody
+    {
+        get => _footerBody;
+        set
+        {
+            if (!Set(ref _footerBody, value ?? "")) return;
+            RaiseFooter();
+        }
+    }
+
+    public ObservableCollection<ChoiceVM> SpacingChoices { get; } = [];
+    public ObservableCollection<ChoiceVM> StyleChoices { get; } = [];
+    public IReadOnlyList<string> FooterIdeas => Footer.Ideas;
+
+    public string FooterComposed => Footer.Compose(_footerSpacing, _footerBody);
+    public string? FooterError => Footer.Check(_footerBody);
+    public bool FooterDirty => State?.FooterText is { } t && FooterComposed != t;
+    public string FooterCounter => $"{_footerBody.Trim().Length} / {Footer.Max - 2}";
+    public string FooterSample => Footer.Sample;
+
+    /// <summary>A message as people get it: the sample with the footer as typed, or without one while it's off.</summary>
+    public string FooterPreview => FooterOn ? Footer.Preview(Footer.Sample, FooterComposed) : Footer.Sample;
+
+    public string FooterStatus => FooterOn
+        ? "On: added to every message sent for you"
+        : "Off: messages go out exactly as written";
+
+    void RaiseFooter()
+    {
+        var style = Footer.Detect(_footerBody);
+        foreach (var c in StyleChoices) c.On = (FooterStyle)c.Value == style;
+        foreach (var c in SpacingChoices) c.On = (FooterSpacing)c.Value == _footerSpacing;
+        foreach (var n in new[]
+                 {
+                     nameof(FooterComposed), nameof(FooterError), nameof(FooterDirty), nameof(FooterCounter), nameof(FooterPreview),
+                     nameof(FooterOn), nameof(FooterOff), nameof(FooterIdle), nameof(FooterStatus),
+                 })
+        {
+            Raise(n);
+        }
+        CommandManager.InvalidateRequerySuggested();
+    }
+
+    /// <summary>Fills the editor from what the daemon has. Only when the page opens and after a save: polling leaves typing alone.</summary>
+    void LoadFooter()
+    {
+        if (State?.FooterText is not { } text) return;
+        _footerLoaded = true;
+        var (spacing, body) = Footer.Split(text);
+        _footerSpacing = spacing;
+        _footerBody = body;
+        Raise(nameof(FooterBody));
+        RaiseFooter();
+    }
+
+    void SetFooterSpacing(FooterSpacing spacing)
+    {
+        _footerSpacing = spacing;
+        RaiseFooter();
+    }
+
+    /// <summary>On / Off saves at once; the words keep waiting for Save.</summary>
+    async Task SetFooterOnAsync(bool on)
+    {
+        if (!FooterIdle || on == FooterOn || State?.FooterText is null) return;
+        _footerPending = on;
+        RaiseFooter();
+        try
+        {
+            ActionResult r;
+            _footerSaving = true;
+            try
+            {
+                r = await _api.SaveFooterAsync(null, on);
+            }
+            finally
+            {
+                _footerSaving = false;
+            }
+            ShowFlash(r.Ok ? (on ? "The footer is on." : "The footer is off. Its text is kept for when you switch it back on.") : r.Text, r.Ok);
+            await PollFreshAsync();
+        }
+        finally
+        {
+            _footerPending = null;
+            RaiseFooter();
+        }
+    }
+
+    async Task SaveFooterAsync()
+    {
+        if (FooterError is not null) return;
+        var sent = FooterComposed;
+        _footerSaving = true;
+        RaiseFooter();
+        ActionResult r;
+        try
+        {
+            // Saving the words keeps it on or off as it is.
+            r = await _api.SaveFooterAsync(sent, FooterOn);
+        }
+        finally
+        {
+            _footerSaving = false;
+            RaiseFooter();
+        }
+        ShowFlash(r.Ok ? (FooterOn ? "Saved. New messages carry this footer." : "Saved. It's kept for when you switch the footer on.") : r.Text, r.Ok);
+        await PollFreshAsync();
+        RaiseFooter();
+    }
+
     public string Search
     {
         get => _search;
@@ -518,6 +684,16 @@ public sealed class PanelViewModel : Observable
     /// <summary>"Add a schedule": shows the templates to start from.</summary>
     public ICommand ShowAdd { get; }
     public ICommand SaveQuiet { get; }
+    public ICommand ShowFooter { get; }
+    /// <summary>The footer's On / Off: "on" or "off", saved at once.</summary>
+    public ICommand SetFooterOn { get; }
+    public ICommand ToggleFooter { get; }
+    public ICommand SaveFooter { get; }
+    public ICommand DiscardFooter { get; }
+    public ICommand ResetFooter { get; }
+    public ICommand UseFooterIdea { get; }
+    public ICommand SetFooterSpacingCommand { get; }
+    public ICommand SetFooterStyle { get; }
     public ICommand ShowMain { get; }
     /// <summary>The Contacts page's "N drafts waiting · Review": Home, on Waiting.</summary>
     public ICommand ReviewWaiting { get; }
@@ -727,6 +903,8 @@ public sealed class PanelViewModel : Observable
         }
 
         SyncSchedules(now.LocalDateTime);
+        // The page was opened before the daemon answered: fill the editor once it does.
+        if (_footerPage && !_footerLoaded) LoadFooter();
 
         _stats = s is null ? [] : Presenter.Stats(s);
         if (s is not null)
@@ -743,6 +921,8 @@ public sealed class PanelViewModel : Observable
                      nameof(NoApprovals), nameof(NoListening), nameof(NoRecent), nameof(ContactsSummary), nameof(WaitingBanner),
                      nameof(AwayShown), nameof(AwayPlaceholder), nameof(AwayStatus), nameof(AwayBadge), nameof(AwayOnNow),
                      nameof(AwayOn), nameof(AwayQuickIdle), nameof(AwayQuickTip), nameof(AwayHeadline), nameof(AwayIcon), nameof(AwayWaiting),
+                     nameof(FooterShown), nameof(FooterPlaceholder), nameof(FooterOn), nameof(FooterOff), nameof(FooterDirty), nameof(FooterPreview),
+                     nameof(FooterStatus), nameof(FooterIdle),
                  })
         {
             Raise(name);
