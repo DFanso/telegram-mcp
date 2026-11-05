@@ -127,6 +127,49 @@ describe('proxy <-> daemon', () => {
     await client.close()
   })
 
+  test('an edit and a delete where sending needs approval go through the dialog too', async () => {
+    const client = new Client({ name: 'test', version: '0' }, { capabilities: { elicitation: {} } })
+    const asked: { message: string; fields: string[] }[] = []
+    let answer: 'accept' | 'decline' = 'accept'
+    client.setRequestHandler(ElicitRequestSchema, async req => {
+      const p = req.params as { message: string; requestedSchema: { properties: Record<string, unknown> } }
+      asked.push({ message: p.message, fields: Object.keys(p.requestedSchema.properties) })
+      return { action: answer }
+    })
+    await client.connect(
+      new StdioClientTransport({
+        command: process.execPath,
+        args: [resolve(import.meta.dir, '../src/cli.ts'), 'mcp'],
+        env: { ...(process.env as Record<string, string>), TELEGRAM_MCP_HOME: home, TELEGRAM_MCP_PORT: String(port) },
+        stderr: 'ignore',
+      }),
+    )
+    const sent = await call(client, 'telegram_send_message', { to: 'qa', text: 'wrong link' })
+    const id = Number(/message #(\d+)/.exec(sent.text)![1])
+    const footer = '\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ'
+
+    answer = 'decline'
+    const no = await call(client, 'telegram_edit_message', { chat: 'qa', messageId: id, text: 'right link' })
+    expect(no.text).toBe(`Declined in the Claude Code dialog: message #${id} in Team QA [qa] was not edited.`)
+    expect(asked.at(-1)).toEqual({
+      message: `Edit this Telegram message?\n\nIn: Team QA [qa] (message #${id})\nAsking because this chat is on the requireApproval list.\n\nNow:\nwrong link${footer}\n\nNew:\nright link${footer}`,
+      fields: [],
+    })
+
+    answer = 'accept'
+    const yes = await call(client, 'telegram_edit_message', { chat: 'qa', messageId: id, text: 'right link' })
+    expect(yes.text).toBe(`Approved in the Claude Code dialog. Edited message #${id} in Team QA [qa].`)
+    expect(tg.edits.at(-1)).toMatchObject({ chatId: TEAM_QA.id, messageId: id, text: `right link${footer}` })
+
+    const del = await call(client, 'telegram_delete_message', { chat: 'qa', messageId: id })
+    expect(asked.at(-1)!.message).toBe(
+      `Delete this Telegram message for everyone?\n\nIn: Team QA [qa] (message #${id})\nAsking because this chat is on the requireApproval list.\n\nright link${footer}`,
+    )
+    expect(del.text).toBe(`Approved in the Claude Code dialog. Deleted message #${id} in Team QA [qa].`)
+    expect(tg.deleted.at(-1)).toEqual({ chatId: TEAM_QA.id, messageId: id })
+    await client.close()
+  })
+
   test('without a dialog the model gets an approval id to confirm', async () => {
     const before = tg.sent.length
     const client = await spawnProxy()

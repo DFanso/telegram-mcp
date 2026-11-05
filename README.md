@@ -133,6 +133,8 @@ Approving also saves the chat under `chats`, with a suggested nickname you can e
 
 Nothing is sent unless you accept. Drafts expire after 20 minutes. The rules are checked again at send time.
 
+**Edits and deletes ask too.** `telegram_edit_message` and `telegram_delete_message` change what a chat already sees, so they follow the same rules as a send: where sending is automatic they happen at once, blocked chats refuse them, and where sending needs approval they wait for you in the same places. The menu bar or tray card and its notification show the chat, the message number and its text now, then the new text for an edit (**Deny** / **Edit**) or the message that would go for everyone for a delete (**Keep** / **Delete**). The dialog shows the same, and in chat the model gets an approval id for `telegram_confirm_send` / `telegram_cancel_send`. Approving one never puts a chat on a list. Deny or no answer within 20 minutes leaves the message as it was, the rules are checked again when you approve, and `daemon.log` has a line for the ask and for what came of it.
+
 **Nicknames** (`chats`) let "send to leo" mean exactly one person. Only exact matches resolve: a nickname, an alias, a saved full name, a username or an id. A near match like "leon" is refused with suggestions, never picked. Before every send the daemon checks that the saved id still has the saved username. If either has changed, it refuses until the entry is re-saved. Sessions can add, update and remove nicknames (`telegram_save_chat`, `telegram_remove_chat`). They cannot change `rules`, `footer` or `guides`, and they cannot repoint, create or remove a name that the rules use: only you can, by editing the file or renaming it on the [Contacts page](#contacts).
 
 ## Tools
@@ -145,15 +147,15 @@ Nothing is sent unless you accept. Drafts expire after 20 minutes. The rules are
 | `telegram_search_chats` | find a person or group to save |
 | `telegram_read_messages` | read a chat or forum topic |
 | `telegram_send_message` | send, following the rules |
-| `telegram_delete_message` | delete a message this session sent recently, for everyone in the chat; same limits as edit (its own messages only, where sending needs no approval), logged, can't be undone |
-| `telegram_edit_message` | change the text of a text message this session sent recently (chat and message id); only where sending needs no approval, since the chat sees the new text. Never another session's message, yours (the Page button's included), the pager's or an away reply. The footer is added again, Recently sent shows it as edited and keeps the original, and `daemon.log` has a line for each edit |
+| `telegram_delete_message` | delete a message this session sent recently, for everyone in the chat; same limits as edit (its own messages only; at once where sending needs no approval, after your approval where it does, refused where blocked), logged, can't be undone |
+| `telegram_edit_message` | change the text of a text message this session sent recently (chat and message id). The chat sees the new text, so it follows the sending rules: at once where sending needs no approval, after your approval where it does (you see the old and the new text), refused where blocked. Never another session's message, yours (the Page button's included), the pager's or an away reply. The footer is added again, Recently sent shows it as edited and keeps the original, and `daemon.log` has a line for each edit |
 | `telegram_send_file` | send a local file with a caption, following the same rules (but see files to watched chats, above); credentials and this tool's own files are always refused |
 | `telegram_send_sticker` | re-send a sticker someone posted (by chat and message id), following the same rules; stickers take no caption, so no footer |
 | `telegram_page` | page the user for something that needs a human now: the desktop rings until they ack, and the phone gets a push (see [Pages](#pages)) |
 | `telegram_answer_reply` | make this session answer `/reply`: type `/reply` (or `/reply <what to say>`) in any chat from your own account and that chat is handed to the session; `/reply stop` takes it back |
 | `telegram_message_readers` | whether one of your own messages has been read: in a private chat whether the other person did, in a group of up to 100 people who did and when (about a week); only what Telegram shows, read-only |
 | `telegram_download_media` | save a message's file, photo, video or voice note and return the path |
-| `telegram_confirm_send` / `telegram_cancel_send` | approval fallback for clients without dialogs |
+| `telegram_confirm_send` / `telegram_cancel_send` | approval fallback for clients without dialogs (sends, edits and deletes) |
 | `telegram_save_chat` / `telegram_remove_chat` | manage nicknames |
 | `telegram_watch` / `telegram_unwatch` | subscribe to an autoReply chat (optionally one sender, one topic) |
 | `telegram_get_events` | collect watched messages nobody pushed yet |
@@ -245,7 +247,7 @@ An away reply shows under Recently sent as "away reply". No MCP tool can change 
 
 - The header shows the connection as a status pill (green connected, yellow reconnecting, red logged out, grey offline) with the whole of your name, on two lines if it needs them, plus **Rules** and **Log** buttons.
 - **Home** has three tiles, **Waiting**, **Listening** and **Sent**. Each shows a count and a word ("needs you", "2 sessions", "1 paused"), and the one you click is the section shown below them, so the panel stays short. A new draft switches back to Waiting.
-  - **Waiting for approval**: the exact text, recipient, "Asked by …" and the reason on separate lines, and when it was asked ("just now", "5m ago"), with Deny / **Send**. A new chat says it's the first message, gets an editable nickname, and offers **Send, ask next time** / **Send, always allow** instead.
+  - **Waiting for approval**: the exact text, recipient, "Asked by …" and the reason on separate lines, and when it was asked ("just now", "5m ago"), with Deny / **Send**. A new chat says it's the first message, gets an editable nickname, and offers **Send, ask next time** / **Send, always allow** instead. An edit shows the message's text **Now** and what it **Will say**, with Deny / **Edit**; a delete shows the message that would go, with Keep / **Delete**.
   - **Listening now**: each session watching chats, whether its Monitor is connected, and a **switch on each chat** to pause or resume listening there. A session watching several saved chats also gets an **all** switch. A switch is the chat's auto-reply: off, the daemon stops passing that chat's messages to every session at once (the watches stay, so switching it back on resumes them). Under it, **Chats Claude may listen to** lists your saved chats, each with its switch, so you can choose who Claude may watch without opening Contacts.
   - **Recently sent**: the last 5 chats you sent to. Click a chat to see its messages, when they went, how they were approved, and from which session; click again to close it.
 - **Contacts**: every saved chat, to change its rules without editing `config.json`. See [Contacts](#contacts).

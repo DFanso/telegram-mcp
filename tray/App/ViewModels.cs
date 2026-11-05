@@ -126,7 +126,10 @@ public sealed class StatVM(HomeSection section, Stat stat, ICommand pick) : Obse
     public string Tip => $"Show {_stat.Label.ToLowerInvariant()} below";
 }
 
-/// <summary>A draft waiting for approval. Kept across polls, so a nickname being typed survives.</summary>
+/// <summary>
+/// A draft waiting for approval. Kept across polls, so a nickname being typed survives. An edit of a
+/// message Claude sent shows its text now and the new text; a delete shows the message that would go.
+/// </summary>
 public sealed class ApprovalVM : Observable
 {
     readonly PanelViewModel _panel;
@@ -166,8 +169,24 @@ public sealed class ApprovalVM : Observable
 
     public string Nick { get => _nick; set => Set(ref _nick, value); }
 
+    /// <summary>An edit or delete of a message Claude sent, rather than a new message.</summary>
+    public bool IsChange => Item.IsEdit || Item.IsDelete;
+    public bool IsEdit => Item.IsEdit;
+    public bool IsDelete => Item.IsDelete;
+    /// <summary>"Edit message #1003, which Claude sent earlier"; null for a send.</summary>
+    public string? ChangeLine => ApprovalCard.ChangeLine(Item);
+    public string ChangeIcon => Item.IsEdit ? "pencil" : "trash-2";
+    /// <summary>An edit: the text the chat sees now.</summary>
+    public string PreviousText => Item.PreviousText ?? "";
+    public string ApproveLabel => ApprovalCard.ApproveLabel(Item, _busy);
+    public string ApproveIcon => ApprovalCard.ApproveIcon(Item);
+    public string ApproveTip => ApprovalCard.ApproveTip(Item);
+    public string DenyLabel => ApprovalCard.DenyLabel(Item);
+    public string DenyTip => ApprovalCard.DenyTip(Item);
+    public string BodyTip => ApprovalCard.BodyTip(Item);
+
     /// <summary>A draft longer than the card's 4 lines: clicking it (or Show all) opens it. Nothing opens on hover.</summary>
-    public bool IsLong => Format.IsLongDraft(Item.Text);
+    public bool IsLong => Format.IsLongDraft(Item.Text) || Format.IsLongDraft(Item.PreviousText ?? "");
 
     public bool Expanded
     {
@@ -198,7 +217,11 @@ public sealed class ApprovalVM : Observable
         get => _busy;
         set
         {
-            if (Set(ref _busy, value)) Raise(nameof(Idle));
+            if (Set(ref _busy, value))
+            {
+                Raise(nameof(Idle));
+                Raise(nameof(ApproveLabel));
+            }
         }
     }
 

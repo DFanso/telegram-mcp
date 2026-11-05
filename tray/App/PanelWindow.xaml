@@ -58,7 +58,8 @@
             <Setter Property="Foreground" Value="{DynamicResource Fg2}" />
         </Style>
 
-        <!-- A draft waiting for approval. A long one opens on click (or Show all), never on hover. -->
+        <!-- A draft waiting for approval. A long one opens on click (or Show all), never on hover.
+             An edit of a message Claude sent shows its text now and the new text; a delete, the message that would go. -->
         <DataTemplate x:Key="ApprovalTemplate" DataType="{x:Type local:ApprovalVM}">
             <Border Margin="0,12,0,0" CornerRadius="12" Background="{DynamicResource Subtle}" BorderBrush="{DynamicResource PendingEdge}" BorderThickness="1" Padding="12">
                 <StackPanel>
@@ -79,10 +80,25 @@
                         </StackPanel>
                     </Grid>
 
+                    <!-- An edit or delete: which message, and what would happen to it. -->
+                    <DockPanel Margin="0,10,0,0" Visibility="{Binding IsChange, Converter={StaticResource Visible}}">
+                        <local:SvgIcon Kind="{Binding ChangeIcon}" Width="14" Height="14" DockPanel.Dock="Left" Foreground="{DynamicResource Fg3}" VerticalAlignment="Top" Margin="0,1,6,0" />
+                        <TextBlock Text="{Binding ChangeLine}" Style="{StaticResource Caption}" />
+                    </DockPanel>
+
                     <Button x:Name="BodyButton" Margin="0,10,0,0" Style="{StaticResource Flat}" Command="{Binding ToggleText}" Focusable="{Binding IsLong}"
-                            ToolTip="The exact message Claude wants to send" AutomationProperties.Name="Message text">
+                            ToolTip="{Binding BodyTip}" AutomationProperties.Name="Message text">
                         <StackPanel>
-                            <Border CornerRadius="10" Background="{DynamicResource Subtle2}" Padding="10,8">
+                            <TextBlock Text="Now" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Fg3}" Margin="0,0,0,3"
+                                       Visibility="{Binding IsEdit, Converter={StaticResource Visible}}" />
+                            <Border CornerRadius="10" Background="{DynamicResource Subtle}" Padding="10,8" Margin="0,0,0,6"
+                                    Visibility="{Binding IsEdit, Converter={StaticResource Visible}}">
+                                <TextBlock x:Name="Previous" Text="{Binding PreviousText}" Foreground="{DynamicResource Fg2}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
+                                           LineHeight="17" LineStackingStrategy="BlockLineHeight" MaxHeight="68" />
+                            </Border>
+                            <TextBlock Text="Will say" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Fg3}" Margin="0,0,0,3"
+                                       Visibility="{Binding IsEdit, Converter={StaticResource Visible}}" />
+                            <Border x:Name="BodyBox" CornerRadius="10" Background="{DynamicResource Subtle2}" Padding="10,8">
                                 <TextBlock x:Name="Body" Text="{Binding Text}" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"
                                            LineHeight="17" LineStackingStrategy="BlockLineHeight" MaxHeight="68" />
                             </Border>
@@ -132,16 +148,17 @@
                         </StackPanel>
                     </Border>
 
-                    <!-- Deny, and Send for a chat that has a rule (a new chat's two ways to send are in its box above). -->
+                    <!-- Deny, and Send for a chat that has a rule (a new chat's two ways to send are in its box above).
+                         An edit offers Deny / Edit, a delete Keep / Delete. -->
                     <WrapPanel HorizontalAlignment="Right" Margin="0,8,0,0">
-                        <local:PillButton Content="Deny" Tint="{DynamicResource Red}" Command="{Binding Deny}" IsEnabled="{Binding Idle}" Margin="8,4,0,0" MinWidth="76"
-                                          ToolTip="Don't send it. Claude is told you said no." />
+                        <local:PillButton x:Name="DenyButton" Content="{Binding DenyLabel}" Tint="{DynamicResource Red}" Command="{Binding Deny}" IsEnabled="{Binding Idle}" Margin="8,4,0,0" MinWidth="76"
+                                          ToolTip="{Binding DenyTip}" />
                         <local:PillButton x:Name="Approve" Filled="True" Tint="{DynamicResource GreenFill}" Margin="8,4,0,0"
-                                          Command="{Binding Approve}" IsEnabled="{Binding Idle}" ToolTip="Send this message now"
+                                          Command="{Binding Approve}" IsEnabled="{Binding Idle}" ToolTip="{Binding ApproveTip}"
                                           Visibility="{Binding FirstTime, Converter={StaticResource Hidden}}">
                             <StackPanel Orientation="Horizontal">
-                                <local:SvgIcon Kind="send" Width="14" Height="14" Margin="0,0,6,0" />
-                                <TextBlock x:Name="ApproveText" Text="Send" />
+                                <local:SvgIcon Kind="{Binding ApproveIcon}" Width="14" Height="14" Margin="0,0,6,0" />
+                                <TextBlock x:Name="ApproveText" Text="{Binding ApproveLabel}" />
                             </StackPanel>
                         </local:PillButton>
                     </WrapPanel>
@@ -150,6 +167,12 @@
             <DataTemplate.Triggers>
                 <DataTrigger Binding="{Binding Expanded}" Value="True">
                     <Setter TargetName="Body" Property="MaxHeight" Value="{x:Static sys:Double.PositiveInfinity}" />
+                    <Setter TargetName="Previous" Property="MaxHeight" Value="{x:Static sys:Double.PositiveInfinity}" />
+                </DataTrigger>
+                <DataTrigger Binding="{Binding IsDelete}" Value="True">
+                    <Setter TargetName="BodyBox" Property="Background" Value="{DynamicResource RedWash}" />
+                    <Setter TargetName="DenyButton" Property="Tint" Value="{DynamicResource Fg2}" />
+                    <Setter TargetName="Approve" Property="Tint" Value="{DynamicResource RedFill}" />
                 </DataTrigger>
                 <DataTrigger Binding="{Binding IsLong}" Value="False">
                     <Setter TargetName="BodyButton" Property="Cursor" Value="Arrow" />
@@ -157,7 +180,6 @@
                 <DataTrigger Binding="{Binding Busy}" Value="True">
                     <Setter TargetName="Always" Property="Content" Value="Sending…" />
                     <Setter TargetName="AskNext" Property="Content" Value="Sending…" />
-                    <Setter TargetName="ApproveText" Property="Text" Value="Sending…" />
                 </DataTrigger>
             </DataTemplate.Triggers>
         </DataTemplate>

@@ -50,6 +50,12 @@ struct UiSession: Decodable, Identifiable {
 
 struct UiApproval: Decodable, Identifiable {
     let id: String
+    /// "send", "edit" or "delete". Nil from a daemon older than edit and delete approvals: a send.
+    let action: String?
+    /// The message an edit or delete is for.
+    let messageId: Int?
+    /// An edit: the text the chat sees now (`text` is the new text). A delete: nil, `text` is the message to remove.
+    let previousText: String?
     /// The chat it goes to, for its avatar. Nil from a daemon older than avatars.
     let chatId: Int?
     let to: String
@@ -62,6 +68,11 @@ struct UiApproval: Decodable, Identifiable {
     let firstTime: Bool
     let nickname: String?
     let suggestedNickname: String
+
+    var isEdit: Bool { action == "edit" }
+    var isDelete: Bool { action == "delete" }
+    /// "message #123", for an edit or delete.
+    var messageLabel: String { messageId.map { "message #\($0)" } ?? "a message" }
 }
 
 struct SentRecord: Decodable, Identifiable {
@@ -574,6 +585,16 @@ final class Store: ObservableObject {
             content.body = a.text
             content.categoryIdentifier = a.firstTime ? "APPROVAL_NEW" : "APPROVAL"
             if a.firstTime { content.title = "First message to \(a.to): send it?" }
+            if a.isEdit {
+                content.title = "Edit this Telegram message?"
+                content.subtitle = "\(a.messageLabel) in \(a.to)"
+                content.body = "Now: \(a.previousText ?? "")\nWill say: \(a.text)"
+                content.categoryIdentifier = "APPROVAL_EDIT"
+            } else if a.isDelete {
+                content.title = "Delete this Telegram message for everyone?"
+                content.subtitle = "\(a.messageLabel) in \(a.to)"
+                content.categoryIdentifier = "APPROVAL_DELETE"
+            }
             content.userInfo = ["approvalId": a.id]
             content.sound = .default
             center.add(UNNotificationRequest(identifier: a.id, content: content, trigger: nil))
@@ -677,9 +698,15 @@ final class NotificationHandler: NSObject, UNUserNotificationCenterDelegate {
         let deny = UNNotificationAction(identifier: "DENY", title: "Deny", options: [.destructive])
         let askNext = UNNotificationAction(identifier: "APPROVE", title: "Send, ask next time", options: [])
         let always = UNNotificationAction(identifier: "ALWAYS", title: "Send, always allow", options: [])
+        // An edit or delete of a message Claude sent: approving makes the change, denying leaves it.
+        let edit = UNNotificationAction(identifier: "APPROVE", title: "Edit", options: [])
+        let delete = UNNotificationAction(identifier: "APPROVE", title: "Delete", options: [.destructive])
+        let keep = UNNotificationAction(identifier: "DENY", title: "Keep", options: [])
         center.setNotificationCategories([
             UNNotificationCategory(identifier: "APPROVAL", actions: [approve, deny], intentIdentifiers: [], options: []),
             UNNotificationCategory(identifier: "APPROVAL_NEW", actions: [askNext, always, deny], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: "APPROVAL_EDIT", actions: [edit, deny], intentIdentifiers: [], options: []),
+            UNNotificationCategory(identifier: "APPROVAL_DELETE", actions: [delete, keep], intentIdentifiers: [], options: []),
         ])
         center.requestAuthorization(options: [.alert, .sound, .badge]) { _, _ in }
     }
@@ -1076,6 +1103,7 @@ enum Lucide {
         "megaphone": "M3 11 l18-5v12L3 14v-3z M11.6 16.8a3 3 0 1 1-5.8-1.6",
         "message-circle": "M7.9 20A9 9 0 1 0 4 16.1L2 22Z",
         "moon": "M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z",
+        "pencil": "M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z M15 5l4 4",
         "power": "M12 2v10 M18.4 6.6a9 9 0 1 1-12.77.04",
         "radio": "M4.9 19.1C1 15.2 1 8.8 4.9 4.9 M7.8 16.2c-2.3-2.3-2.3-6.1 0-8.5 M10,12 A2,2 0 1 0 14,12 A2,2 0 1 0 10,12 Z M16.2 7.8c2.3 2.3 2.3 6.1 0 8.5 M19.1 4.9C23 8.8 23 15.1 19.1 19",
         "rotate-cw": "M21 12a9 9 0 1 1-9-9c2.52 0 4.93 1 6.74 2.74L21 8 M21 3v5h-5",
@@ -1083,6 +1111,7 @@ enum Lucide {
         "search": "M3,11 A8,8 0 1 0 19,11 A8,8 0 1 0 3,11 Z M21 21 l-4.3-4.3",
         "send": "M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z M21.854 2.147 l-10.94 10.939",
         "settings": "M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z M9,12 A3,3 0 1 0 15,12 A3,3 0 1 0 9,12 Z",
+        "trash-2": "M3 6h18 M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6 M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2 M10 11v6 M14 11v6",
         "terminal": "M4,17 L10,11 L4,5 M12,19 L20,19",
         "triangle-alert": "M21.73 18 l-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3 M12 9v4 M12 17h.01",
         "unplug": "M19 5 l3-3 M2 22 l3-3 M6.3 20.3a2.4 2.4 0 0 0 3.4 0L12 18l-6-6-2.3 2.3a2.4 2.4 0 0 0 0 3.4Z M7.5 13.5 10 11 M10.5 16.5 13 14 M12 6 l6 6 2.3-2.3a2.4 2.4 0 0 0 0-3.4l-2.6-2.6a2.4 2.4 0 0 0-3.4 0Z",
@@ -1905,7 +1934,9 @@ struct WaitingSection: View {
     }
 }
 
-/// A draft waiting for approval. A long one opens on click (or Show all), never on hover.
+/// A draft waiting for approval. A long one opens on click (or Show all), never on hover. An edit
+/// of a message Claude sent shows its text now and what it will say; a delete shows the message
+/// that would go for everyone.
 struct ApprovalCard: View {
     @EnvironmentObject var store: Store
     @Environment(\.colorScheme) private var scheme
@@ -1920,12 +1951,17 @@ struct ApprovalCard: View {
 
     private var p: Palette { Palette(scheme) }
     private var busy: Bool { store.busy.contains(item.id) }
-    private var long: Bool { isLongDraft(item.text) }
+    private var long: Bool { isLongDraft(item.text) || isLongDraft(item.previousText ?? "") }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             top
-            message.padding(.top, 10)
+            if item.isEdit {
+                infoLine("pencil", "Edit \(item.messageLabel), which Claude sent earlier").padding(.top, 10)
+            } else if item.isDelete {
+                infoLine("trash-2", "Delete \(item.messageLabel) for everyone in the chat").padding(.top, 10)
+            }
+            message.padding(.top, item.isEdit || item.isDelete ? 6 : 10)
             infoLine("terminal", "Asked by \(item.sessionLabel)").padding(.top, 8)
             infoLine("info", item.reason).padding(.top, 3).help(item.reason)
             if item.firstTime { firstTime.padding(.top, 10) }
@@ -1956,14 +1992,14 @@ struct ApprovalCard: View {
     private var message: some View {
         Button(action: toggle) {
             VStack(alignment: .trailing, spacing: 4) {
-                Text(verbatim: item.text)
-                    .font(.system(size: 12))
-                    .lineSpacing(2)
-                    .lineLimit(expanded ? nil : 4)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(.horizontal, 10).padding(.vertical, 8)
-                    .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(p.subtle2))
+                if item.isEdit {
+                    labeled("Now", item.previousText ?? "", dim: true)
+                    labeled("Will say", item.text, dim: false)
+                } else if item.isDelete {
+                    bubble(item.text, fill: p.wash(p.red))
+                } else {
+                    bubble(item.text, fill: p.subtle2)
+                }
                 if long {
                     Text(expanded ? "Show less" : "Show all")
                         .font(.system(size: 11, weight: .semibold)).foregroundStyle(p.accent)
@@ -1972,9 +2008,32 @@ struct ApprovalCard: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .help("The exact message Claude wants to send")
-        .accessibilityLabel(Text(verbatim: "Message: \(item.text)"))
+        .help(item.isEdit ? "The message as the chat sees it now, and the exact new text"
+              : item.isDelete ? "The message Claude wants to delete for everyone" : "The exact message Claude wants to send")
+        .accessibilityLabel(Text(verbatim: item.isEdit ? "Now: \(item.previousText ?? ""). Will say: \(item.text)"
+                                 : item.isDelete ? "Message to delete: \(item.text)" : "Message: \(item.text)"))
         .accessibilityHint(long ? Text(expanded ? "Shows less" : "Shows the whole message") : Text(verbatim: ""))
+    }
+
+    private func bubble(_ text: String, fill: Color, dim: Bool = false) -> some View {
+        Text(verbatim: text)
+            .font(.system(size: 12))
+            .foregroundStyle(dim ? p.fg2 : p.fg)
+            .lineSpacing(2)
+            .lineLimit(expanded ? nil : 4)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(.horizontal, 10).padding(.vertical, 8)
+            .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(fill))
+    }
+
+    /// One side of an edit: "Now" (dimmed) or "Will say", over its text.
+    private func labeled(_ title: String, _ text: String, dim: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 3) {
+            Text(verbatim: title).font(.system(size: 11, weight: .semibold)).foregroundStyle(p.fg3)
+            bubble(text, fill: dim ? p.subtle : p.subtle2, dim: dim)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private func infoLine(_ icon: String, _ text: String) -> some View {
@@ -2033,21 +2092,48 @@ struct ApprovalCard: View {
     }
 
     /// Deny, and Send for a chat that has a rule (a new chat's two ways to send are in its box above).
+    /// An edit offers Deny / Edit, a delete Keep / Delete.
     private var actions: some View {
         HStack(spacing: 8) {
             Spacer()
-            Button("Deny") { Task { await store.decide(item.id, approve: false) } }
-                .buttonStyle(Pill(tint: p.red))
-                .help("Don\u{2019}t send it. Claude is told you said no.")
-            if !item.firstTime {
+            if item.isEdit {
+                Button("Deny") { Task { await store.decide(item.id, approve: false) } }
+                    .buttonStyle(Pill(tint: p.red))
+                    .help("Leave the message as it is. Claude is told you said no.")
                 Button { Task { await store.decide(item.id, approve: true) } } label: {
                     HStack(spacing: 6) {
-                        LucideIcon("send", size: 13)
-                        Text(busy ? "Sending\u{2026}" : "Send")
+                        LucideIcon("pencil", size: 13)
+                        Text(busy ? "Editing\u{2026}" : "Edit")
                     }
                 }
                 .buttonStyle(Pill(tint: .white, fill: Palette.greenFill))
-                .help("Send this message now")
+                .help("Change the message to the new text now")
+            } else if item.isDelete {
+                Button("Keep") { Task { await store.decide(item.id, approve: false) } }
+                    .buttonStyle(Pill(tint: p.fg2))
+                    .help("Keep the message. Claude is told you said no.")
+                Button { Task { await store.decide(item.id, approve: true) } } label: {
+                    HStack(spacing: 6) {
+                        LucideIcon("trash-2", size: 13)
+                        Text(busy ? "Deleting\u{2026}" : "Delete")
+                    }
+                }
+                .buttonStyle(Pill(tint: .white, fill: Palette.redFill))
+                .help("Delete the message for everyone in the chat now. It can\u{2019}t be undone.")
+            } else {
+                Button("Deny") { Task { await store.decide(item.id, approve: false) } }
+                    .buttonStyle(Pill(tint: p.red))
+                    .help("Don\u{2019}t send it. Claude is told you said no.")
+                if !item.firstTime {
+                    Button { Task { await store.decide(item.id, approve: true) } } label: {
+                        HStack(spacing: 6) {
+                            LucideIcon("send", size: 13)
+                            Text(busy ? "Sending\u{2026}" : "Send")
+                        }
+                    }
+                    .buttonStyle(Pill(tint: .white, fill: Palette.greenFill))
+                    .help("Send this message now")
+                }
             }
         }
         .disabled(busy)

@@ -391,7 +391,9 @@ export class Service {
   ): Promise<ToolResult> {
     const item = this.d.approvals.take(id, sessionId)
     let result: ToolResult
-    if (!approve) {
+    if (item.action === 'edit' || item.action === 'delete') {
+      result = await this.#approvedChange(item, approve, via)
+    } else if (!approve) {
       result = { text: `Declined ${VIA_TEXT[via]}: the message to ${item.chatLabel} was not sent.` }
     } else {
       // The rules may have changed since the draft was made.
@@ -611,21 +613,29 @@ export class Service {
       contacts: listContacts(config, this.d.tg.state().me?.id),
       pages: (this.d.pager?.active() ?? []).map(uiPage),
       away: this.d.away?.ui() ?? uiAway(config, this.d.tg.state().me, new Date()),
-      approvals: this.d.approvals.list().map(a => ({
-        id: a.id,
-        chatId: a.chatId,
-        to: a.chatLabel,
-        detail: a.chatDetail,
-        text: a.sticker ? STICKER_TEXT : describeOutgoing(a.text, a.file, true),
-        reason: a.reason,
-        sessionId: a.sessionId,
-        sessionLabel: a.sessionLabel,
-        createdAt: new Date(a.createdAt).toISOString(),
-        expiresAt: new Date(a.createdAt + ttl).toISOString(),
-        firstTime: a.firstTime,
-        nickname: a.nickname,
-        suggestedNickname: a.suggestedNickname,
-      })),
+      approvals: this.d.approvals.list().map(a => {
+        // An edit or delete shows the message as the chat sees it now (Recently sent has it; a file
+        // there is already described), which an edit approved since the ask may have changed.
+        const now = a.action ? this.#recent.find(r => r.chatId === a.chatId && r.messageId === a.messageId)?.text : undefined
+        return {
+          id: a.id,
+          action: a.action ?? 'send',
+          messageId: a.messageId ?? null,
+          previousText: a.action === 'edit' ? (now ?? a.previousText ?? null) : null,
+          chatId: a.chatId,
+          to: a.chatLabel,
+          detail: a.chatDetail,
+          text: a.action === 'delete' ? (now ?? a.text) : a.action ? a.text : a.sticker ? STICKER_TEXT : describeOutgoing(a.text, a.file, true),
+          reason: a.reason,
+          sessionId: a.sessionId,
+          sessionLabel: a.sessionLabel,
+          createdAt: new Date(a.createdAt).toISOString(),
+          expiresAt: new Date(a.createdAt + ttl).toISOString(),
+          firstTime: a.firstTime,
+          nickname: a.nickname,
+          suggestedNickname: a.suggestedNickname,
+        }
+      }),
       sessions: this.d.hub.snapshot().filter(s => s.watches.length > 0 || s.connected),
       recent: [...this.#recent].reverse(),
     }
@@ -726,6 +736,130 @@ export class Service {
         suggestedNickname: pending.suggestedNickname,
       },
     }
+  }
+
+  // ---- editing and deleting a sent message ---------------------------------------------
+
+  /**
+   * The message to edit or delete, if this very session wrote it: its own send, or a draft of its
+   * that was approved. The pager's replies, away replies and the Page button (the user's own words)
+   * carry no session, so no session can change them. recent.json keeps the last 20, across restarts.
+   * Throws (the tool's result) for anything else, before anything is asked or changed.
+   */
+  #ownRecent(sid: string, t: Target, messageId: number, action: 'edit' | 'delete'): SentRecord {
+    const [refused, done] = action === 'edit' ? ['Not edited', 'edited'] : ['Not deleted', 'deleted']
+    const rec = this.#recent.find(r => r.chatId === t.peer.id && r.messageId === messageId)
+    if (!rec?.sessionId) {
+      throw new Error(`${refused}: message #${messageId} in ${t.label} is not one a Claude session sent there recently. Only a session's own recent messages can be ${done}, never the user's, the pager's or an away reply.`)
+    }
+    if (rec.sessionId !== sid) {
+      throw new Error(`${refused}: message #${messageId} in ${t.label} was sent by another session (${rec.sessionLabel ?? 'unknown'}). Only the session that sent a message can ${action} it.`)
+    }
+    return rec
+  }
+
+  /**
+   * Where a send would wait for approval, an edit or delete waits too, in the same places (the menu
+   * bar, the Claude Code dialog, or the user's word in chat). It is never a first message, so
+   * approving it never puts the chat on a list.
+   */
+  #askToChange(
+    sid: string,
+    t: Target,
+    reason: string,
+    change: { action: 'edit' | 'delete'; messageId: number; text: string; previousText?: string; parseMode: 'plain' | 'markdown' | 'html' },
+  ): ToolResult {
+    const config = this.d.store.get()
+    const uiActive = this.uiActive()
+    const nickname = t.nickname ?? nicknameFor(config, t.peer.id) ?? null
+    const pending = this.d.approvals.create({
+      ...change,
+      peer: t.peer,
+      firstTime: false,
+      askedInUi: uiActive,
+      nickname,
+      suggestedNickname: nickname ?? suggestNickname(config, t.peer),
+      sessionId: sid,
+      sessionLabel: this.d.hub.label(sid),
+      chatId: t.peer.id,
+      chatLabel: t.label,
+      chatDetail: fmtPeer(t.peer),
+      username: t.peer.username,
+      reason,
+    })
+    this.d.log?.(`${change.action} asked: ${changeLogLine(pending)}, waiting for approval (${pending.id})`)
+    const edit = change.action === 'edit'
+    return {
+      text: [
+        `Not ${edit ? 'edited' : 'deleted'} yet: needs the user's approval (${reason}). Approval id: ${pending.id}`,
+        `In: ${t.label} (${pending.chatDetail}), message #${change.messageId}`,
+        ...(edit ? ['Now:', change.previousText ?? '', '', 'New:', change.text] : ['Message to delete for everyone:', change.text]),
+        '',
+        uiActive
+          ? 'It is waiting in the menu bar for the user to approve or deny. Only the user can approve it there: do not call telegram_confirm_send for it.'
+          : `Show the user this exact ${edit ? 'change' : 'message and that it will be deleted'}. Only if they say yes, call telegram_confirm_send with the approval id; otherwise telegram_cancel_send.`,
+      ].join('\n'),
+      approval: {
+        id: pending.id,
+        action: change.action,
+        messageId: change.messageId,
+        ...(edit ? { previousText: change.previousText } : {}),
+        to: t.label,
+        text: change.text,
+        reason,
+        uiActive,
+        firstTime: false,
+        nickname,
+        suggestedNickname: pending.suggestedNickname,
+      },
+    }
+  }
+
+  /** An approved edit or delete. The rules are checked again: a chat blocked while it waited is refused. */
+  async #approvedChange(item: PendingSend, approve: boolean, via: 'menubar' | 'dialog' | 'chat'): Promise<ToolResult> {
+    const action = item.action === 'edit' ? 'edit' : 'delete'
+    const done = action === 'edit' ? 'edited' : 'deleted'
+    const messageId = item.messageId!
+    if (!approve) {
+      this.d.log?.(`${action} declined ${VIA_TEXT[via]}: ${changeLogLine(item)}`)
+      return { text: `Declined ${VIA_TEXT[via]}: message #${messageId} in ${item.chatLabel} was not ${done}.` }
+    }
+    const decision = decideSend(this.d.store.get(), { id: item.chatId, username: item.username }, { isWatching: false })
+    if (decision.action === 'block') {
+      this.d.log?.(`${action} refused after approval (${decision.reason}): ${changeLogLine(item)}`)
+      return fail(`Not ${done} in ${item.chatLabel}: ${decision.reason}.`)
+    }
+    try {
+      if (action === 'edit') await this.#applyEdit(item.sessionLabel, item.chatId, messageId, item.text, item.parseMode)
+      else await this.#applyDelete(item.chatId, messageId)
+    } catch (e) {
+      this.d.log?.(`${action} failed after approval: ${changeLogLine(item)}: ${errText(e)}`)
+      return fail(`Approved ${VIA_TEXT[via]}, but message #${messageId} in ${item.chatLabel} could not be ${done}: ${errText(e)}`)
+    }
+    this.d.log?.(`${action}: ${changeLogLine(item)}, approved ${VIA_TEXT[via]}`)
+    return { text: `Approved ${VIA_TEXT[via]}. ${action === 'edit' ? 'Edited' : 'Deleted'} message #${messageId} in ${item.chatLabel}.` }
+  }
+
+  /**
+   * Recently sent shows the new text and says who edited it when, keeping the text as first sent,
+   * so an edit is never mistaken for what went out.
+   */
+  async #applyEdit(by: string, chatId: number, messageId: number, text: string, parseMode: 'plain' | 'markdown' | 'html'): Promise<MessageInfo> {
+    const edited = await this.d.tg.editMessage(chatId, messageId, text, { parseMode })
+    const at = new Date().toISOString()
+    this.#recent = this.#recent.map(r =>
+      r.chatId === chatId && r.messageId === messageId ? { ...r, text, edited: { at, by, original: r.edited?.original ?? r.text } } : r,
+    )
+    this.#saveRecent()
+    return edited
+  }
+
+  /** It is gone from the chat, so it leaves Recently sent too; daemon.log keeps a line for it. */
+  async #applyDelete(chatId: number, messageId: number): Promise<void> {
+    await this.d.tg.deleteMessage(chatId, messageId)
+    this.#recent = this.#recent.filter(r => !(r.chatId === chatId && r.messageId === messageId))
+    this.#ownSent.delete(`${chatId}:${messageId}`)
+    this.#saveRecent()
   }
 
   // ---- delivery hint -------------------------------------------------------------------
@@ -901,74 +1035,46 @@ export class Service {
     telegram_edit_message: async (sid, p) => {
       const config = this.d.store.get()
       const t = await this.#resolve(p.chat, true)
-      // Only a message this very session wrote: its own send, or a draft of its that was approved.
-      // The pager's replies, away replies and the Page button (the user's own words) carry no
-      // session, so no session can rewrite them. recent.json keeps the last 20, across restarts.
-      const rec = this.#recent.find(r => r.chatId === t.peer.id && r.messageId === p.messageId)
-      if (!rec?.sessionId) {
-        return fail(`Not edited: message #${p.messageId} in ${t.label} is not one a Claude session sent there recently. Only a session's own recent messages can be edited, never the user's, the pager's or an away reply.`)
-      }
-      if (rec.sessionId !== sid) {
-        return fail(`Not edited: message #${p.messageId} in ${t.label} was sent by another session (${rec.sessionLabel ?? 'unknown'}). Only the session that sent a message can edit it.`)
-      }
+      const rec = this.#ownRecent(sid, t, p.messageId, 'edit')
       if (rec.kind !== 'text') {
         return fail(`Not edited: message #${p.messageId} in ${t.label} is a ${rec.kind ?? 'message of unknown kind'}. Only text messages can be edited.`)
       }
       if (looksLikeReplyCommand(visibleText(p.text, p.parseMode))) return fail('Not edited: a message starting with /reply would start a takeover. Reword it.')
-      // The chat sees the new text, so it needs the same yes as a send. There is no approval step
-      // for an edit, so anything but an outright "send" is refused.
+      // The chat sees the new text, so it needs the same yes as a send: where a send would wait for
+      // approval, so does the edit.
       const decision = decideSend(config, t.peer, {
         isWatching: this.d.hub.isWatching(sid, t.peer.id),
         takenOver: this.d.hub.isTakenOverBy(sid, t.peer.id),
       })
       if (decision.action === 'block') return fail(`Not edited in ${t.label}: ${decision.reason}.`)
-      if (decision.action !== 'send') {
-        return fail(`Not edited in ${t.label}: ${decision.reason}. An edit changes what the chat already sees, so it only works where sending needs no approval. Send a new message instead.`)
-      }
       const text = withFooter(p.text, config.footer)
-      const edited = await this.d.tg.editMessage(t.peer.id, p.messageId, text, { parseMode: p.parseMode })
-      // Recently sent keeps the text as first sent and says who edited it when, so an edit is never
-      // mistaken for what went out; daemon.log has a line for each one.
+      if (decision.action === 'approve') {
+        return this.#askToChange(sid, t, decision.reason, { action: 'edit', messageId: p.messageId, previousText: rec.text, text, parseMode: p.parseMode })
+      }
       const by = this.d.hub.label(sid)
-      const at = new Date().toISOString()
-      this.#recent = this.#recent.map(r =>
-        r.chatId === t.peer.id && r.messageId === p.messageId ? { ...r, text, edited: { at, by, original: r.edited?.original ?? r.text } } : r,
-      )
-      this.#saveRecent()
-      this.d.log?.(`edit: message #${p.messageId} in ${t.label} (${t.peer.id}) by ${by ?? sid}`)
+      const edited = await this.#applyEdit(by, t.peer.id, p.messageId, text, p.parseMode)
+      this.d.log?.(`edit: message #${p.messageId} in ${t.label} (${t.peer.id}) by ${by}`)
       return { text: `Edited message #${edited.id} in ${t.label}. Allowed because ${decision.reason}.` }
     },
 
     telegram_delete_message: async (sid, p) => {
       const config = this.d.store.get()
       const t = await this.#resolve(p.chat, true)
-      // Same ownership rule as an edit: only a message this very session wrote. The pager's replies,
-      // away replies and the Page button carry no session, so no session can take them back.
-      const rec = this.#recent.find(r => r.chatId === t.peer.id && r.messageId === p.messageId)
-      if (!rec?.sessionId) {
-        return fail(`Not deleted: message #${p.messageId} in ${t.label} is not one a Claude session sent there recently. Only a session's own recent messages can be deleted, never the user's, the pager's or an away reply.`)
-      }
-      if (rec.sessionId !== sid) {
-        return fail(`Not deleted: message #${p.messageId} in ${t.label} was sent by another session (${rec.sessionLabel ?? 'unknown'}). Only the session that sent a message can delete it.`)
-      }
-      // Deleting changes what the chat sees and has no approval step, so, as with an edit, anything
-      // but an outright "send" is refused. A file follows the file rule: in a chat this session is
-      // watching (or took over), sending one needs approval, so deleting one is refused there too.
+      const rec = this.#ownRecent(sid, t, p.messageId, 'delete')
+      // Deleting changes what the chat sees, so, as with an edit, it needs the same yes as a send.
+      // A file follows the file rule: in a chat this session is watching (or took over), sending
+      // one needs approval, so deleting one does too.
       const decision = decideSend(config, t.peer, {
         isWatching: this.d.hub.isWatching(sid, t.peer.id),
         file: rec.kind === 'file',
         takenOver: this.d.hub.isTakenOverBy(sid, t.peer.id),
       })
       if (decision.action === 'block') return fail(`Not deleted in ${t.label}: ${decision.reason}.`)
-      if (decision.action !== 'send') {
-        return fail(`Not deleted in ${t.label}: ${decision.reason}. Deleting changes what the chat already sees, so it only works where sending needs no approval.`)
+      if (decision.action === 'approve') {
+        return this.#askToChange(sid, t, decision.reason, { action: 'delete', messageId: p.messageId, text: rec.text, parseMode: 'plain' })
       }
-      await this.d.tg.deleteMessage(t.peer.id, p.messageId)
-      // It is gone from the chat, so it leaves Recently sent too; daemon.log keeps a line for it.
-      this.#recent = this.#recent.filter(r => !(r.chatId === t.peer.id && r.messageId === p.messageId))
-      this.#ownSent.delete(`${t.peer.id}:${p.messageId}`)
-      this.#saveRecent()
-      this.d.log?.(`delete: message #${p.messageId} in ${t.label} (${t.peer.id}) by ${this.d.hub.label(sid) ?? sid}`)
+      await this.#applyDelete(t.peer.id, p.messageId)
+      this.d.log?.(`delete: message #${p.messageId} in ${t.label} (${t.peer.id}) by ${this.d.hub.label(sid)}`)
       return { text: `Deleted message #${p.messageId} in ${t.label}. Allowed because ${decision.reason}.` }
     },
 
@@ -1165,6 +1271,11 @@ export class Service {
       return { text: `Marked ${t.label} as read.` }
     },
   }
+}
+
+/** "message #12 in Team QA [qa] (-100…) by api · pid 4121", for daemon.log. */
+function changeLogLine(item: PendingSend): string {
+  return `message #${item.messageId} in ${item.chatLabel} (${item.chatId}) by ${item.sessionLabel}`
 }
 
 function uiPage(p: Page): UiPage {

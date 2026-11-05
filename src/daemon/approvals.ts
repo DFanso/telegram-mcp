@@ -1,10 +1,15 @@
 import type { OutgoingFile } from '../shared/media'
-import type { PeerInfo, ToolResult } from '../shared/protocol'
+import type { ApprovalAction, PeerInfo, ToolResult } from '../shared/protocol'
 import type { StickerRef } from './telegram'
 import { newId } from './sessions'
 
 export interface PendingSend {
   id: string
+  /** Absent means a send. An edit or delete is of a message this session sent (messageId). */
+  action?: ApprovalAction
+  messageId?: number
+  /** An edit: the text the chat sees now. `text` is the new text; for a delete, the message to remove. */
+  previousText?: string
   sessionId: string
   sessionLabel: string
   chatId: number
@@ -120,10 +125,18 @@ export class Approvals {
     for (const [id, item] of this.#items) {
       if (now - item.createdAt <= this.ttlMs) continue
       this.#items.delete(id)
-      this.settle(id, {
-        approved: false,
-        result: { text: `Nobody approved the message to ${item.chatLabel} within ${this.ttlMs / 60_000} minutes. Nothing was sent.`, isError: true },
-      })
+      this.settle(id, { approved: false, result: { text: expiredText(item, this.ttlMs / 60_000), isError: true } })
     }
+  }
+}
+
+function expiredText(item: PendingSend, minutes: number): string {
+  switch (item.action ?? 'send') {
+    case 'edit':
+      return `Nobody approved the edit of message #${item.messageId} in ${item.chatLabel} within ${minutes} minutes. It was not edited.`
+    case 'delete':
+      return `Nobody approved deleting message #${item.messageId} in ${item.chatLabel} within ${minutes} minutes. It was not deleted.`
+    case 'send':
+      return `Nobody approved the message to ${item.chatLabel} within ${minutes} minutes. Nothing was sent.`
   }
 }

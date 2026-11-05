@@ -92,7 +92,7 @@ export const TOOLS = {
   },
   telegram_edit_message: {
     description:
-      'Edit the text of a text message this session sent recently (its telegram_send_message, a /reply answer, or a draft of its the user approved; the message id is in the send result). Only works where sending needs no approval (auto-send, a watched autoReply chat, or a /reply takeover), because the chat sees the new text. It cannot edit another session\'s messages, messages the user typed (including the Page button\'s), the pager\'s or away replies, other people\'s messages, files or stickers. The footer is added again, and the menu bar marks the message as edited. Telegram only allows edits for 48 hours.',
+      'Edit the text of a text message this session sent recently (its telegram_send_message, a /reply answer, or a draft of its the user approved; the message id is in the send result). The chat sees the new text, so it follows the sending rules: where sending is automatic (auto-send, a watched autoReply chat, or a /reply takeover) it is edited at once; where sending needs approval, the edit waits for the user to approve it the same way (the result shows the old and new text and an approval id); blocked chats are refused. It cannot edit another session\'s messages, messages the user typed (including the Page button\'s), the pager\'s or away replies, other people\'s messages, files or stickers. The footer is added again, and the menu bar marks the message as edited. Telegram only allows edits for 48 hours.',
     input: z.object({
       chat: chatRef,
       messageId: z.number().int().describe('Id of the message to edit.'),
@@ -102,7 +102,7 @@ export const TOOLS = {
   },
   telegram_delete_message: {
     description:
-      'Delete a message this session sent recently, for everyone in the chat (its telegram_send_message, send_file or send_sticker, a /reply answer, or a draft of its the user approved; the message id is in the send result). Only works where sending needs no approval (auto-send, a watched autoReply chat, or a /reply takeover), because deleting changes what the chat sees. It cannot delete another session\'s messages, messages the user typed (including the Page button\'s), the pager\'s or away replies, or other people\'s messages. It cannot be undone, so use it only to take back something that should not be there, e.g. a wrong or private detail; for a small fix use telegram_edit_message. Each delete is logged.',
+      'Delete a message this session sent recently, for everyone in the chat (its telegram_send_message, send_file or send_sticker, a /reply answer, or a draft of its the user approved; the message id is in the send result). Deleting changes what the chat sees, so it follows the sending rules: where sending is automatic (auto-send, a watched autoReply chat, or a /reply takeover) it is deleted at once; where sending needs approval, the delete waits for the user to approve it the same way; blocked chats are refused. It cannot delete another session\'s messages, messages the user typed (including the Page button\'s), the pager\'s or away replies, or other people\'s messages. It cannot be undone, so use it only to take back something that should not be there, e.g. a wrong or private detail; for a small fix use telegram_edit_message. Each delete is logged.',
     input: z.object({
       chat: chatRef,
       messageId: z.number().int().describe('Id of the message to delete.'),
@@ -148,14 +148,14 @@ export const TOOLS = {
   },
   telegram_confirm_send: {
     description:
-      'Send a message that is waiting for approval in chat. Only call this after the user has explicitly said yes to that exact message and recipient in this conversation. Refused for messages waiting in the menu bar app, which only the user can approve. A first message to a chat saves it as "ask every time"; only the user can make a chat "always allow".',
+      'Send a message (or make an edit or delete) that is waiting for approval in chat. Only call this after the user has explicitly said yes to that exact message and recipient (or that exact edit or delete) in this conversation. Refused for messages waiting in the menu bar app, which only the user can approve. A first message to a chat saves it as "ask every time"; only the user can make a chat "always allow".',
     input: z.object({
       approvalId: z.string().min(1),
       nickname: z.string().optional().describe('Nickname to save the chat as, if the user gave one.'),
     }),
   },
   telegram_cancel_send: {
-    description: 'Drop a message that is waiting for approval.',
+    description: 'Drop a message, edit or delete that is waiting for approval.',
     input: z.object({ approvalId: z.string().min(1) }),
   },
   telegram_save_chat: {
