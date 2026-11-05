@@ -17,7 +17,19 @@ public sealed record UiApproval(
     string Id, string To, string Detail, string Text, string Reason, string SessionLabel,
     DateTimeOffset CreatedAt, DateTimeOffset ExpiresAt, bool FirstTime, string? Nickname, string SuggestedNickname,
     /// <summary>The chat it goes to, for its avatar. Null from a daemon older than avatars.</summary>
-    long? ChatId = null);
+    long? ChatId = null,
+    /// <summary>"send" | "edit" | "delete". Null from a daemon older than edit and delete approvals: a send.</summary>
+    string? Action = null,
+    /// <summary>The message an edit or delete is for.</summary>
+    long? MessageId = null,
+    /// <summary>An edit: the text the chat sees now (Text is the new text). Null for a send or a delete (Text is the message to remove).</summary>
+    string? PreviousText = null)
+{
+    /// <summary>An edit of a message Claude sent, where sending needs approval.</summary>
+    public bool IsEdit => Action == "edit";
+    /// <summary>A delete of a message Claude sent, for everyone, where sending needs approval.</summary>
+    public bool IsDelete => Action == "delete";
+}
 
 public sealed record SentRecord(
     DateTimeOffset At, long ChatId, string ChatLabel, string Text, long MessageId, string Via, string? SessionLabel,

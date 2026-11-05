@@ -20,7 +20,20 @@ public static class ApprovalNotices
         return (waiting.Where(a => !shown.Contains(a.Id)).ToList(), shown.Where(id => !ids.Contains(id)).ToList());
     }
 
-    public static Notice Content(UiApproval a) => new(
+    public static Notice Content(UiApproval a) =>
+        a.IsEdit ? new(
+            "Edit Telegram message?",
+            $"Message #{a.MessageId} in {a.To}",
+            $"Now: {a.PreviousText}\nWill say: {a.Text}",
+            [new("Edit", NoticeAction.Approve), new("Deny", NoticeAction.Deny)])
+        : a.IsDelete ? new(
+            "Delete Telegram message for everyone?",
+            $"Message #{a.MessageId} in {a.To}",
+            a.Text,
+            [new("Delete", NoticeAction.Approve), new("Keep", NoticeAction.Deny)])
+        : SendContent(a);
+
+    static Notice SendContent(UiApproval a) => new(
         a.FirstTime ? $"First message to {a.To}: approve?" : "Approve Telegram message?",
         $"To {a.To} ({a.Detail})",
         a.Text,
