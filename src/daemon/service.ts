@@ -17,6 +17,7 @@ import {
 } from '../shared/config'
 import { listContacts, pageTarget, renameContact, setAutoReply, setPageFrom, setSendMode } from '../shared/contacts'
 import { applyAwayPatch, awaySummary } from '../shared/away'
+import { applyFooterPatch, footerOn, footerSummary, footerText } from '../shared/footer'
 import { decideSend, policyLabel, withFooter } from '../shared/policy'
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
@@ -604,6 +605,24 @@ export class Service {
     }
   }
 
+  /** The tray's footer edit: validates (a rejected patch never touches the file), then saves to the rules file. */
+  editFooter(patch: unknown): { ok: boolean; text: string } {
+    const r = applyFooterPatch(this.d.store.get(), patch)
+    if (!r.ok) return { ok: false, text: r.error }
+    try {
+      const saved = this.d.store.update(c => {
+        const fresh = applyFooterPatch(c, patch)
+        if (!fresh.ok) throw new Error(fresh.error)
+        c.footer = fresh.footer
+        if (fresh.savedFooter === undefined) delete c.savedFooter
+        else c.savedFooter = fresh.savedFooter
+      })
+      return { ok: true, text: footerOn(saved) ? 'Saved. The footer is on.' : 'Saved. The footer is off.' }
+    } catch (e) {
+      return { ok: false, text: errText(e) }
+    }
+  }
+
   /**
    * The chats the apps show an avatar for: saved contacts, drafts waiting, watched chats, recent
    * sends and pages. GET /ui/avatars only fetches photos for these, so nothing else reaches Telegram.
@@ -626,6 +645,8 @@ export class Service {
       telegram: this.d.tg.state(),
       configError: this.d.store.error(),
       footer: config.footer,
+      footerText: footerText(config),
+      footerOn: footerOn(config),
       defaultPolicy: config.defaultPolicy,
       contacts: listContacts(config, this.d.tg.state().me?.id),
       pages: (this.d.pager?.active() ?? []).map(uiPage),
@@ -939,7 +960,7 @@ export class Service {
         return String(ref)
       }
       const out = ['Guides:', ...(c.guides.length ? c.guides.map(g => `- ${g}`) : ['- (none)'])]
-      out.push('', `Footer added to every message: ${c.footer.trim() ? JSON.stringify(c.footer) : '(none)'}`)
+      out.push('', `Footer added to every message: ${footerSummary(c)}`)
       out.push(`Chats in no list: ${c.defaultPolicy === 'block' ? 'blocked' : 'need approval'}`)
       out.push(`Away auto-reply: ${this.d.away?.summary() ?? awaySummary(c.away, new Date())}`)
       for (const list of RULE_LISTS) {

@@ -61,6 +61,7 @@ export function eventsKey(token: string, sessionId: string): string {
  *                                (the Contacts page: a human editing the rules)
  *   POST /ui/contacts/page       {"nickname": "…", "reason"?: "…"}  the Page button: "/page <reason>" to that person
  *   POST /ui/pages/:id           {"action": "ack" | "snooze", "minutes"?: 15 | 60, "from"?: "menubar" | "tray"}
+ *   POST /ui/footer              {"footer"?, "enabled"?}  the footer added to every message (off keeps its text)
  *   POST /ui/away                {"enabled"?, "quietMinutes"?, "schedules"?}  the away auto-reply settings ("schedules" replaces
  *                                the whole list; "from", "until" and "message" still change the first schedule)
  *   POST /ui/pages/test          ring a test page (tgmcp page test)
@@ -139,6 +140,14 @@ export function startServer(o: ServerOptions) {
           const body = await req.json().catch(() => ({}))
           const r = o.service.editAway(body)
           if (r.ok) o.log(`menu bar away: ${r.text}`)
+          return Response.json(r, { status: r.ok ? 200 : 400 })
+        })()
+      }
+      if (url.pathname === '/ui/footer' && req.method === 'POST') {
+        return (async () => {
+          const body = await req.json().catch(() => ({}))
+          const r = o.service.editFooter(body)
+          if (r.ok) o.log(`menu bar footer: ${r.text}`)
           return Response.json(r, { status: r.ok ? 200 : 400 })
         })()
       }

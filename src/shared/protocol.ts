@@ -207,7 +207,11 @@ export interface UiContact {
 export interface UiState {
   telegram: TelegramState
   configError: string | null
+  /** Added to every message; '' while it's off. */
   footer: string
+  /** The footer's text even while it's off, for the tray's editor. */
+  footerText: string
+  footerOn: boolean
   defaultPolicy: 'approve' | 'block'
   approvals: UiApproval[]
   sessions: UiSession[]

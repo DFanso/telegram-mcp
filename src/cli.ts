@@ -7,6 +7,7 @@ import { FileSecretStore, loadCredentials, openSecretStore, readToken, saveCrede
 import { ConfigStore, type Config } from './shared/config'
 import { applyAwayPatch, awaySummary, firstName, parseAwayArgs, renderAwayMessage, scheduleSummary } from './shared/away'
 import { readDaemonReply } from './shared/daemon-reply'
+import { applyFooterPatch, footerSummary, parseFooterArgs } from './shared/footer'
 import { withFooter } from './shared/policy'
 import { VERSION, isCompiled, selfCommand, shellJoin } from './shared/runtime'
 
@@ -26,6 +27,7 @@ const HELP = `tgmcp ${VERSION}: always-on Telegram daemon + per-session MCP brid
   tgmcp page setup    connect your own pager bot (from @BotFather) so pages reach your phone
   tgmcp page test     ring a test page: hear the alarm, check the volume, try Ack
   tgmcp away          show the away schedules; tgmcp away on|off|quiet <minutes>, or hours HH:MM HH:MM|message <text> for the first schedule
+  tgmcp footer        show the footer added to every message; tgmcp footer on|off|<text>
   tgmcp call <tool> [json]   call a tool as a one-off session, e.g. tgmcp call telegram_get_rules
   tgmcp mcp-add       print the command that registers the MCP server with Claude Code
   tgmcp daemon        run the daemon in the foreground
@@ -105,6 +107,41 @@ async function away(args: string[]) {
     console.log(withFooter(renderAwayMessage(s.message, name), config.footer).replace(/^/gm, '  '))
   }
   if (a.schedules.length === 0) console.log('No schedules: add one in the tray or menu bar app, or in config.json.')
+}
+
+function footer(args: string[]) {
+  const parsed = parseFooterArgs(args)
+  if (parsed.kind === 'error') {
+    console.log(parsed.usage)
+    process.exitCode = 1
+    return
+  }
+  const store = new ConfigStore(getPaths().config)
+  try {
+    if (parsed.kind === 'patch') {
+      const checked = applyFooterPatch(store.get(), parsed.patch)
+      if (!checked.ok) {
+        console.log(checked.error)
+        process.exitCode = 1
+        return
+      }
+      store.update(c => {
+        const r = applyFooterPatch(c, parsed.patch)
+        if (!r.ok) throw new Error(r.error)
+        c.footer = r.footer
+        if (r.savedFooter === undefined) delete c.savedFooter
+        else c.savedFooter = r.savedFooter
+      })
+      console.log('Saved.')
+    } else if (store.error()) {
+      throw new Error(store.error()!)
+    }
+  } catch (e) {
+    console.log(e instanceof Error ? e.message : String(e))
+    process.exitCode = 1
+    return
+  }
+  console.log(`Footer: ${footerSummary(store.get())}`)
 }
 
 /** install / uninstall / restart run the daemon under launchd. */
@@ -376,6 +413,9 @@ switch (cmd) {
   }
   case 'away':
     await away(rest)
+    break
+  case 'footer':
+    footer(rest)
     break
   case 'mcp-add':
     mcpAdd()
