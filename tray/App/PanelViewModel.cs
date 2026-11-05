@@ -43,6 +43,8 @@ public sealed class PanelViewModel : Observable
     bool _contactsPage;
     bool _awayPage, _awayLoaded, _awaySaving;
     bool _awayEnabled;
+    /// <summary>The value Home's away switch is saving, until a poll after it shows what was saved.</summary>
+    bool? _awayPending;
     string _awayFrom = "", _awayUntil = "", _awayMessage = "", _awayQuiet = "";
     /// <summary>What the daemon has saved as far as this page knows: the fields as loaded, then as last sent. Save diffs against it.</summary>
     (bool Enabled, string From, string Until, string Message, int Quiet)? _awaySaved;
@@ -77,6 +79,7 @@ public sealed class PanelViewModel : Observable
         });
         SetAwayEnabled = new Command(p => _ = ToggleAwayAsync(p as string == "on"), _ => !_awaySaving && AwayShown);
         SaveAway = new Command(_ => _ = SaveAwayAsync(), _ => !_awaySaving && AwayError is null && AwayShown);
+        ToggleAwayQuick = new Command(_ => _ = QuickAwayAsync(!AwayOn));
         ClearSearch = new Command(_ => Search = "");
         OpenRules = new Command(_ => OpenFile("config.json"));
         OpenLog = new Command(_ => OpenFile("daemon.log"));
@@ -124,6 +127,7 @@ public sealed class PanelViewModel : Observable
             Raise(nameof(WaitingShown));
             Raise(nameof(ListeningShown));
             Raise(nameof(SentShown));
+            Raise(nameof(AutoReplyShown));
             SyncTiles();
         }
     }
@@ -131,6 +135,7 @@ public sealed class PanelViewModel : Observable
     public bool WaitingShown => _section == HomeSection.Waiting;
     public bool ListeningShown => _section == HomeSection.Listening;
     public bool SentShown => _section == HomeSection.Sent;
+    public bool AutoReplyShown => _section == HomeSection.AutoReply;
 
     /// <summary>Home on Waiting: from the Contacts page's "Review" and from a draft's notification.</summary>
     public void ShowWaiting()
@@ -208,6 +213,11 @@ public sealed class PanelViewModel : Observable
     public string? AwayPlaceholder => ShowContent && State!.Away is null ? Away.OlderDaemon : null;
 
     public string? AwayStatus => State?.Away is { } a ? Away.Status(a) : null;
+
+    /// <summary>Home → Auto-reply: the away switch, showing the value being saved until a poll brings it back.</summary>
+    public bool AwayOn => _awayPending ?? State?.Away?.Enabled ?? false;
+    public bool AwayQuickIdle => !_awaySaving && State?.Away is not null;
+    public string AwayQuickTip => AwayOn ? "Turn the away reply off" : "Turn the away reply on, for the hours set on the Away tab";
 
     /// <summary>"Away until 09:00" on the main page while replies can go out.</summary>
     public string? AwayBadge => ShowContent ? Away.Badge(State?.Away) : null;
@@ -307,6 +317,52 @@ public sealed class PanelViewModel : Observable
         else AwayEnabled = before;
         ShowFlash(r.Text, r.Ok);
         await PollAsync();
+    }
+
+    /// <summary>
+    /// Home's away switch: on or off at once, as the Away tab's On / Off does, without opening it. Hours
+    /// and message stay as saved.
+    /// </summary>
+    async Task QuickAwayAsync(bool on)
+    {
+        if (_awaySaving || State?.Away is null) return;
+        _awayPending = on;
+        _awaySaving = true;
+        RaiseAwayQuick();
+        CommandManager.InvalidateRequerySuggested();
+        ActionResult r;
+        try
+        {
+            r = await _api.SaveAwayAsync(new AwayChange(Enabled: on));
+        }
+        finally
+        {
+            _awaySaving = false;
+            CommandManager.InvalidateRequerySuggested();
+        }
+        if (r.Ok)
+        {
+            // The Away tab, if it was loaded, follows without a reload that would drop typing there.
+            if (_awaySaved is { } saved) _awaySaved = saved with { Enabled = on };
+            if (_awayLoaded) AwayEnabled = on;
+        }
+        ShowFlash(r.Text, r.Ok);
+        try
+        {
+            await PollFreshAsync();
+        }
+        finally
+        {
+            _awayPending = null;
+            RaiseAwayQuick();
+        }
+    }
+
+    void RaiseAwayQuick()
+    {
+        Raise(nameof(AwayOn));
+        Raise(nameof(AwayQuickIdle));
+        Raise(nameof(AwayQuickTip));
     }
 
     /// <summary>Sends only what differs from what was loaded or last saved. After a save the fields stay as typed (trimmed).</summary>
@@ -424,6 +480,8 @@ public sealed class PanelViewModel : Observable
     public ICommand ShowAway { get; }
     public ICommand SetAwayEnabled { get; }
     public ICommand SaveAway { get; }
+    /// <summary>Home → Auto-reply: the away switch.</summary>
+    public ICommand ToggleAwayQuick { get; }
     public ICommand ShowMain { get; }
     /// <summary>The Contacts page's "N drafts waiting · Review": Home, on Waiting.</summary>
     public ICommand ReviewWaiting { get; }
@@ -649,6 +707,7 @@ public sealed class PanelViewModel : Observable
                      nameof(Header), nameof(ShowContent), nameof(ShownProblem), nameof(ConfigError), nameof(ApprovalCount),
                      nameof(NoApprovals), nameof(NoListening), nameof(NoRecent), nameof(ContactsSummary), nameof(WaitingBanner),
                      nameof(AwayShown), nameof(AwayPlaceholder), nameof(AwayStatus), nameof(AwayBadge), nameof(AwayError), nameof(AwayPreview),
+                     nameof(AwayOn), nameof(AwayQuickIdle), nameof(AwayQuickTip),
                  })
         {
             Raise(name);
