@@ -78,6 +78,7 @@ export async function createDaemon(o: DaemonOptions) {
     hub,
     pages: () => pager.active(),
     record: r => service.recordSent(r),
+    send: (chatId, text) => service.sendAway(chatId, text),
     statePath: join(o.paths.home, 'away.json'),
     log,
   })
@@ -119,6 +120,11 @@ export async function createDaemon(o: DaemonOptions) {
       // The message's own time: a catch-up after sleep replays old sends, which mustn't count as just now.
       const sentAt = Date.parse(msg.date)
       away.noteOutgoing(msg.chatId, Number.isNaN(sentAt) ? Date.now() : sentAt)
+      // Typed by you on a phone or desktop (not Claude, the pager or an away reply): you're back, so
+      // replies still waiting out a schedule's delay are dropped. A catch-up replay is old news.
+      if (!Number.isNaN(sentAt) && Date.now() - sentAt < PAGE_MAX_AGE_MS) {
+        void service.isOwnSend(msg).then(own => own || away.notePresence(sentAt))
+      }
       service
         .handleOwnMessage(msg)
         .then(cmd => cmd && log(`/reply in ${msg.chatId}: ${hub.takeoverOf(msg.chatId) ?? 'no session took it (or it ended)'}`))
@@ -151,6 +157,8 @@ export async function createDaemon(o: DaemonOptions) {
     const n = hub.dispatch(msg, m => describeMessage(store, m))
     if (n > 0) log(`message ${msg.chatId}:${msg.id} -> ${n} session(s)`)
   })
+  // Reading a chat anywhere means you're around: waiting away replies are dropped.
+  tg.onRead(() => away.notePresence())
   tg.start()
   bot?.start()
   const pageTimer = setInterval(() => void pager.tick(), o.pageTickMs ?? 5_000)
@@ -171,6 +179,7 @@ export async function createDaemon(o: DaemonOptions) {
     async stop() {
       clearInterval(timer)
       clearInterval(pageTimer)
+      away.stop()
       bot?.stop()
       server.stop(true)
       store.close()

@@ -30,7 +30,7 @@ describe('the away reply in the daemon', () => {
     tg.emit(LEO.id, 'hi')
     await settle()
     expect(tg.sent).toHaveLength(1)
-    expect(tg.sent[0]!.text).toContain('off the grid')
+    expect(tg.sent[0]!.text).toContain('Thanks for your message')
     expect(daemon.service.uiState().recent[0]!.via).toBe('away')
     expect(daemon.service.uiState().away).toMatchObject({ enabled: true, active: true })
     // Our own reply is not "you speaking": a second message the same night gets nothing more (R6),
@@ -77,7 +77,7 @@ describe('the away reply in the daemon', () => {
     const tg = new FakeTelegram().add(LEO, ANNA)
     const real = tg.sendText.bind(tg)
     tg.sendText = async (...a: Parameters<typeof real>) => {
-      if (a[1].includes('off the grid')) throw new Error('FLOOD_WAIT')
+      if (a[1].includes('Thanks for your message')) throw new Error('FLOOD_WAIT')
       return real(...a)
     }
     const { daemon } = await daemonAway(undefined, { rules: { autoReply: [ANNA.id] } }, tg)
@@ -94,6 +94,48 @@ describe('the away reply in the daemon', () => {
     expect(tg.sent.map(s => s.text)).toEqual(["Paging Me now. I'll tell you when they've seen it."])
     expect(daemon.hub.pending('s1')).toBe(2)
     await daemon.stop()
+  })
+  describe('a schedule that waits for you', () => {
+    const waitingAway = { enabled: true, schedules: [{ id: 'day', name: 'Daytime', from: hhmm(-HOUR), until: hhmm(HOUR), delaySeconds: 1, message: 'brb' }] }
+    const wait = () => new Promise(r => setTimeout(r, 1_200))
+
+    test('replies once the wait is over', async () => {
+      const { tg, daemon } = await daemonAway(waitingAway)
+      tg.emit(LEO.id, 'hi')
+      await settle()
+      expect(tg.sent).toEqual([])
+      expect(daemon.service.uiState().away.waiting).toBe(1)
+      await wait()
+      expect(tg.sent.map(s => s.text)).toEqual(['brb'])
+      await daemon.stop()
+    })
+
+    test('reading a chat on another device, or typing there, means no reply', async () => {
+      const { tg, daemon } = await daemonAway(waitingAway)
+      tg.emit(LEO.id, 'hi')
+      await settle()
+      tg.emitRead(LEO.id)
+      tg.emit(ANNA.id, 'hey')
+      await settle()
+      tg.emit(LEO.id, 'on my way', LEO.id, { outgoing: true })
+      await wait()
+      expect(tg.sent).toEqual([])
+      await daemon.stop()
+    })
+
+    test("Claude's sends and the away replies are not you", async () => {
+      const { tg, daemon } = await daemonAway(waitingAway)
+      tg.emit(LEO.id, 'hi')
+      await settle()
+      const own = await daemon.service.sendAway(ANNA.id, 'from the daemon')
+      tg.emit(ANNA.id, 'from the daemon', ANNA.id, { outgoing: true, id: own.id })
+      await wait()
+      expect(tg.sent.map(s => [s.chatId, s.text])).toEqual([
+        [ANNA.id, 'from the daemon'],
+        [LEO.id, 'brb'],
+      ])
+      await daemon.stop()
+    })
   })
 })
 
@@ -116,7 +158,7 @@ describe('tgmcp away', () => {
     expect(r.code).toBe(0)
     expect(r.out).toContain('Saved.')
     expect(r.out).toContain('  Back soon, Chamodh')
-    expect(r.out).not.toContain('off the grid')
+    expect(r.out).not.toContain('Thanks for your message')
     await daemon.stop()
   })
 

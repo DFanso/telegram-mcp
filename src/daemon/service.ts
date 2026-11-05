@@ -328,6 +328,23 @@ export class Service {
     return sending
   }
 
+  /**
+   * The away responder's send. Not you speaking (it must not start R7's quiet time), and marked as the
+   * daemon's own, so its echo never reads as you being back.
+   */
+  sendAway(chatId: number, text: string): Promise<MessageInfo> {
+    return this.#deliver(chatId, text, undefined, {}, undefined, false)
+  }
+
+  /**
+   * Was this outgoing message sent by the daemon (Claude, the pager, an away reply), rather than typed
+   * by you on a phone or desktop? Waits for sends still on the way, whose echo can beat their id.
+   */
+  async isOwnSend(msg: Pick<IncomingMessage, 'chatId' | 'id'>): Promise<boolean> {
+    await Promise.allSettled(this.#inflight.get(msg.chatId) ?? [])
+    return this.#ownSent.has(`${msg.chatId}:${msg.id}`)
+  }
+
   /** For the away responder, whose replies show in Recent like any other send. */
   recordSent(r: Omit<SentRecord, 'at'>): void {
     this.#record(r)

@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AwayResponder, type AwayDeps } from '../src/daemon/away'
-import { AWAY_MAX_PER_WINDOW } from '../src/shared/away'
+import { AWAY_MAX_PER_HOUR } from '../src/shared/away'
 import { parseConfig, type Config } from '../src/shared/config'
 import type { IncomingMessage, PeerInfo, SentRecord } from '../src/shared/protocol'
 import { ANNA, FakeTelegram, LEO, TEAM_QA } from './fake-telegram'
@@ -48,6 +48,8 @@ let records: Omit<SentRecord, 'at'>[]
 let hub: { handledLive: (id: number) => boolean; takeoverOf: (id: number) => string | null }
 let pages: { senderKey: string }[]
 let logs: string[]
+/** Waits started by the responder, fired by hand. */
+let timers: { fn: () => Promise<unknown>; ms: number; cancelled: boolean }[]
 
 const make = (extra: Partial<AwayDeps> = {}) =>
   new AwayResponder({
@@ -58,6 +60,11 @@ const make = (extra: Partial<AwayDeps> = {}) =>
     record: r => records.push(r),
     now: () => clock,
     log: m => logs.push(m),
+    setTimer: (fn, ms) => {
+      const t = { fn, ms, cancelled: false }
+      timers.push(t)
+      return { cancel: () => void (t.cancelled = true) }
+    },
     ...extra,
   })
 
@@ -86,7 +93,18 @@ beforeEach(() => {
   hub = { handledLive: () => false, takeoverOf: () => null }
   pages = []
   logs = []
+  timers = []
 })
+
+/** One schedule, as the tray saves it, with a wait. */
+const waiting = (over: object = {}) =>
+  cfg({
+    away: {
+      schedules: [
+        { id: 'day', name: 'Daytime', from: '08:00', until: '21:00', message: 'back soon', delaySeconds: 30, repeatMinutes: 60, ...over },
+      ],
+    },
+  })
 
 describe('AwayResponder', () => {
   test('replies once to a private message in the window', async () => {
@@ -95,7 +113,7 @@ describe('AwayResponder', () => {
     expect(tg.sent).toEqual([{ chatId: ANNA.id, text: 'Me is out 🔥\n\nF', opts: {} }])
     expect(records).toHaveLength(1)
     expect(records[0]).toMatchObject({ via: 'away', chatId: ANNA.id, sessionLabel: null, text: 'Me is out 🔥\n\nF' })
-    expect(logs).toContain(`away reply to ${ANNA.id}`)
+    expect(logs).toContain(`away reply (Away) to ${ANNA.id}`)
     clock = at(3, 21).getTime()
     expect(await r.onIncoming(msg(ANNA), false)).toBe('skipped')
     expect(tg.sent).toHaveLength(1)
@@ -119,7 +137,6 @@ describe('AwayResponder', () => {
     ['to self', () => msg({ ...ANNA, isSelf: true })],
     ['to outgoing messages', () => msg(ANNA, undefined, { outgoing: true })],
     ['to a blocked chat', () => { config = cfg({ blocked: [ANNA.id] }); return msg(ANNA) }],
-    ['to an Ask every time chat (requireApproval)', () => { config = cfg({ requireApproval: [ANNA.id] }); return msg(ANNA) }],
     ['to an unlisted chat when defaultPolicy is block', () => { config = cfg({ defaultPolicy: 'block' }); return msg(ANNA) }],
   ]
   for (const [name, build] of skipCases) {
@@ -129,6 +146,11 @@ describe('AwayResponder', () => {
       expect(tg.sent).toEqual([])
     })
   }
+
+  test('an Ask every time chat gets one too: the reply is your own text, there is nothing to approve', async () => {
+    config = cfg({ requireApproval: [ANNA.id] })
+    expect(await make().onIncoming(msg(ANNA), false)).toBe('sent')
+  })
 
   test('defaultPolicy block still lets an Always allow chat get a reply', async () => {
     config = cfg({ defaultPolicy: 'block', autoSend: [ANNA.id] })
@@ -143,24 +165,24 @@ describe('AwayResponder', () => {
     expect(await make().onIncoming(msg(ANNA, sentAt), false)).toBe('sent')
   })
 
-  test(`at most ${AWAY_MAX_PER_WINDOW} replies a night, logged once`, async () => {
+  test(`at most ${AWAY_MAX_PER_HOUR} replies an hour, logged once`, async () => {
     const r = make()
-    for (let i = 0; i < AWAY_MAX_PER_WINDOW; i++) expect(await r.onIncoming(msg(stranger(i)), false)).toBe('sent')
+    for (let i = 0; i < AWAY_MAX_PER_HOUR; i++) expect(await r.onIncoming(msg(stranger(i)), false)).toBe('sent')
     expect(await r.onIncoming(msg(stranger(100)), false)).toBe('skipped')
     expect(await r.onIncoming(msg(stranger(101)), false)).toBe('skipped')
-    expect(tg.sent).toHaveLength(AWAY_MAX_PER_WINDOW)
+    expect(tg.sent).toHaveLength(AWAY_MAX_PER_HOUR)
     expect(logs.filter(l => l.includes('limit'))).toHaveLength(1)
-    // The next night starts again.
-    clock = at(4, 20).getTime()
+    // An hour on, there's room again.
+    clock = at(3, 21, 1).getTime()
     expect(await r.onIncoming(msg(stranger(100)), false)).toBe('sent')
   })
 
-  test('the nightly limit survives a restart', async () => {
+  test('the hourly limit survives a restart', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'away-cap-'))
     try {
       const statePath = join(dir, 'away.json')
       const first = make({ statePath })
-      for (let i = 0; i < AWAY_MAX_PER_WINDOW; i++) await first.onIncoming(msg(stranger(i)), false)
+      for (let i = 0; i < AWAY_MAX_PER_HOUR; i++) await first.onIncoming(msg(stranger(i)), false)
       expect(await make({ statePath }).onIncoming(msg(stranger(100)), false)).toBe('skipped')
     } finally {
       rmSync(dir, { recursive: true, force: true })
@@ -319,10 +341,154 @@ describe('AwayResponder', () => {
   test('ui() and summary()', () => {
     const r = make()
     const ui = r.ui()
-    expect(ui).toMatchObject({ enabled: true, from: '18:00', until: '09:00', active: true, quietMinutes: 30, preview: 'Me is out 🔥\n\nF' })
+    expect(ui).toMatchObject({
+      enabled: true,
+      from: '18:00',
+      until: '09:00',
+      active: true,
+      quietMinutes: 30,
+      preview: 'Me is out 🔥\n\nF',
+      current: 'away',
+      currentUntil: at(4, 9).toISOString(),
+      waiting: 0,
+    })
+    expect(ui.schedules).toEqual([
+      {
+        id: 'away',
+        name: 'Away',
+        enabled: true,
+        from: '18:00',
+        until: '09:00',
+        days: [0, 1, 2, 3, 4, 5, 6],
+        startDate: null,
+        endDate: null,
+        delaySeconds: 0,
+        repeatMinutes: 0,
+        message: '{name} is out 🔥',
+        active: true,
+        preview: 'Me is out 🔥\n\nF',
+      },
+    ])
     expect(ui.nextChange).toBe(at(4, 9).toISOString())
-    expect(r.summary()).toBe('on, 18:00–09:00 (active now, until 09:00)')
+    expect(r.summary()).toBe('on, Away now (until 09:00, replies at once)')
     tg.phase = 'logged_out'
     expect(r.ui().preview).toBe('{name} is out 🔥\n\nF')
+  })
+})
+
+describe('waiting for you', () => {
+  beforeEach(() => {
+    config = waiting()
+    clock = at(3, 12).getTime()
+  })
+
+  /** Moves the clock past the wait and fires it. */
+  async function fire(i = 0) {
+    clock += timers[i]!.ms
+    return timers[i]!.fn()
+  }
+
+  test("replies after the wait when you don't show up", async () => {
+    const r = make()
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('waiting')
+    expect(timers).toHaveLength(1)
+    expect(timers[0]!.ms).toBe(30_000)
+    expect(tg.sent).toEqual([])
+    expect(r.ui().waiting).toBe(1)
+    expect(await fire()).toBe('sent')
+    expect(tg.sent).toEqual([{ chatId: ANNA.id, text: 'back soon\n\nF', opts: {} }])
+    expect(r.ui().waiting).toBe(0)
+  })
+
+  test('no reply when you read a chat or write during the wait', async () => {
+    const r = make()
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('waiting')
+    expect(await r.onIncoming(msg(LEO), false)).toBe('waiting')
+    clock += 10_000
+    r.notePresence()
+    expect(timers.map(t => t.cancelled)).toEqual([true, true])
+    expect(logs).toContain(`away: you're back, no away reply to ${ANNA.id}`)
+    expect(await fire(0)).toBe('skipped')
+    expect(tg.sent).toEqual([])
+    expect(r.ui().waiting).toBe(0)
+  })
+
+  test('being around before the message came in does not stop it', async () => {
+    const r = make()
+    r.notePresence(clock - 5_000)
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('waiting')
+    expect(timers[0]!.cancelled).toBe(false)
+    expect(await fire()).toBe('sent')
+  })
+
+  test('more messages during the wait share one reply', async () => {
+    const r = make()
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('waiting')
+    clock += 5_000
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('skipped')
+    expect(timers).toHaveLength(1)
+    clock -= 5_000
+    await fire()
+    expect(tg.sent).toHaveLength(1)
+  })
+
+  test('the rules are checked again when the wait is over', async () => {
+    const r = make()
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('waiting')
+    config = cfg({ away: { enabled: false } })
+    expect(await fire()).toBe('skipped')
+    expect(tg.sent).toEqual([])
+  })
+
+  test('a chat can get another reply after the repeat minutes', async () => {
+    const r = make()
+    await r.onIncoming(msg(ANNA), false)
+    await fire(0)
+    clock += 30 * 60_000
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('skipped')
+    clock += 31 * 60_000
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('waiting')
+    expect(await fire(1)).toBe('sent')
+    expect(tg.sent).toHaveLength(2)
+  })
+
+  test('the hand-over to a new schedule gets its own reply', async () => {
+    config = cfg({
+      away: {
+        schedules: [
+          { id: 'day', name: 'Daytime', from: '08:00', until: '21:00', message: 'back soon' },
+          { id: 'night', name: 'Night', from: '21:00', until: '08:00', message: 'tomorrow' },
+        ],
+      },
+    })
+    clock = at(3, 20, 50).getTime()
+    const r = make()
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('sent')
+    clock = at(3, 21, 5).getTime()
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('sent')
+    expect(tg.sent.map(s => s.text)).toEqual(['back soon\n\nF', 'tomorrow\n\nF'])
+  })
+
+  test('sends through the given sender', async () => {
+    const sends: [number, string][] = []
+    const r = make({
+      send: async (chatId, text) => {
+        sends.push([chatId, text])
+        return { id: 9, chatId, date: new Date(clock).toISOString(), from: null, outgoing: true, text, media: null, replyToId: null, topicId: null }
+      },
+    })
+    await r.onIncoming(msg(ANNA), false)
+    await fire()
+    expect(sends).toEqual([[ANNA.id, 'back soon\n\nF']])
+    expect(tg.sent).toEqual([])
+    expect(records[0]).toMatchObject({ messageId: 9, via: 'away' })
+  })
+
+  test('stop() drops what is waiting', async () => {
+    const r = make()
+    await r.onIncoming(msg(ANNA), false)
+    r.stop()
+    expect(timers[0]!.cancelled).toBe(true)
+    expect(r.ui().waiting).toBe(0)
   })
 })

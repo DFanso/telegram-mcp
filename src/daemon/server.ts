@@ -61,7 +61,8 @@ export function eventsKey(token: string, sessionId: string): string {
  *                                (the Contacts page: a human editing the rules)
  *   POST /ui/contacts/page       {"nickname": "…", "reason"?: "…"}  the Page button: "/page <reason>" to that person
  *   POST /ui/pages/:id           {"action": "ack" | "snooze", "minutes"?: 15 | 60, "from"?: "menubar" | "tray"}
- *   POST /ui/away                {"enabled"?, "from"?, "until"?, "message"?, "quietMinutes"?}  the away auto-reply settings
+ *   POST /ui/away                {"enabled"?, "quietMinutes"?, "schedules"?}  the away auto-reply settings ("schedules" replaces
+ *                                the whole list; "from", "until" and "message" still change the first schedule)
  *   POST /ui/pages/test          ring a test page (tgmcp page test)
  *   WS   /bridge                 one per Claude session: the MCP proxy's tool calls and pushes
  *   WS   /events?session=ID&key=K  Monitor stream: one text frame per watched message

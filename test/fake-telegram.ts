@@ -18,6 +18,7 @@ export class FakeTelegram implements TelegramPort {
   files = new Map<string, { name: string | null; type: string; mime: string | null; data: string }>()
   phase: TelegramState['phase'] = 'connected'
   #listeners: ((m: IncomingMessage) => void)[] = []
+  #readListeners: ((chatId: number) => void)[] = []
   #nextId = 1000
 
   add(...peers: PeerInfo[]): this {
@@ -33,6 +34,14 @@ export class FakeTelegram implements TelegramPort {
   async reconnect() {}
   onMessage(cb: (m: IncomingMessage) => void) {
     this.#listeners.push(cb)
+  }
+  onRead(cb: (chatId: number) => void) {
+    this.#readListeners.push(cb)
+  }
+
+  /** You read a chat on another device. */
+  emitRead(chatId: number) {
+    for (const l of this.#readListeners) l(chatId)
   }
 
   emit(chatId: number, text: string, fromId = chatId, extra: Partial<IncomingMessage> = {}): IncomingMessage {

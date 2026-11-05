@@ -98,10 +98,13 @@ describe('ConfigStore', () => {
     expect(store.get().rules.blocked).toEqual([5])
   })
 
-  test('old config without away parses with away disabled', () => {
+  test('old config without away parses with away disabled and the day and night schedules', () => {
     const c = parseConfig(JSON.stringify({ rules: { blocked: [5] } }))
-    expect(c.away).toMatchObject({ enabled: false, from: '18:00', until: '09:00', quietMinutes: 30 })
-    expect(c.away.message).toContain('{name}')
+    expect(c.away).toMatchObject({ enabled: false, quietMinutes: 30 })
+    expect(c.away.schedules.map(s => [s.id, s.from, s.until, s.delaySeconds])).toEqual([
+      ['day', '08:00', '21:00', 30],
+      ['night', '21:00', '08:00', 0],
+    ])
   })
 
   test('invalid away keeps the previous config', () => {
@@ -112,6 +115,6 @@ describe('ConfigStore', () => {
     writeFileSync(path, JSON.stringify({ away: { enabled: true, from: '25:00' } }))
     store.reload()
     expect(store.error()).toContain('config.json is invalid')
-    expect(store.get().away.from).toBe('18:00')
+    expect(store.get().away.schedules.map(s => s.from)).toEqual(['08:00', '21:00'])
   })
 })

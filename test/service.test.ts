@@ -606,11 +606,11 @@ describe('away in the service', () => {
     setup(baseConfig)
     writeFileSync(path, JSON.stringify({ footer: FOOTER, ...baseConfig, away: { message: 'typed by hand' } }))
     expect(svc.editAway({ enabled: true })).toMatchObject({ ok: true })
-    expect(onDisk().away).toMatchObject({ enabled: true, message: 'typed by hand' })
+    expect(onDisk().away).toMatchObject({ enabled: true, schedules: [{ id: 'away', message: 'typed by hand' }] })
     // A patch that only fails against the fresh file is refused and the file kept.
     writeFileSync(path, JSON.stringify({ footer: FOOTER, ...baseConfig, away: { until: '07:00' } }))
     const before = readFileSync(path, 'utf8')
-    expect(svc.editAway({ from: '07:00' })).toMatchObject({ ok: false, text: "From and until can't be the same time." })
+    expect(svc.editAway({ from: '07:00' })).toMatchObject({ ok: false, text: "Away: From and until can't be the same time." })
     expect(readFileSync(path, 'utf8')).toBe(before)
   })
 

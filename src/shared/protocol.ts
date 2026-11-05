@@ -218,7 +218,10 @@ export interface UiState {
   away: UiAway
 }
 
-/** The away auto-reply as the tray shows it. `preview` is the text a sender would get. */
+/**
+ * The away auto-reply as the tray shows it. `from`, `until`, `message` and `preview` are the schedule
+ * replying now (else the first one switched on), for apps that know a single window.
+ */
 export interface UiAway {
   enabled: boolean
   from: string
@@ -227,6 +230,31 @@ export interface UiAway {
   quietMinutes: number
   active: boolean
   nextChange: string | null
+  preview: string
+  /** The id of the schedule replying now, and when its window ends. */
+  current: string | null
+  currentUntil: string | null
+  /** Chats whose reply is waiting for you right now (a schedule's delay). */
+  waiting: number
+  schedules: UiAwaySchedule[]
+}
+
+export interface UiAwaySchedule {
+  id: string
+  name: string
+  enabled: boolean
+  from: string
+  until: string
+  /** 0 = Sunday … 6 = Saturday. */
+  days: number[]
+  startDate: string | null
+  endDate: string | null
+  delaySeconds: number
+  repeatMinutes: number
+  message: string
+  /** This one is replying now. */
+  active: boolean
+  /** What a sender gets, footer included. */
   preview: string
 }
 
