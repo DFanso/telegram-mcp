@@ -29,13 +29,16 @@
         <!-- A tile at the top of Home: label, big number, chip. Click it to show its section below; the
              one showing is tinted with the accent. -->
         <DataTemplate x:Key="StatTemplate" DataType="{x:Type local:StatVM}">
-            <Button Style="{StaticResource Flat}" Command="{Binding Pick}" Margin="4,0" ToolTip="{Binding Tip}"
+            <!-- Four tiles, two by two: the number and its chip side by side, so a chip like "2 sessions" fits. -->
+            <Button Style="{StaticResource Flat}" Command="{Binding Pick}" Margin="4,0,4,8" ToolTip="{Binding Tip}"
                     AutomationProperties.Name="{Binding Name}">
-                <Border x:Name="Tile" Style="{StaticResource CardStyle}" Padding="12,10">
+                <Border x:Name="Tile" Style="{StaticResource CardStyle}" Padding="12,8,10,8">
                     <StackPanel>
                         <TextBlock Text="{Binding Label}" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Fg2}" />
-                        <TextBlock Text="{Binding Value}" FontFamily="{StaticResource DisplayFont}" FontSize="24" FontWeight="SemiBold" Margin="0,2,0,4" />
-                        <ContentControl Content="{Binding Chip}" Focusable="False" HorizontalAlignment="Left" Margin="-4,0,0,0" />
+                        <DockPanel Margin="0,1,0,0">
+                            <TextBlock Text="{Binding Value}" FontFamily="{StaticResource DisplayFont}" FontSize="22" FontWeight="SemiBold" DockPanel.Dock="Left" VerticalAlignment="Center" />
+                            <ContentControl Content="{Binding Chip}" Focusable="False" HorizontalAlignment="Right" VerticalAlignment="Center" Margin="6,0,-4,0" />
+                        </DockPanel>
                     </StackPanel>
                 </Border>
             </Button>
@@ -319,7 +322,7 @@
         <DataTemplate x:Key="ContactTemplate" DataType="{x:Type local:ContactVM}">
             <Border x:Name="Card" Margin="0,0,0,10" Style="{StaticResource CardStyle}" Padding="0">
                 <StackPanel>
-                    <!-- The row: click the name (or the chevron) to open it; the Listen switch saves at once. -->
+                    <!-- The row: click the name (or the chevron) to open it; the Auto-reply switch saves at once. -->
                     <Grid Margin="12,10">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*" />
@@ -346,10 +349,10 @@
                             </Grid>
                         </Button>
                         <StackPanel Grid.Column="1" Margin="8,0,0,0" VerticalAlignment="Center"
-                                    ToolTip="Listen: a Claude session may watch this chat and answer new messages (auto-reply)">
+                                    ToolTip="Auto-reply: a Claude session may watch this chat and answer new messages">
                             <ToggleButton Style="{StaticResource Switch}" IsChecked="{Binding Listens, Mode=OneWay}" Command="{Binding ToggleListen}"
                                           IsEnabled="{Binding Idle}" AutomationProperties.Name="{Binding ListenName}" />
-                            <TextBlock Text="Listen" FontSize="9" Foreground="{DynamicResource Fg3}" HorizontalAlignment="Center" Margin="0,1,0,0" />
+                            <TextBlock Text="Auto-reply" FontSize="9" Foreground="{DynamicResource Fg3}" HorizontalAlignment="Center" Margin="0,1,0,0" />
                         </StackPanel>
                         <Button Grid.Column="2" Style="{StaticResource Flat}" Command="{Binding Toggle}" Focusable="False" Margin="6,0,0,0">
                             <local:SvgIcon Kind="{Binding Chevron}" Width="13" Height="13" Foreground="{DynamicResource Fg3}" Margin="2,0" />
@@ -377,6 +380,20 @@
                                                   Command="{Binding SetMode}" CommandParameter="requireApproval" />
                                 <local:PillButton Content="Blocked" Choice="True" Tint="{DynamicResource RedFill}" Filled="{Binding IsBlocked, Mode=OneWay}"
                                                   Command="{Binding SetMode}" CommandParameter="blocked" />
+                            </StackPanel>
+                        </Border>
+
+                        <!-- The same switch as on the row, spelled out where the chat's settings are. -->
+                        <TextBlock Style="{StaticResource SettingTitle}" Text="Auto-reply" />
+                        <TextBlock Style="{StaticResource SettingHint}" Text="{Binding ListenCaption}" />
+                        <Border Style="{StaticResource Segments}">
+                            <StackPanel Orientation="Horizontal">
+                                <local:PillButton Content="On" MinWidth="60" Choice="True" Tint="{DynamicResource BlueFill}" Filled="{Binding Listens, Mode=OneWay}"
+                                                  Command="{Binding SetListen}" CommandParameter="on" AutomationProperties.Name="Auto-reply on"
+                                                  ToolTip="A Claude session may watch this chat and answer new messages (the autoReply list)" />
+                                <local:PillButton Content="Off" MinWidth="60" Choice="True" Tint="{DynamicResource GrayFill}" Filled="{Binding NotListens, Mode=OneWay}"
+                                                  Command="{Binding SetListen}" CommandParameter="off" AutomationProperties.Name="Auto-reply off"
+                                                  ToolTip="No session can listen here; a watch on it pauses" />
                             </StackPanel>
                         </Border>
 
@@ -554,14 +571,14 @@
                             <local:SvgIcon Kind="x" Width="13" Height="13" Foreground="{DynamicResource Fg3}" />
                         </Button>
                     </Grid>
-                    <!-- Filter: every chat, or only those Claude may (or may not) listen to. -->
+                    <!-- Filter: every chat, or only those with auto-reply on (or off). -->
                     <Border Style="{StaticResource Segments}" Margin="0,8,0,0">
                         <StackPanel Orientation="Horizontal">
                             <local:PillButton Content="All" MinWidth="50" Choice="True" Tint="{DynamicResource AccentFill}" Filled="{Binding FilterAll, Mode=OneWay}"
                                               Command="{Binding SetFilter}" CommandParameter="all" ToolTip="Every saved chat" />
-                            <local:PillButton Content="Listening" Choice="True" Tint="{DynamicResource AccentFill}" Filled="{Binding FilterOn, Mode=OneWay}"
-                                              Command="{Binding SetFilter}" CommandParameter="on" ToolTip="Chats Claude may listen to" />
-                            <local:PillButton Content="Not listening" Choice="True" Tint="{DynamicResource AccentFill}" Filled="{Binding FilterOff, Mode=OneWay}"
+                            <local:PillButton Content="Auto-reply on" Choice="True" Tint="{DynamicResource AccentFill}" Filled="{Binding FilterOn, Mode=OneWay}"
+                                              Command="{Binding SetFilter}" CommandParameter="on" ToolTip="Chats Claude may listen to and reply in" />
+                            <local:PillButton Content="Auto-reply off" Choice="True" Tint="{DynamicResource AccentFill}" Filled="{Binding FilterOff, Mode=OneWay}"
                                               Command="{Binding SetFilter}" CommandParameter="off" ToolTip="Chats Claude can't listen to" />
                         </StackPanel>
                     </Border>
@@ -646,10 +663,10 @@
                                 </DockPanel>
                             </Border>
 
-                            <ItemsControl ItemsSource="{Binding Stats}" ItemTemplate="{StaticResource StatTemplate}" Focusable="False" Margin="-4,0,-4,12">
+                            <ItemsControl ItemsSource="{Binding Stats}" ItemTemplate="{StaticResource StatTemplate}" Focusable="False" Margin="-4,0,-4,4">
                                 <ItemsControl.ItemsPanel>
                                     <ItemsPanelTemplate>
-                                        <UniformGrid Rows="1" />
+                                        <UniformGrid Columns="2" />
                                     </ItemsPanelTemplate>
                                 </ItemsControl.ItemsPanel>
                             </ItemsControl>
@@ -689,7 +706,7 @@
                                         <StackPanel>
                                             <TextBlock Style="{StaticResource EmptyTitle}" Text="No one is listening" />
                                             <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,0"
-                                                       Text="Ask Claude to watch a chat. It can only watch the chats you switch on below." />
+                                                       Text="Ask Claude to watch a chat. It can only watch chats with auto-reply on (the Auto-reply tile)." />
                                         </StackPanel>
                                     </DockPanel>
                                     <!-- What a switch does, in plain words. -->
@@ -705,15 +722,45 @@
                                 </StackPanel>
                             </Border>
 
-                            <!-- Every saved chat with its listen switch: choose who Claude may watch without opening Contacts. -->
-                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12" Visibility="{Binding ListeningShown, Converter={StaticResource Visible}}">
+                            <!-- Auto-reply: both kinds in one place. The away reply's switch first (hours and message
+                                 stay on the Away tab), then every saved chat with its auto-reply switch. -->
+                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12" Visibility="{Binding AutoReplyShown, Converter={StaticResource Visible}}">
+                                <StackPanel>
+                                    <DockPanel>
+                                        <StackPanel DockPanel.Dock="Right" Margin="8,0,0,0" VerticalAlignment="Center" ToolTip="{Binding AwayQuickTip}"
+                                                    Visibility="{Binding AwayShown, Converter={StaticResource Visible}}">
+                                            <ToggleButton Style="{StaticResource Switch}" IsChecked="{Binding AwayOn, Mode=OneWay}" Command="{Binding ToggleAwayQuick}"
+                                                          IsEnabled="{Binding AwayQuickIdle}" AutomationProperties.Name="Away auto-reply" />
+                                        </StackPanel>
+                                        <Border DockPanel.Dock="Left" Width="34" Height="34" CornerRadius="17" Background="{DynamicResource BlueWash}" Margin="0,0,10,0" VerticalAlignment="Top">
+                                            <local:SvgIcon Kind="moon" Width="17" Height="17" Foreground="{DynamicResource Blue}" HorizontalAlignment="Center" />
+                                        </Border>
+                                        <StackPanel VerticalAlignment="Center">
+                                            <TextBlock Style="{StaticResource CardTitle}" Text="Away auto-reply" />
+                                            <TextBlock Style="{StaticResource Caption}" Margin="0,2,0,0" TextWrapping="Wrap"
+                                                       Visibility="{Binding AwayShown, Converter={StaticResource Visible}}">
+                                                <Run Text="{Binding AwayStatus, Mode=OneWay}" FontWeight="SemiBold" Foreground="{DynamicResource Fg}" /><Run Text=". One reply to people who message you privately while you're away." />
+                                            </TextBlock>
+                                            <TextBlock Text="{Binding AwayPlaceholder}" Style="{StaticResource Caption}" Margin="0,2,0,0"
+                                                       Visibility="{Binding AwayPlaceholder, Converter={StaticResource IfSet}}" />
+                                        </StackPanel>
+                                    </DockPanel>
+                                    <Button Style="{StaticResource Flat}" Command="{Binding ShowAway}" HorizontalAlignment="Left" Margin="44,6,0,0"
+                                            ToolTip="Open the Away tab (Ctrl+3)" Visibility="{Binding AwayShown, Converter={StaticResource Visible}}">
+                                        <TextBlock Text="Hours and message" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
+                                    </Button>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Every saved chat with its auto-reply switch: choose who Claude may watch without opening Contacts. -->
+                            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12" Visibility="{Binding AutoReplyShown, Converter={StaticResource Visible}}">
                                 <StackPanel>
                                     <DockPanel>
                                         <Button DockPanel.Dock="Right" Style="{StaticResource Flat}" Command="{Binding ShowContacts}" VerticalAlignment="Center"
                                                 ToolTip="Open Contacts for every chat's rules">
                                             <TextBlock Text="All settings" FontSize="11" FontWeight="SemiBold" Foreground="{DynamicResource Accent}" />
                                         </Button>
-                                        <TextBlock Style="{StaticResource CardTitle}" Text="Chats Claude may listen to" />
+                                        <TextBlock Style="{StaticResource CardTitle}" Text="Auto-reply in chats" />
                                     </DockPanel>
                                     <TextBlock Style="{StaticResource Caption}" Margin="0,4,0,0"
                                                Text="Switch a chat on and a Claude session can watch it and reply there without asking while it does. Off: no session can listen." />

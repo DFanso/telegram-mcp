@@ -396,6 +396,11 @@ public sealed class ContactVM : Observable
         });
         SendPage = new Command(_ => _ = _panel.PageContactAsync(this), _ => CanSendPage);
         ToggleListen = new Command(_ => _ = _panel.SetListeningAsync([Nickname], !Listens, Nickname));
+        SetListen = new Command(p =>
+        {
+            var on = p is "on";
+            if (on != Listens) _ = _panel.SetListeningAsync([Nickname], on, Nickname);
+        });
     }
 
     /// <summary>
@@ -405,13 +410,17 @@ public sealed class ContactVM : Observable
     /// </summary>
     public bool Listens => _pending ?? _c.AutoReply;
     public string ListenCaption => Contacts.ListenCaption(_c with { AutoReply = Listens });
-    public string ListenName => $"Let Claude listen to {_c.Nickname}";
+    public string ListenName => $"Auto-reply in {_c.Nickname}";
+    /// <summary>The open contact's Auto-reply choice: Off is filled while auto-reply is off.</summary>
+    public bool NotListens => !Listens;
     /// <summary>Home → Listening now: the state word before a watched chat's details.</summary>
     public string ListenWord => Listens ? "listening" : "paused";
     public string ListenTip => Listens
         ? $"Pause: stop passing {_c.Nickname}'s messages to Claude (turns auto-reply off; the watch stays)"
         : $"Resume: {_c.Nickname}'s messages reach Claude again (turns auto-reply back on)";
     public ICommand ToggleListen { get; }
+    /// <summary>The open contact's Auto-reply On / Off: "on" or "off", saved at once.</summary>
+    public ICommand SetListen { get; }
 
     /// <summary>The value a listen switch is saving, or null once a poll after it shows what was saved.</summary>
     internal bool? Pending
@@ -428,6 +437,7 @@ public sealed class ContactVM : Observable
     internal void Resync()
     {
         Raise(nameof(Listens));
+        Raise(nameof(NotListens));
         Raise(nameof(ListenCaption));
         Raise(nameof(ListenWord));
         Raise(nameof(ListenTip));

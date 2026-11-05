@@ -20,7 +20,7 @@ public sealed record IconState(bool Filled, string? Badge, StatusKind Health = S
 public sealed record RecentChat(long ChatId, string Label, IReadOnlyList<SentRecord> Messages);
 
 /// <summary>What Home shows under its tiles: one section at a time, so the panel stays short.</summary>
-public enum HomeSection { Waiting, Listening, Sent }
+public enum HomeSection { Waiting, Listening, Sent, AutoReply }
 
 /// <summary>A tile at the top of Home:"Waiting 2 · needs you".</summary>
 public sealed record Stat(string Label, string Value, Tag Chip);
@@ -50,8 +50,21 @@ public static class Presenter
                     ? new($"{paused} paused", TagKind.Warn)
                     : new($"{connected} session{(connected == 1 ? "" : "s")}", TagKind.Good)),
             new("Sent", Count(sent), sent > 0 ? new("lately", TagKind.Info) : new("none yet", TagKind.Muted)),
+            new("Auto-reply", Count(state.Contacts?.Count(c => c.AutoReply) ?? 0), AwayChip(state.Away)),
         ];
     }
+
+    /// <summary>
+    /// The Auto-reply tile counts the chats with auto-reply on; its chip is the away reply's state, so
+    /// both kinds of auto-reply show on Home.
+    /// </summary>
+    public static Tag AwayChip(UiAway? away) => away switch
+    {
+        null => new("per chat", TagKind.Muted),
+        { Enabled: true, Active: true } => new("away now", TagKind.Info),
+        { Enabled: true } => new("away on", TagKind.Good),
+        _ => new("away off", TagKind.Muted),
+    };
 
     /// <summary>Chats sessions watch whose listen switch (auto-reply) is off: their messages are held back.</summary>
     public static int PausedChats(UiState state) =>

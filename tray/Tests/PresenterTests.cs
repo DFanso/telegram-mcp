@@ -140,6 +140,7 @@ public class PresenterTests
                 new Stat("Waiting", "2", new Tag("needs you", TagKind.Warn)),
                 new Stat("Listening", "2", new Tag("2 sessions", TagKind.Good)), // chat 2 counts once
                 new Stat("Sent", sent, new Tag("lately", TagKind.Info)),
+                new Stat("Auto-reply", "1", new Tag("away on", TagKind.Good)), // leo; the demo has away on
             ],
             Presenter.Stats(s));
     }
@@ -154,9 +155,23 @@ public class PresenterTests
                 new Stat("Waiting", "0", new Tag("all clear", TagKind.Good)),
                 new Stat("Listening", "0", new Tag("idle", TagKind.Muted)),
                 new Stat("Sent", "0", new Tag("none yet", TagKind.Muted)),
+                new Stat("Auto-reply", "0", new Tag("away on", TagKind.Good)),
             ],
             Presenter.Stats(s));
         Assert.Equal(new Tag("session gone", TagKind.Muted), Presenter.Stats(s with { Sessions = [Session("x", false, 7)] })[1].Chip);
+    }
+
+    [Fact]
+    public void Auto_reply_tile_chip_is_the_away_state()
+    {
+        static UiAway Away(bool enabled, bool active) => new(enabled, "18:00", "09:00", "away", 30, active, null, "away");
+
+        Assert.Equal(new Tag("per chat", TagKind.Muted), Presenter.AwayChip(null));
+        Assert.Equal(new Tag("away off", TagKind.Muted), Presenter.AwayChip(Away(false, false)));
+        Assert.Equal(new Tag("away on", TagKind.Good), Presenter.AwayChip(Away(true, false)));
+        Assert.Equal(new Tag("away now", TagKind.Info), Presenter.AwayChip(Away(true, true)));
+        var s = Fixtures.DemoState() with { Contacts = [Contact("leo", true), Contact("anna", true)], Away = Away(true, true) };
+        Assert.Equal(new Stat("Auto-reply", "2", new Tag("away now", TagKind.Info)), Presenter.Stats(s)[3]);
     }
 
     [Fact]
