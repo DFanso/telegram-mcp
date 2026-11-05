@@ -408,6 +408,7 @@ public sealed class ContactVM : Observable
         Raise(nameof(ListenCaption));
         Raise(nameof(ListenWord));
         Raise(nameof(ListenTip));
+        Raise(nameof(Explanation));
         _panel.ListenChanged();
     }
 
@@ -439,7 +440,7 @@ public sealed class ContactVM : Observable
     };
     public Tag? PageFromTag => Contacts.PageFromTag(_c);
     public Tag ModeTag => Contacts.ModeTag(_c, _defaultPolicy);
-    public string Explanation => Contacts.Explanation(_c, _defaultPolicy);
+    public string Explanation => Contacts.Explanation(_c with { AutoReply = Listens }, _defaultPolicy);
     public string Details => Contacts.Details(_c);
 
     public bool IsAutoSend => _c.SendMode == "autoSend";
