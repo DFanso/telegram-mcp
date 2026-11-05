@@ -177,19 +177,37 @@ export type AwayConfig = z.infer<typeof AwaySchema>
 
 /**
  * What the tray, the menu bar and the CLI may change. `from`, `until` and `message` are the single
- * window an earlier build had: they change the first schedule (the menu bar app still sends them).
+ * window an earlier build had: they change the schedule named by `schedule` (an id or a name), or
+ * else the one the menu bar shows them from, primarySchedule (the menu bar app still sends them).
  */
 export type AwayPatch = Partial<Pick<AwayConfig, 'enabled' | 'quietMinutes'>> & {
   schedules?: unknown[]
+  schedule?: string
   from?: string
   until?: string
   message?: string
 }
-const PATCH_KEYS = ['enabled', 'quietMinutes', 'schedules', 'from', 'until', 'message']
+const PATCH_KEYS = ['enabled', 'quietMinutes', 'schedules', 'schedule', 'from', 'until', 'message']
+
+/**
+ * The one schedule an older app or the CLI shows as "the" away window: the one that would reply now
+ * (even with away off), else the first switched on, else the first. Edits through the old single-window
+ * fields go to this same schedule, so editing the message at night changes the Night text.
+ */
+export function primarySchedule(away: Pick<AwayConfig, 'schedules'>, now: Date): AwaySchedule | undefined {
+  return awayWindowAt({ enabled: true, schedules: away.schedules }, now)?.schedule ?? away.schedules.find(s => s.enabled) ?? away.schedules[0]
+}
+
+/** A schedule by id or name (any case), for `tgmcp away night message …`. */
+export function findSchedule(away: Pick<AwayConfig, 'schedules'>, ref: string): AwaySchedule | undefined {
+  const r = ref.trim().toLowerCase()
+  return away.schedules.find(s => s.id === r) ?? away.schedules.find(s => s.name.toLowerCase() === r)
+}
 
 export function applyAwayPatch(
   current: AwayConfig,
   patch: unknown,
+  now: Date = new Date(),
 ): { ok: true; away: AwayConfig } | { ok: false; error: string } {
   if (typeof patch !== 'object' || patch === null || Array.isArray(patch) || Object.keys(patch).length === 0) {
     return { ok: false, error: 'nothing to change: send enabled, quietMinutes or schedules' }
@@ -201,13 +219,26 @@ export function applyAwayPatch(
   if ('enabled' in p) next.enabled = p.enabled
   if ('quietMinutes' in p) next.quietMinutes = p.quietMinutes
   const legacy = LEGACY_KEYS.filter(k => k in p)
+  if ('schedule' in p && (typeof p.schedule !== 'string' || legacy.length === 0)) {
+    return { ok: false, error: 'schedule names the schedule that from, until or message change' }
+  }
   if (legacy.length > 0) {
     const list = next.schedules as Record<string, unknown>[]
     if (!Array.isArray(list)) return { ok: false, error: 'schedules must be a list' }
-    const first = list[0] ?? { id: 'away', name: 'Away', from: '18:00', until: '09:00', message: AWAY_NIGHT_MESSAGE }
-    const changed = { ...first }
+    let target: AwaySchedule | undefined
+    if (typeof p.schedule === 'string') {
+      target = findSchedule(current, p.schedule)
+      if (!target) {
+        const names = current.schedules.map(s => s.name).join(', ')
+        return { ok: false, error: `No schedule called "${p.schedule}"${names ? ` (there are: ${names})` : ''}.` }
+      }
+    } else {
+      target = primarySchedule(current, now)
+    }
+    const i = Math.max(0, target ? list.findIndex(s => s?.id === target.id) : 0)
+    const changed = { ...(list[i] ?? { id: 'away', name: 'Away', from: '18:00', until: '09:00', message: AWAY_NIGHT_MESSAGE }) }
     for (const k of legacy) changed[k] = p[k]
-    next.schedules = [changed, ...list.slice(1)]
+    next.schedules = list.length === 0 ? [changed] : list.map((s, j) => (j === i ? changed : s))
   }
   const parsed = AwaySchema.safeParse(next)
   if (!parsed.success) {
@@ -357,11 +388,17 @@ export function awaySummary(away: AwayConfig, now: Date): string {
 
 // ---- CLI ---------------------------------------------------------------------------
 
-const USAGE = 'usage: away [on | off | hours HH:MM HH:MM | message <text> | quiet <minutes>]  (hours and message change the first schedule)'
+const USAGE =
+  'usage: away [on | off | quiet <minutes> | [<schedule>] hours HH:MM HH:MM | [<schedule>] message <text>]\n' +
+  '  hours and message change the named schedule (e.g. away night message …), or else the one replying now'
 
 export function parseAwayArgs(
   args: string[],
 ): { kind: 'show' } | { kind: 'patch'; patch: AwayPatch } | { kind: 'error'; usage: string } {
+  if (args.length >= 2 && (args[1] === 'hours' || args[1] === 'message') && !['on', 'off', 'quiet', 'hours', 'message'].includes(args[0]!)) {
+    const r = parseAwayArgs(args.slice(1))
+    return r.kind === 'patch' ? { kind: 'patch', patch: { schedule: args[0]!, ...r.patch } } : r
+  }
   const [cmd, ...rest] = args
   if (cmd === undefined) return { kind: 'show' }
   if (cmd === 'on' && rest.length === 0) return { kind: 'patch', patch: { enabled: true } }

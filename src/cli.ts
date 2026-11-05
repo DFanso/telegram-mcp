@@ -26,7 +26,7 @@ const HELP = `tgmcp ${VERSION}: always-on Telegram daemon + per-session MCP brid
   tgmcp menubar uninstall
   tgmcp page setup    connect your own pager bot (from @BotFather) so pages reach your phone
   tgmcp page test     ring a test page: hear the alarm, check the volume, try Ack
-  tgmcp away          show the away schedules; tgmcp away on|off|quiet <minutes>, or hours HH:MM HH:MM|message <text> for the first schedule
+  tgmcp away          show the away schedules; tgmcp away on|off|quiet <minutes>, or [<schedule>] hours HH:MM HH:MM|message <text>
   tgmcp footer        show the footer added to every message; tgmcp footer on|off|<text>
   tgmcp call <tool> [json]   call a tool as a one-off session, e.g. tgmcp call telegram_get_rules
   tgmcp mcp-add       print the command that registers the MCP server with Claude Code

@@ -11,6 +11,7 @@ import {
   firstName,
   nextAwayChange,
   parseAwayArgs,
+  primarySchedule,
   renderAwayMessage,
   scheduleSummary,
   scheduleWindowAt,
@@ -205,16 +206,42 @@ describe('applyAwayPatch', () => {
     expect(applyAwayPatch(defaults, { schedules: 'x' }).ok).toBe(false)
   })
 
-  test('from, until and message change the first schedule', () => {
-    const r = applyAwayPatch(defaults, { from: '09:00', until: '18:00', message: 'busy' })
+  test('from, until and message change the schedule replying now', () => {
+    const noon = d(3, 12)
+    const r = applyAwayPatch(defaults, { from: '09:00', until: '18:00', message: 'busy' }, noon)
     expect(r.ok && r.away.schedules[0]).toMatchObject({ id: 'day', from: '09:00', until: '18:00', message: 'busy' })
     expect(r.ok && r.away.schedules[1]).toEqual(DEFAULT_SCHEDULES[1]!)
-    const same = applyAwayPatch(defaults, { from: '21:00' })
+    const same = applyAwayPatch(defaults, { from: '21:00' }, noon)
     expect(same).toEqual({ ok: false, error: "Daytime: From and until can't be the same time." })
-    expect(applyAwayPatch(defaults, { message: '   ' }).ok).toBe(false)
-    expect(applyAwayPatch(defaults, { message: 'x'.repeat(1001) }).ok).toBe(false)
-    const empty = applyAwayPatch({ ...defaults, schedules: [] }, { from: '13:00', until: '14:00' })
+    expect(applyAwayPatch(defaults, { message: '   ' }, noon).ok).toBe(false)
+    expect(applyAwayPatch(defaults, { message: 'x'.repeat(1001) }, noon).ok).toBe(false)
+    const empty = applyAwayPatch({ ...defaults, schedules: [] }, { from: '13:00', until: '14:00' }, noon)
     expect(empty.ok && empty.away.schedules).toMatchObject([{ id: 'away', from: '13:00', until: '14:00' }])
+  })
+
+  test('at night the menu bar edits the Night schedule it shows, not Daytime', () => {
+    const night = d(3, 23)
+    // What the menu bar app reads (uiAway's from / until / message) is Night's...
+    expect(primarySchedule(defaults, night)?.id).toBe('night')
+    // ...and what it sends back changes Night, leaving Daytime alone.
+    const r = applyAwayPatch(defaults, { from: '21:00', until: '08:00', message: 'asleep' }, night)
+    expect(r.ok && r.away.schedules.map(s => s.message)).toEqual([DEFAULT_SCHEDULES[0]!.message, 'asleep'])
+    // Between schedules, the first one switched on.
+    const gap = away(sched({ id: 'eve', name: 'Evening' }), sched({ id: 'lunch', name: 'Lunch', from: '13:00', until: '14:00', enabled: false }))
+    expect(primarySchedule(gap, d(3, 13, 30))?.id).toBe('eve')
+  })
+
+  test('schedule names the one to change, by id or name', () => {
+    const noon = d(3, 12)
+    const r = applyAwayPatch(defaults, { schedule: 'Night', message: 'asleep' }, noon)
+    expect(r.ok && r.away.schedules.map(s => s.message)).toEqual([DEFAULT_SCHEDULES[0]!.message, 'asleep'])
+    const byId = applyAwayPatch(defaults, { schedule: 'night', from: '22:00' }, noon)
+    expect(byId.ok && byId.away.schedules[1]!.from).toBe('22:00')
+    expect(applyAwayPatch(defaults, { schedule: 'trip', message: 'x' }, noon)).toEqual({
+      ok: false,
+      error: 'No schedule called "trip" (there are: Daytime, Night).',
+    })
+    expect(applyAwayPatch(defaults, { schedule: 'night' }, noon).ok).toBe(false)
   })
 })
 
@@ -238,5 +265,12 @@ describe('parseAwayArgs', () => {
     expect(parseAwayArgs(['quiet', '30'])).toEqual({ kind: 'patch', patch: { quietMinutes: 30 } })
     expect(parseAwayArgs(['hours', '18:00']).kind).toBe('error')
     expect(parseAwayArgs(['nope']).kind).toBe('error')
+    expect(parseAwayArgs(['night', 'message', 'Gone', 'to', 'bed'])).toEqual({ kind: 'patch', patch: { schedule: 'night', message: 'Gone to bed' } })
+    expect(parseAwayArgs(['Daytime', 'hours', '09:00', '17:00'])).toEqual({
+      kind: 'patch',
+      patch: { schedule: 'Daytime', from: '09:00', until: '17:00' },
+    })
+    expect(parseAwayArgs(['night', 'hours', '22:00']).kind).toBe('error')
+    expect(parseAwayArgs(['night', 'quiet', '5']).kind).toBe('error')
   })
 })

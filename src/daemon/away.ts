@@ -8,6 +8,7 @@ import {
   awayWindowAt,
   firstName,
   nextAwayChange,
+  primarySchedule,
   renderAwayMessage,
   type AwaySchedule,
   type AwayWindow,
@@ -75,8 +76,8 @@ export function awayText(config: Config, me: { name: string } | null | undefined
 export function uiAway(config: Config, me: { name: string } | null | undefined, at: Date, waiting = 0): UiAway {
   const { away } = config
   const current = awayWindowAt(away, at)
-  // The fields an earlier tray and the menu bar read: the schedule replying now, else the first one on.
-  const primary = current?.schedule ?? away.schedules.find(s => s.enabled) ?? away.schedules[0]
+  // The fields an earlier tray and the menu bar read, and write back to the same schedule (applyAwayPatch).
+  const primary = primarySchedule(away, at)
   return {
     enabled: away.enabled,
     from: primary?.from ?? '18:00',
