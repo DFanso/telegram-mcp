@@ -175,12 +175,15 @@ public class PresenterTests
     }
 
     [Theory]
-    [InlineData(HomeSection.Sent, 1, 2, HomeSection.Waiting)] // a new draft
-    [InlineData(HomeSection.Listening, 2, 2, HomeSection.Listening)]
-    [InlineData(HomeSection.Sent, 2, 1, HomeSection.Sent)] // one was decided
-    public void A_new_draft_switches_Home_to_Waiting(HomeSection current, int before, int now, HomeSection expected)
+    [InlineData(HomeSection.Sent, "a", "a,b", HomeSection.Waiting)] // a new draft
+    [InlineData(HomeSection.Listening, "a,b", "a,b", HomeSection.Listening)]
+    [InlineData(HomeSection.Sent, "a,b", "a", HomeSection.Sent)] // one was decided
+    [InlineData(HomeSection.Listening, "a", "b", HomeSection.Waiting)] // one decided and a new one came, within one poll
+    [InlineData(HomeSection.Listening, "", "", HomeSection.Listening)]
+    public void A_new_draft_switches_Home_to_Waiting(HomeSection current, string before, string now, HomeSection expected)
     {
-        Assert.Equal(expected, Presenter.SectionAfterPoll(current, before, now));
+        static string[] Ids(string s) => s.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        Assert.Equal(expected, Presenter.SectionAfterPoll(current, Ids(before), Ids(now)));
     }
 
     [Fact]

@@ -101,7 +101,12 @@ sealed class TrayController : IDisposable
                 Toasts.Remove(id);
                 await _vm.DecideAsync(id, ApprovalNotices.DecisionFor(a));
             }
-            else ShowPanel(contacts: false);
+            else
+            {
+                // A draft's notification: open on Waiting, wherever Home was left.
+                _vm.ShowWaiting();
+                ShowPanel(contacts: false);
+            }
         });
     }
 

@@ -7,6 +7,9 @@ public enum ContactKind { Person, Bot, Group, Channel, Chat }
 /// <summary>Which saved chats the Contacts tab shows: all, those Claude may listen to, or the rest.</summary>
 public enum ListenFilter { All, On, Off }
 
+/// <summary>What a listening session may do in a chat: not listen, listen with replies that ask first, listen without replying, or listen and reply.</summary>
+public enum ListenRule { Off, AsksFirst, CantReply, Replies }
+
 /// <summary>
 /// The Contacts page: the chats saved in config.json and the words for each control. Same texts as
 /// the menu bar app; the daemon does the editing (POST /ui/contacts), this only describes.
@@ -46,20 +49,43 @@ public static class Contacts
         };
     }
 
-    /// <summary>Under a chat's name next to its listen switch: what listening there comes to.</summary>
-    public static string ListenCaption(UiContact c) => !c.AutoReply
-        ? "Claude can't listen here"
+    /// <summary>
+    /// What a listening session may do in this chat. Auto-reply on puts the chat on the autoReply list,
+    /// so a session watching it replies without asking unless a blocked or requireApproval rule comes first.
+    /// </summary>
+    public static ListenRule Listening(UiContact c) => !c.AutoReply
+        ? ListenRule.Off
         : c.SendMode switch
         {
-            "requireApproval" => "May listen; replies still ask you",
-            "blocked" => "May listen, but can't reply",
-            _ => "May listen and reply without asking",
+            "requireApproval" => ListenRule.AsksFirst,
+            "blocked" => ListenRule.CantReply,
+            _ => ListenRule.Replies,
         };
+
+    /// <summary>Under a chat's name next to its listen switch: what listening there comes to.</summary>
+    public static string ListenCaption(UiContact c) => Listening(c) switch
+    {
+        ListenRule.Off => "Claude can't listen here",
+        ListenRule.AsksFirst => "May listen; replies still ask you",
+        ListenRule.CantReply => "May listen, but can't reply",
+        _ => "May listen and reply without asking",
+    };
 
     /// <summary>The flash after a listen switch: turning a chat's auto-reply on or off.</summary>
     public static string ListenFlash(bool on, string label) => on
         ? $"Claude may listen to {label} again."
         : $"Paused {label}: new messages there aren't passed to Claude.";
+
+    /// <summary>
+    /// The flash when the daemon refused one chat partway through: which chats had already been switched
+    /// (they stay that way), then why it stopped.
+    /// </summary>
+    public static string ListenStopped(bool on, IReadOnlyList<string> done, string failure) => done.Count == 0
+        ? failure
+        : $"{(on ? "Resumed" : "Paused")} {And(done)}, then stopped. {failure}";
+
+    static string And(IReadOnlyList<string> names) =>
+        names.Count == 1 ? names[0] : $"{string.Join(", ", names.Take(names.Count - 1))} and {names[^1]}";
 
     /// <summary>The mode tag on a row. "none" means on no sending list, so defaultPolicy decides.</summary>
     public static Tag ModeTag(UiContact c, string? defaultPolicy) => c.SendMode switch
@@ -69,8 +95,6 @@ public static class Contacts
         "blocked" => new("blocked", TagKind.Bad),
         _ => defaultPolicy == "block" ? new("blocked by default", TagKind.Bad) : new("not set", TagKind.Muted),
     };
-
-    public static Tag? AutoReplyTag(UiContact c) => c.AutoReply ? new("auto-reply", TagKind.Info) : null;
 
     /// <summary>Blocked by its own rule, or on no list while the default blocks: nothing is sent there, pages included.</summary>
     public static bool Blocked(UiContact c, string? defaultPolicy) =>
@@ -93,14 +117,13 @@ public static class Contacts
                 ? "On no list, so the default rule blocks it."
                 : "On no list yet: the next message asks you, and you pick what happens after.",
         };
-        var reply = !c.AutoReply
-            ? "Sessions can't listen to this chat."
-            : c.SendMode switch
-            {
-                "requireApproval" => "Sessions may listen here, but their replies still ask first.",
-                "blocked" => "Sessions may listen here, but can't reply.",
-                _ => "Sessions may listen here and reply without asking while they do.",
-            };
+        var reply = Listening(c) switch
+        {
+            ListenRule.Off => "Sessions can't listen to this chat.",
+            ListenRule.AsksFirst => "Sessions may listen here, but their replies still ask first.",
+            ListenRule.CantReply => "Sessions may listen here, but can't reply.",
+            _ => "Sessions may listen here and reply without asking while they do.",
+        };
         if (!c.CanPage) return $"{send} {reply}";
         return $"{send} {reply} {(c.PagesMe ? "Their /page rings you." : "Their /page is ignored.")}";
     }

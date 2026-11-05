@@ -175,7 +175,7 @@
                         <StackPanel DockPanel.Dock="Right" Margin="8,0,0,0" Visibility="{Binding HasAll, Converter={StaticResource Visible}}"
                                     ToolTip="Pause or resume every chat this session listens to (other sessions on those chats pause too)">
                             <ToggleButton Style="{StaticResource Switch}" IsChecked="{Binding AnyOn, Mode=OneWay}" Command="{Binding ToggleAll}"
-                                          CommandParameter="{Binding}" AutomationProperties.Name="{Binding AllName}" />
+                                          IsEnabled="{Binding Idle}" AutomationProperties.Name="{Binding AllName}" />
                             <TextBlock Text="all" FontSize="9" Foreground="{DynamicResource Fg3}" HorizontalAlignment="Center" Margin="0,1,0,0" />
                         </StackPanel>
                         <StackPanel VerticalAlignment="Center">
@@ -185,21 +185,25 @@
                     </DockPanel>
                     <ItemsControl ItemsSource="{Binding Watches}" Margin="0,6,0,0" Focusable="False">
                         <ItemsControl.ItemTemplate>
-                            <!-- One chat it listens to, with the switch that pauses or resumes it (its auto-reply). -->
+                            <!-- One chat it listens to, with the switch that pauses or resumes it (its auto-reply).
+                                 The switch, "listening" / "paused" and the dot bind to the chat's Contacts row,
+                                 so they follow a change at once, and wait while it saves. -->
                             <DataTemplate DataType="{x:Type local:WatchVM}">
                                 <DockPanel Margin="0,4,0,0" ToolTip="{Binding Tooltip}">
                                     <ToggleButton DockPanel.Dock="Right" Style="{StaticResource Switch}" Margin="8,0,0,0"
-                                                  IsChecked="{Binding Listening, Mode=OneWay}" Command="{Binding Toggle}" CommandParameter="{Binding}"
-                                                  ToolTip="{Binding ToggleTip}" AutomationProperties.Name="{Binding ToggleName}"
+                                                  IsChecked="{Binding Contact.Listens, Mode=OneWay}" Command="{Binding Contact.ToggleListen}"
+                                                  IsEnabled="{Binding Contact.Idle, FallbackValue=False}"
+                                                  ToolTip="{Binding Contact.ListenTip}" AutomationProperties.Name="{Binding Contact.ListenName}"
                                                   Visibility="{Binding CanToggle, Converter={StaticResource Visible}}" />
                                     <Ellipse x:Name="Dot" DockPanel.Dock="Left" Width="7" Height="7" Fill="{DynamicResource Blue}" Margin="0,0,8,0" VerticalAlignment="Center" />
                                     <StackPanel VerticalAlignment="Center">
                                         <TextBlock x:Name="Name" Text="{Binding ChatLabel}" FontSize="12" TextTrimming="CharacterEllipsis" />
-                                        <TextBlock Text="{Binding Detail}" FontSize="10" Foreground="{DynamicResource Fg3}" TextTrimming="CharacterEllipsis" />
+                                        <TextBlock FontSize="10" Foreground="{DynamicResource Fg3}" TextTrimming="CharacterEllipsis"><Run
+                                            Text="{Binding Contact.ListenWord, Mode=OneWay, FallbackValue=listening}" /><Run Text="{Binding DetailRest, Mode=OneWay}" /></TextBlock>
                                     </StackPanel>
                                 </DockPanel>
                                 <DataTemplate.Triggers>
-                                    <DataTrigger Binding="{Binding Paused}" Value="True">
+                                    <DataTrigger Binding="{Binding Contact.Listens}" Value="False">
                                         <Setter TargetName="Dot" Property="Fill" Value="{DynamicResource Fg3}" />
                                         <Setter TargetName="Name" Property="Foreground" Value="{DynamicResource Fg2}" />
                                     </DataTrigger>
@@ -273,6 +277,23 @@
         </Style>
 
         <!-- A saved chat on the Contacts tab: click to open; one is open at a time. -->
+        <!-- A saved chat's avatar: a person's photo or initials; a group's, channel's or bot's glyph,
+             covered by its own photo once that has loaded. On Contacts and in Home's "Chats Claude may
+             listen to" (scaled down there). -->
+        <DataTemplate x:Key="ContactAvatar" DataType="{x:Type local:ContactVM}">
+            <Grid Width="34" Height="34">
+                <ContentControl Content="{Binding Avatar}" Focusable="False" Visibility="{Binding ShowsGlyph, Converter={StaticResource Hidden}}" />
+                <Border CornerRadius="17" Background="{Binding Avatar.Fill}" Visibility="{Binding ShowsGlyph, Converter={StaticResource Visible}}">
+                    <local:SvgIcon Kind="{Binding KindIcon}" Width="17" Height="17" Foreground="White" HorizontalAlignment="Center" />
+                </Border>
+                <Ellipse DataContext="{Binding Avatar.Photo}" Visibility="{Binding HasImage, Converter={StaticResource Visible}, FallbackValue=Collapsed}">
+                    <Ellipse.Fill>
+                        <ImageBrush ImageSource="{Binding Image}" Stretch="UniformToFill" />
+                    </Ellipse.Fill>
+                </Ellipse>
+            </Grid>
+        </DataTemplate>
+
         <DataTemplate x:Key="ContactTemplate" DataType="{x:Type local:ContactVM}">
             <Border x:Name="Card" Margin="0,0,0,10" Style="{StaticResource CardStyle}" Padding="0">
                 <StackPanel>
@@ -289,20 +310,8 @@
                                     <ColumnDefinition Width="Auto" />
                                     <ColumnDefinition Width="*" />
                                 </Grid.ColumnDefinitions>
-                                <Grid Margin="0,0,10,0" VerticalAlignment="Top">
-                                    <ContentControl Content="{Binding Avatar}" Focusable="False" Visibility="{Binding ShowsGlyph, Converter={StaticResource Hidden}}" />
-                                    <Border Width="34" Height="34" CornerRadius="17" Background="{Binding Avatar.Fill}"
-                                            Visibility="{Binding ShowsGlyph, Converter={StaticResource Visible}}">
-                                        <local:SvgIcon Kind="{Binding KindIcon}" Width="17" Height="17" Foreground="White" HorizontalAlignment="Center" />
-                                    </Border>
-                                    <!-- A group's, channel's or bot's own photo covers its glyph once it has loaded. -->
-                                    <Ellipse Width="34" Height="34" DataContext="{Binding Avatar.Photo}"
-                                             Visibility="{Binding HasImage, Converter={StaticResource Visible}, FallbackValue=Collapsed}">
-                                        <Ellipse.Fill>
-                                            <ImageBrush ImageSource="{Binding Image}" Stretch="UniformToFill" />
-                                        </Ellipse.Fill>
-                                    </Ellipse>
-                                </Grid>
+                                <ContentControl Content="{Binding}" ContentTemplate="{StaticResource ContactAvatar}" Focusable="False"
+                                                Margin="0,0,10,0" VerticalAlignment="Top" />
                                 <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                     <TextBlock Text="{Binding Nickname}" FontSize="13" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                     <TextBlock Text="{Binding Subtitle}" FontSize="11" Foreground="{DynamicResource Fg3}" TextTrimming="CharacterEllipsis"
@@ -695,13 +704,9 @@
                                                     <ToggleButton DockPanel.Dock="Right" Style="{StaticResource Switch}" Margin="8,0,0,0"
                                                                   IsChecked="{Binding Listens, Mode=OneWay}" Command="{Binding ToggleListen}" IsEnabled="{Binding Idle}"
                                                                   AutomationProperties.Name="{Binding ListenName}" />
-                                                    <Grid DockPanel.Dock="Left" Width="28" Height="28" Margin="0,0,10,0">
-                                                        <Ellipse Fill="{Binding Avatar.Fill}" />
-                                                        <TextBlock Text="{Binding Avatar.Initials}" FontSize="10" FontWeight="SemiBold" Foreground="White"
-                                                                   HorizontalAlignment="Center" VerticalAlignment="Center" Visibility="{Binding ShowsGlyph, Converter={StaticResource Hidden}}" />
-                                                        <local:SvgIcon Kind="{Binding KindIcon}" Width="14" Height="14" Foreground="White" HorizontalAlignment="Center"
-                                                                       Visibility="{Binding ShowsGlyph, Converter={StaticResource Visible}}" />
-                                                    </Grid>
+                                                    <Viewbox DockPanel.Dock="Left" Width="28" Height="28" Margin="0,0,10,0">
+                                                        <ContentControl Content="{Binding}" ContentTemplate="{StaticResource ContactAvatar}" Focusable="False" />
+                                                    </Viewbox>
                                                     <StackPanel VerticalAlignment="Center">
                                                         <TextBlock Text="{Binding Nickname}" FontSize="12" FontWeight="SemiBold" TextTrimming="CharacterEllipsis" />
                                                         <TextBlock Text="{Binding ListenCaption}" FontSize="10" Foreground="{DynamicResource Fg3}" TextTrimming="CharacterEllipsis" />
@@ -749,7 +754,7 @@
                         <Border Margin="0,0,0,10" CornerRadius="12" Padding="12,8" Background="{DynamicResource PendingWash}" Visibility="{Binding WaitingBanner, Converter={StaticResource IfSet}}">
                             <DockPanel>
                                 <local:SvgIcon Kind="clock" Width="16" Height="16" DockPanel.Dock="Left" Foreground="{DynamicResource Orange}" Margin="0,0,8,0" />
-                                <local:PillButton DockPanel.Dock="Right" Content="Review" Tint="{DynamicResource Orange}" Command="{Binding ShowMain}" />
+                                <local:PillButton DockPanel.Dock="Right" Content="Review" Tint="{DynamicResource Orange}" Command="{Binding ReviewWaiting}" />
                                 <TextBlock Text="{Binding WaitingBanner}" FontWeight="SemiBold" VerticalAlignment="Center" />
                             </DockPanel>
                         </Border>

@@ -23,13 +23,6 @@ public class ContactsTests
         Assert.Equal(new Tag(text, kind), Contacts.ModeTag(C(sendMode: mode), defaultPolicy));
     }
 
-    [Fact]
-    public void Auto_reply_tag_only_when_on()
-    {
-        Assert.Equal(new Tag("auto-reply", TagKind.Info), Contacts.AutoReplyTag(C(autoReply: true)));
-        Assert.Null(Contacts.AutoReplyTag(C(autoReply: false)));
-    }
-
     [Theory]
     [InlineData("Anna K", "anna_k", "Anna K · @anna_k")]
     [InlineData("Team QA", null, "Team QA")]
@@ -129,6 +122,36 @@ public class ContactsTests
     {
         Assert.Equal("Claude may listen to leo again.", Contacts.ListenFlash(true, "leo"));
         Assert.Equal("Paused leo: new messages there aren't passed to Claude.", Contacts.ListenFlash(false, "leo"));
+    }
+
+    [Fact]
+    public void A_switch_that_stops_partway_says_what_it_already_changed()
+    {
+        const string why = "Not changed: No saved chat called \"c\".";
+        Assert.Equal(why, Contacts.ListenStopped(false, [], why));
+        Assert.Equal($"Paused a and b, then stopped. {why}", Contacts.ListenStopped(false, ["a", "b"], why));
+        Assert.Equal($"Resumed a, b and c, then stopped. {why}", Contacts.ListenStopped(true, ["a", "b", "c"], why));
+    }
+
+    [Theory]
+    [InlineData("autoSend", true, ListenRule.Replies)]
+    [InlineData("none", true, ListenRule.Replies)] // on the autoReply list, so the default rule doesn't apply
+    [InlineData("requireApproval", true, ListenRule.AsksFirst)]
+    [InlineData("blocked", true, ListenRule.CantReply)]
+    [InlineData("requireApproval", false, ListenRule.Off)]
+    public void Caption_and_explanation_share_one_listen_rule(string mode, bool autoReply, ListenRule expected)
+    {
+        var c = C(sendMode: mode, autoReply: autoReply);
+        Assert.Equal(expected, Contacts.Listening(c));
+        var (caption, explanation) = expected switch
+        {
+            ListenRule.Off => ("Claude can't listen here", "Sessions can't listen to this chat."),
+            ListenRule.AsksFirst => ("May listen; replies still ask you", "Sessions may listen here, but their replies still ask first."),
+            ListenRule.CantReply => ("May listen, but can't reply", "Sessions may listen here, but can't reply."),
+            _ => ("May listen and reply without asking", "Sessions may listen here and reply without asking while they do."),
+        };
+        Assert.Equal(caption, Contacts.ListenCaption(c));
+        Assert.Contains(explanation, Contacts.Explanation(c, "approve"));
     }
 
     [Theory]

@@ -58,9 +58,12 @@ public static class Presenter
         Listening(state).SelectMany(s => s.Watches).Select(w => w.ChatId).Distinct()
             .Count(id => ListeningSwitch(state, id) is { AutoReply: false });
 
-    /// <summary>A new draft needs you more than whatever section was showing.</summary>
-    public static HomeSection SectionAfterPoll(HomeSection current, int waitingBefore, int waitingNow) =>
-        waitingNow > waitingBefore ? HomeSection.Waiting : current;
+    /// <summary>
+    /// A new draft needs you more than whatever section was showing. By id, not count: a draft decided
+    /// and another arriving within one poll leave the count as it was.
+    /// </summary>
+    public static HomeSection SectionAfterPoll(HomeSection current, IReadOnlyCollection<string> waitingBefore, IReadOnlyCollection<string> waitingNow) =>
+        waitingNow.Any(id => !waitingBefore.Contains(id)) ? HomeSection.Waiting : current;
 
     static string Count(int n) => n.ToString(System.Globalization.CultureInfo.InvariantCulture);
 
