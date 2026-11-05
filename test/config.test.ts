@@ -115,6 +115,6 @@ describe('ConfigStore', () => {
     writeFileSync(path, JSON.stringify({ away: { enabled: true, from: '25:00' } }))
     store.reload()
     expect(store.error()).toContain('config.json is invalid')
-    expect(store.get().away.schedules.map(s => s.from)).toEqual(['08:00', '21:00'])
+    expect(store.get().away.schedules.map(s => s.from)).toEqual(['18:00'])
   })
 })

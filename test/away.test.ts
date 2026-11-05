@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import {
   AWAY_DAY_MESSAGE,
+  AWAY_LEGACY_MESSAGE,
   AwaySchema,
   DEFAULT_SCHEDULES,
   applyAwayPatch,
@@ -55,6 +56,19 @@ describe('the schema', () => {
     expect(a.schedules).toEqual([sched({ id: 'away', name: 'Away', from: '14:00', until: '14:30', message: 'lunch' })])
     expect('from' in a).toBe(false)
     expect('message' in a).toBe(false)
+  })
+
+  test("an earlier build's away with only some settings keeps that build's night window", () => {
+    // `{ enabled: true }` meant 18:00 to 09:00 with the default message. It must not start replying all day.
+    for (const old of [{ enabled: true }, { enabled: true, quietMinutes: 5 }, { message: 'out' }]) {
+      const a = AwaySchema.parse(old)
+      expect(a.schedules).toHaveLength(1)
+      expect(a.schedules[0]).toMatchObject({ id: 'away', from: '18:00', until: '09:00', delaySeconds: 0 })
+    }
+    expect(AwaySchema.parse({ enabled: true }).schedules[0]!.message).toBe(AWAY_LEGACY_MESSAGE)
+    expect(AwaySchema.parse({ enabled: true }).enabled).toBe(true)
+    // An empty away is a fresh one: the defaults.
+    expect(AwaySchema.parse({}).schedules).toEqual(DEFAULT_SCHEDULES)
   })
 
   test('schedules without an id get one', () => {

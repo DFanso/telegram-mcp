@@ -30,7 +30,7 @@ describe('the away reply in the daemon', () => {
     tg.emit(LEO.id, 'hi')
     await settle()
     expect(tg.sent).toHaveLength(1)
-    expect(tg.sent[0]!.text).toContain('Thanks for your message')
+    expect(tg.sent[0]!.text).toContain('off the grid for the night')
     expect(daemon.service.uiState().recent[0]!.via).toBe('away')
     expect(daemon.service.uiState().away).toMatchObject({ enabled: true, active: true })
     // Our own reply is not "you speaking": a second message the same night gets nothing more (R6),
@@ -77,7 +77,7 @@ describe('the away reply in the daemon', () => {
     const tg = new FakeTelegram().add(LEO, ANNA)
     const real = tg.sendText.bind(tg)
     tg.sendText = async (...a: Parameters<typeof real>) => {
-      if (a[1].includes('Thanks for your message')) throw new Error('FLOOD_WAIT')
+      if (a[1].includes('off the grid for the night')) throw new Error('FLOOD_WAIT')
       return real(...a)
     }
     const { daemon } = await daemonAway(undefined, { rules: { autoReply: [ANNA.id] } }, tg)
@@ -158,7 +158,7 @@ describe('tgmcp away', () => {
     expect(r.code).toBe(0)
     expect(r.out).toContain('Saved.')
     expect(r.out).toContain('  Back soon, Chamodh')
-    expect(r.out).not.toContain('Thanks for your message')
+    expect(r.out).not.toContain('off the grid for the night')
     await daemon.stop()
   })
 

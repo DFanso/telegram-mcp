@@ -16,6 +16,9 @@ export const AWAY_NIGHT_MESSAGE =
   "Hi! Thanks for your message. I'm unavailable for the rest of the day and will get back to you when I'm back at work tomorrow 🌙"
 /** Kept for the CLI's and older callers' sake: the night schedule's message. */
 export const AWAY_DEFAULT_MESSAGE = AWAY_NIGHT_MESSAGE
+/** The message an earlier build sent when none was set: what an older config without one keeps sending. */
+export const AWAY_LEGACY_MESSAGE =
+  "{name} is off the grid for the night and will get back to you tomorrow. If something's on fire, call them 🔥"
 export const AWAY_MESSAGE_MAX = 1000
 export const AWAY_NAME_MAX = 40
 /** Only messages at most this old (past the schedule's wait) get a reply. */
@@ -122,15 +125,17 @@ export const DEFAULT_SCHEDULES: AwaySchedule[] = [
 const LEGACY_KEYS = ['from', 'until', 'message'] as const
 
 /**
- * An `away` written by an earlier build (`{ enabled, from, until, message, quietMinutes }`) becomes one
- * schedule with the same hours and message, so nothing someone set up is lost. No `away` at all, or
- * one without hours, gets the day and night defaults. Schedules missing an id get one.
+ * An `away` written by an earlier build (`{ enabled, from, until, message, quietMinutes }`, any of them)
+ * becomes one schedule with the same hours and message, with that build's defaults for what's missing
+ * (18:00 to 09:00), so it keeps replying when it did: `{ enabled: true }` alone must not start replying
+ * all day. Only no `away` at all (or an empty one) gets the day and night defaults. Schedules missing
+ * an id get one.
  */
 function migrate(raw: unknown): unknown {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return raw
   const a = { ...(raw as Record<string, unknown>) }
   if (!('schedules' in a)) {
-    const legacy = LEGACY_KEYS.some(k => k in a)
+    const legacy = Object.keys(a).length > 0
     a.schedules = legacy
       ? [
           {
@@ -138,7 +143,7 @@ function migrate(raw: unknown): unknown {
             name: 'Away',
             from: a.from ?? '18:00',
             until: a.until ?? '09:00',
-            message: a.message ?? AWAY_NIGHT_MESSAGE,
+            message: a.message ?? AWAY_LEGACY_MESSAGE,
           },
         ]
       : structuredClone(DEFAULT_SCHEDULES)
