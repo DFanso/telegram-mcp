@@ -47,7 +47,9 @@ public static class Away
         if (Current(a) is { } c) return $"{c.Name} until {c.Until}, {DelayText(c.DelaySeconds)}";
         if (a.Active) return $"Away now, until {a.Until}";
         if (a.Schedules is null) return $"Starts at {a.From}";
-        return a.NextChange is { } next ? $"Next at {next.ToLocalTime():HH:mm}" : "Nothing scheduled this week";
+        if (a.NextChange is not { } next) return "Nothing scheduled";
+        var local = next.ToLocalTime();
+        return local - DateTimeOffset.Now < TimeSpan.FromDays(1) ? $"Next at {local:HH:mm}" : $"Next on {local:ddd d MMM} at {local:HH:mm}";
     }
 
     /// <summary>The line for the Status page while a reply could go out; null otherwise.</summary>

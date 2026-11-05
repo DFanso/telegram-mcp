@@ -325,7 +325,10 @@ export function awayWindowAt(away: Pick<AwayConfig, 'enabled' | 'schedules'>, no
   return best
 }
 
-/** When the replying schedule changes next (turns on, off or hands over): null if away is off or nothing is coming. */
+/** How far ahead nextAwayChange looks: a schedule dated for a trip months away still says when it starts. */
+const LOOKAHEAD_DAYS = 400
+
+/** When the replying schedule changes next (turns on, off or hands over): null if away is off or nothing is coming within a year or so. */
 export function nextAwayChange(away: AwayConfig, now: Date): Date | null {
   if (!away.enabled) return null
   const current = awayWindowAt(away, now)?.schedule.id ?? null
@@ -333,8 +336,11 @@ export function nextAwayChange(away: AwayConfig, now: Date): Date | null {
   for (const s of away.schedules) {
     if (!s.enabled) continue
     const crosses = s.from > s.until
-    for (let offset = -1; offset <= 8; offset++) {
-      times.add(localAt(now, offset, s.from).getTime())
+    for (let offset = -1; offset <= LOOKAHEAD_DAYS; offset++) {
+      const start = localAt(now, offset, s.from)
+      // Only the days it runs: a schedule dated in the past adds nothing to check.
+      if (!runsOn(s, start)) continue
+      times.add(start.getTime())
       times.add(localAt(now, offset + (crosses ? 1 : 0), s.until).getTime())
     }
   }
@@ -388,7 +394,11 @@ export function awaySummary(away: AwayConfig, now: Date): string {
   if (w) return `on, ${w.schedule.name} now (until ${w.schedule.until}, ${delayText(w.schedule.delaySeconds)})`
   const next = nextAwayChange(away, now)
   const nextName = next ? awayWindowAt(away, next)?.schedule.name : undefined
-  return next && nextName ? `on, ${nextName} starts at ${pad(next.getHours())}:${pad(next.getMinutes())}` : 'on, nothing scheduled this week'
+  if (!next || !nextName) return 'on, nothing scheduled'
+  const time = `${pad(next.getHours())}:${pad(next.getMinutes())}`
+  const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1)
+  const when = ymd(next) === ymd(now) || (ymd(next) === ymd(tomorrow) && next.getTime() - now.getTime() < 86_400_000) ? time : `${ymd(next)} ${time}`
+  return `on, ${nextName} starts at ${when}`
 }
 
 // ---- CLI ---------------------------------------------------------------------------

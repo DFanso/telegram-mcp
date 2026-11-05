@@ -175,6 +175,13 @@ describe('nextAwayChange', () => {
     expect(nextAwayChange(a, d(3, 10))).toEqual(d(9, 9)) // Tuesday -> next Monday
     expect(nextAwayChange(away(sched({ enabled: false })), d(3, 10))).toBeNull()
   })
+
+  test('a dated schedule months away still has a start', () => {
+    const trip = away(sched({ name: 'Trip', from: '00:00', until: '23:59', startDate: '2027-03-10', endDate: '2027-03-12' }))
+    expect(nextAwayChange(trip, d(3, 10))).toEqual(new Date(2027, 2, 10, 0, 0))
+    expect(awaySummary(trip, d(3, 10))).toBe('on, Trip starts at 2027-03-10 00:00')
+    expect(awaySummary(away(sched({ startDate: '2026-01-01', endDate: '2026-01-02' })), d(3, 10))).toBe('on, nothing scheduled')
+  })
 })
 
 describe('render and names', () => {
