@@ -2,6 +2,8 @@ import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import {
   AWAY_MAX_AGE_MS,
   AWAY_MAX_PER_HOUR,
+  AWAY_MAX_PER_WINDOW,
+  AWAY_MIN_GAP_MINUTES,
   awaySummary,
   awayWindowAt,
   firstName,
@@ -129,6 +131,8 @@ interface Waiting {
 export class AwayResponder {
   /** chat id -> when it last got an away reply (epoch ms). Loaded lazily from away.json. */
   #replied: Map<number, number> | null = null
+  /** When each away reply of the last two days went (epoch ms), for the hourly and per-window limits. */
+  #sentLog: number[] = []
   #lastOutgoing = new Map<number, number>()
   /** Replies waiting out a schedule's delay, by chat. */
   #waiting = new Map<number, Waiting>()
@@ -138,8 +142,8 @@ export class AwayResponder {
    */
   #lastRead = 0
   #lastSent = 0
-  /** The hour whose limit was last logged, so it's logged once. */
-  #limitLogged: number | null = null
+  /** The limit last logged and when (hour or window id), so each is logged once. */
+  #limitLogged: string | null = null
 
   constructor(private d: AwayDeps) {}
 
@@ -158,8 +162,13 @@ export class AwayResponder {
           const id = Number(k)
           if (Number.isFinite(id) && typeof v === 'number' && Number.isFinite(v)) this.#replied.set(id, v)
         }
+        // A file from before the log: each chat's last reply is the best there is.
+        this.#sentLog = Array.isArray(raw.sent)
+          ? raw.sent.filter((t: unknown): t is number => typeof t === 'number' && Number.isFinite(t))
+          : [...this.#replied.values()]
       } else if (typeof raw?.window === 'string' && Array.isArray(raw.chats)) {
         this.#replied = fromOldFormat(raw)
+        this.#sentLog = [...this.#replied.values()]
       }
     } catch {}
     return this.#replied
@@ -170,10 +179,11 @@ export class AwayResponder {
     if (!replied) return
     const cutoff = this.#now() - REPLIED_KEEP_MS
     for (const [id, t] of replied) if (t < cutoff) replied.delete(id)
+    this.#sentLog = this.#sentLog.filter(t => t >= cutoff)
     if (!this.d.statePath) return
     try {
       const tmp = `${this.d.statePath}.tmp`
-      writeFileSync(tmp, JSON.stringify({ replied: Object.fromEntries(replied) }), { mode: 0o600 })
+      writeFileSync(tmp, JSON.stringify({ replied: Object.fromEntries(replied), sent: this.#sentLog }), { mode: 0o600 })
       renameSync(tmp, this.d.statePath)
     } catch (e) {
       this.#log(`away: could not save state: ${e instanceof Error ? e.message : String(e)}`)
@@ -198,10 +208,12 @@ export class AwayResponder {
     const window = awayWindowAt(away, new Date(now))
     if (!window || at < window.start.getTime()) return { skip: 'not in an away window' }
     if (now - at > AWAY_MAX_AGE_MS + extraAge) return { skip: 'too old' }
-    // R6: once per chat per window, or again after the schedule's repeat minutes.
+    // R6: once per chat per window, or again after the schedule's repeat minutes; and never twice within
+    // AWAY_MIN_GAP_MINUTES, even across schedules (a Daytime reply at 20:59, then Night's at 21:01).
     const prev = this.#repliedMap().get(chat.id)
     if (prev !== undefined) {
       const { repeatMinutes } = window.schedule
+      if (now - prev < AWAY_MIN_GAP_MINUTES * 60_000) return { skip: 'replied lately' }
       if (repeatMinutes === 0 ? prev >= window.start.getTime() : now - prev < repeatMinutes * 60_000) return { skip: 'already replied' }
     }
     const lastOut = this.#lastOutgoing.get(chat.id)
@@ -254,14 +266,20 @@ export class AwayResponder {
     const chat = msg.chat
     const now = this.#now()
     const replied = this.#repliedMap()
-    // R10: an hourly limit, whoever writes. Counted from the saved replies, so a restart doesn't reset it.
-    let lastHour = 0
-    for (const t of replied.values()) if (t > now - HOUR_MS) lastHour++
-    if (lastHour >= AWAY_MAX_PER_HOUR) {
-      const hour = Math.floor(now / HOUR_MS)
-      if (this.#limitLogged !== hour) {
-        this.#limitLogged = hour
-        this.#log(`away: reached the limit of ${AWAY_MAX_PER_HOUR} replies an hour; holding off`)
+    // R10: at most AWAY_MAX_PER_HOUR in any hour and AWAY_MAX_PER_WINDOW in one window, whoever writes.
+    // Counted from the saved log, so a restart doesn't reset either.
+    const lastHour = this.#sentLog.filter(t => t > now - HOUR_MS).length
+    const thisWindow = this.#sentLog.filter(t => t >= r.window.start.getTime()).length
+    const limit =
+      lastHour >= AWAY_MAX_PER_HOUR
+        ? { key: `hour@${Math.floor(now / HOUR_MS)}`, text: `${AWAY_MAX_PER_HOUR} replies an hour` }
+        : thisWindow >= AWAY_MAX_PER_WINDOW
+          ? { key: `window@${r.window.id}`, text: `${AWAY_MAX_PER_WINDOW} replies in this ${r.window.schedule.name} window` }
+          : null
+    if (limit) {
+      if (this.#limitLogged !== limit.key) {
+        this.#limitLogged = limit.key
+        this.#log(`away: reached the limit of ${limit.text}; holding off`)
       }
       return 'skipped'
     }
@@ -269,6 +287,7 @@ export class AwayResponder {
     // Mark before the first await so a second message arriving meanwhile sees it.
     const prev = replied.get(chat.id)
     replied.set(chat.id, now)
+    this.#sentLog.push(now)
     this.#save()
     const text = awayText(config, this.d.tg.state().me, r.window.schedule)
     try {
@@ -281,6 +300,8 @@ export class AwayResponder {
       if (replied.get(chat.id) === now) {
         if (prev === undefined) replied.delete(chat.id)
         else replied.set(chat.id, prev)
+        const i = this.#sentLog.lastIndexOf(now)
+        if (i >= 0) this.#sentLog.splice(i, 1)
         this.#save()
       }
       throw e

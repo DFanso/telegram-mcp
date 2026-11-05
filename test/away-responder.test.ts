@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { AwayResponder, type AwayDeps } from '../src/daemon/away'
-import { AWAY_MAX_PER_HOUR } from '../src/shared/away'
+import { AWAY_MAX_PER_HOUR, AWAY_MAX_PER_WINDOW } from '../src/shared/away'
 import { parseConfig, type Config } from '../src/shared/config'
 import type { IncomingMessage, PeerInfo, SentRecord } from '../src/shared/protocol'
 import { ANNA, FakeTelegram, LEO, TEAM_QA } from './fake-telegram'
@@ -175,6 +175,53 @@ describe('AwayResponder', () => {
     // An hour on, there's room again.
     clock = at(3, 21, 1).getTime()
     expect(await r.onIncoming(msg(stranger(100)), false)).toBe('sent')
+  })
+
+  test(`at most ${AWAY_MAX_PER_WINDOW} replies in one window, however they spread over the hours`, async () => {
+    clock = at(3, 18, 0).getTime()
+    const r = make()
+    let n = 0
+    // Twelve an hour stays under the hourly limit, but the night adds up.
+    for (let hour = 0; n < AWAY_MAX_PER_WINDOW; hour++) {
+      clock = at(3, 18 + hour, 0).getTime()
+      for (let i = 0; i < 12 && n < AWAY_MAX_PER_WINDOW; i++, n++) {
+        clock += 60_000
+        expect(await r.onIncoming(msg(stranger(n)), false)).toBe('sent')
+      }
+    }
+    clock += 60 * 60_000
+    expect(await r.onIncoming(msg(stranger(500)), false)).toBe('skipped')
+    expect(logs).toContain(`away: reached the limit of ${AWAY_MAX_PER_WINDOW} replies in this Away window; holding off`)
+    // The next window starts afresh.
+    clock = at(4, 18, 5).getTime()
+    expect(await r.onIncoming(msg(stranger(501)), false)).toBe('sent')
+  })
+
+  test('the window limit survives a restart', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'away-cap-'))
+    try {
+      const statePath = join(dir, 'away.json')
+      clock = at(3, 18, 0).getTime()
+      const first = make({ statePath })
+      for (let i = 0; i < AWAY_MAX_PER_WINDOW; i++) {
+        clock = at(3, 18, 0).getTime() + Math.floor(i / 10) * 3_600_000 + (i % 10) * 60_000
+        expect(await first.onIncoming(msg(stranger(i)), false)).toBe('sent')
+      }
+      clock += 2 * 3_600_000
+      expect(await make({ statePath }).onIncoming(msg(stranger(100)), false)).toBe('skipped')
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  })
+
+  test('never two replies to a chat within 30 minutes, even when the schedule repeats sooner', async () => {
+    config = cfg({ away: { schedules: [{ id: 'a', name: 'Away', from: '18:00', until: '09:00', message: 'out', repeatMinutes: 5 }] } })
+    const r = make()
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('sent')
+    clock += 10 * 60_000
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('skipped')
+    clock += 21 * 60_000
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('sent')
   })
 
   test('the hourly limit survives a restart', async () => {
@@ -501,7 +548,7 @@ describe('waiting for you', () => {
     expect(tg.sent).toHaveLength(2)
   })
 
-  test('the hand-over to a new schedule gets its own reply', async () => {
+  test('the hand-over to a new schedule gets its own reply, 30 minutes after the last', async () => {
     config = cfg({
       away: {
         schedules: [
@@ -513,7 +560,10 @@ describe('waiting for you', () => {
     clock = at(3, 20, 50).getTime()
     const r = make()
     expect(await r.onIncoming(msg(ANNA), false)).toBe('sent')
+    // Not right after the Daytime one: two replies a few minutes apart read like spam.
     clock = at(3, 21, 5).getTime()
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('skipped')
+    clock = at(3, 21, 25).getTime()
     expect(await r.onIncoming(msg(ANNA), false)).toBe('sent')
     expect(tg.sent.map(s => s.text)).toEqual(['back soon\n\nF', 'tomorrow\n\nF'])
   })

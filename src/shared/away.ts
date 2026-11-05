@@ -25,6 +25,13 @@ export const AWAY_MAX_AGE_MS = 600_000
  * would otherwise get a reply each from your own account, the pattern Telegram's anti-spam flags.
  */
 export const AWAY_MAX_PER_HOUR = 20
+/**
+ * And at most this many in one window (a night, a day), so the hourly limit can't add up to hundreds
+ * over a long night. An earlier build allowed 20 a night.
+ */
+export const AWAY_MAX_PER_WINDOW = 30
+/** A chat never gets two away replies this close together, whatever the schedules: not at 20:59 and again at 21:01. */
+export const AWAY_MIN_GAP_MINUTES = 30
 /** The longest a schedule may wait for you before replying. */
 export const AWAY_DELAY_MAX = 600
 export const AWAY_REPEAT_MAX = 1440
@@ -74,7 +81,7 @@ export const AwayScheduleSchema = z
     endDate: dateField('endDate'),
     /** Seconds to wait for you before replying; if you read a chat or send anything meanwhile, no reply. 0 = at once. */
     delaySeconds: wholeNumber('delaySeconds', AWAY_DELAY_MAX).default(0),
-    /** 0: one reply per chat per window. Otherwise a chat can get another after this many minutes. */
+    /** 0: one reply per chat per window. Otherwise a chat can get another after this many minutes (never sooner than AWAY_MIN_GAP_MINUTES). */
     repeatMinutes: wholeNumber('repeatMinutes', AWAY_REPEAT_MAX).default(0),
     message: messageField,
   })

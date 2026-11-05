@@ -1165,7 +1165,7 @@
                                         <sys:String>They go out on their own, without waiting for your approval, also in Ask every time chats.</sys:String>
                                         <sys:String>A schedule that waits gives you time: read any chat or send a message on Telegram, on any device, and nothing goes out.</sys:String>
                                         <sys:String>When two schedules overlap, the one with dates wins, then the shorter one.</sys:String>
-                                        <sys:String>At most 20 chats an hour get an away reply, so a burst of messages can't look like spam.</sys:String>
+                                        <sys:String>At most 20 replies an hour and 30 in one day or night, and never two to the same chat within 30 minutes, so a burst of messages can't look like spam.</sys:String>
                                     </ItemsControl>
 
                                     <TextBlock Style="{StaticResource SettingTitle}" Text="Quiet after you write" />
