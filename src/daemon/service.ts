@@ -613,25 +613,29 @@ export class Service {
       contacts: listContacts(config, this.d.tg.state().me?.id),
       pages: (this.d.pager?.active() ?? []).map(uiPage),
       away: this.d.away?.ui() ?? uiAway(config, this.d.tg.state().me, new Date()),
-      approvals: this.d.approvals.list().map(a => ({
-        id: a.id,
-        action: a.action ?? 'send',
-        messageId: a.messageId ?? null,
-        previousText: a.previousText ?? null,
-        chatId: a.chatId,
-        to: a.chatLabel,
-        detail: a.chatDetail,
-        // An edit or delete shows the message's text as Recently sent has it (a file there is already described).
-        text: a.action ? a.text : a.sticker ? STICKER_TEXT : describeOutgoing(a.text, a.file, true),
-        reason: a.reason,
-        sessionId: a.sessionId,
-        sessionLabel: a.sessionLabel,
-        createdAt: new Date(a.createdAt).toISOString(),
-        expiresAt: new Date(a.createdAt + ttl).toISOString(),
-        firstTime: a.firstTime,
-        nickname: a.nickname,
-        suggestedNickname: a.suggestedNickname,
-      })),
+      approvals: this.d.approvals.list().map(a => {
+        // An edit or delete shows the message as the chat sees it now (Recently sent has it; a file
+        // there is already described), which an edit approved since the ask may have changed.
+        const now = a.action ? this.#recent.find(r => r.chatId === a.chatId && r.messageId === a.messageId)?.text : undefined
+        return {
+          id: a.id,
+          action: a.action ?? 'send',
+          messageId: a.messageId ?? null,
+          previousText: a.action === 'edit' ? (now ?? a.previousText ?? null) : null,
+          chatId: a.chatId,
+          to: a.chatLabel,
+          detail: a.chatDetail,
+          text: a.action === 'delete' ? (now ?? a.text) : a.action ? a.text : a.sticker ? STICKER_TEXT : describeOutgoing(a.text, a.file, true),
+          reason: a.reason,
+          sessionId: a.sessionId,
+          sessionLabel: a.sessionLabel,
+          createdAt: new Date(a.createdAt).toISOString(),
+          expiresAt: new Date(a.createdAt + ttl).toISOString(),
+          firstTime: a.firstTime,
+          nickname: a.nickname,
+          suggestedNickname: a.suggestedNickname,
+        }
+      }),
       sessions: this.d.hub.snapshot().filter(s => s.watches.length > 0 || s.connected),
       recent: [...this.#recent].reverse(),
     }

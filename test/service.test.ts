@@ -861,6 +861,149 @@ describe('editing a sent message', () => {
   })
 })
 
+// An edit or delete where sending needs approval runs only after a yes for that exact change, and
+// only once: no deny, timeout, retry or replayed approval id gets around it.
+describe('edit and delete approvals cannot be skipped', () => {
+  let now: number
+  let approvals: Approvals
+  const TTL = 20 * 60_000
+
+  beforeEach(() => {
+    setup(baseConfig)
+    now = 1_000_000
+    approvals = new Approvals(TTL, () => now)
+    svc = new Service({ store, tg, hub, approvals, eventsUrl: () => 'ws://x' })
+  })
+
+  /** Messages s1 sent to leo, which then moved to Ask every time. */
+  async function ownMessages(...texts: string[]): Promise<number[]> {
+    const ids: number[] = []
+    for (const text of texts) {
+      const r = await svc.call('s1', 'telegram_send_message', { to: 'leo', text })
+      ids.push(Number(/message #(\d+)/.exec(r.text)![1]))
+    }
+    svc.editContact({ nickname: 'leo', sendMode: 'requireApproval' })
+    return ids
+  }
+  const ownMessage = async () => (await ownMessages('first'))[0]!
+
+  const CHANGES = [
+    ['telegram_edit_message', 'edit'],
+    ['telegram_delete_message', 'delete'],
+  ] as const
+  const args = (messageId: number, text = 'fixed') => ({ chat: 'leo', messageId, text })
+  const nothingChanged = () => {
+    expect(tg.edits).toEqual([])
+    expect(tg.deleted).toEqual([])
+  }
+
+  for (const [tool, action] of CHANGES) {
+    test(`a denied ${action} changes nothing: not the chat, Recently sent or the rules`, async () => {
+      const id = await ownMessage()
+      const rules = readFileSync(path, 'utf8')
+      const before = svc.uiState().recent
+      for (const deny of [
+        (approvalId: string) => svc.decide(approvalId, false, 'menubar', null),
+        (approvalId: string) => svc.decide(approvalId, false, 'dialog', 's1'),
+        (approvalId: string) => svc.call('s1', 'telegram_cancel_send', { approvalId }),
+      ]) {
+        const r = await svc.call('s1', tool, args(id))
+        expect(r.approval).toMatchObject({ action })
+        expect((await deny(r.approval!.id)).text).toContain(`was not ${action === 'edit' ? 'edited' : 'deleted'}`)
+      }
+      nothingChanged()
+      expect(svc.uiState().recent).toEqual(before)
+      expect(readFileSync(path, 'utf8')).toBe(rules)
+      expect(svc.uiState().approvals).toEqual([])
+    })
+
+    test(`a timed-out ${action} changes nothing, and its id can't be approved afterwards`, async () => {
+      const id = await ownMessage()
+      const before = svc.uiState().recent
+      const swept = await svc.call('s1', tool, args(id))
+      const unswept = await svc.call('s1', tool, args(id))
+      now += TTL + 1
+      // Expired but not swept yet: approving it is refused just the same.
+      await expect(svc.decide(unswept.approval!.id, true, 'menubar', null)).rejects.toThrow('No pending message')
+      approvals.sweep()
+      await expect(svc.decide(swept.approval!.id, true, 'menubar', null)).rejects.toThrow('already declined')
+      for (const approvalId of [swept.approval!.id, unswept.approval!.id]) {
+        expect((await svc.call('s1', 'telegram_confirm_send', { approvalId })).isError).toBe(true)
+      }
+      nothingChanged()
+      expect(svc.uiState().recent).toEqual(before)
+    })
+
+    test(`retrying ${action === 'edit' ? 'an edit' : 'a delete'} asks again every time, never runs without a yes`, async () => {
+      const id = await ownMessage()
+      const ids: string[] = []
+      const retry = async () => {
+        const r = await svc.call('s1', tool, args(id))
+        expect(r.isError).toBeFalsy()
+        expect(r.text).toStartWith(`Not ${action === 'edit' ? 'edited' : 'deleted'} yet: needs the user's approval`)
+        expect(r.approval).toMatchObject({ action, messageId: id })
+        ids.push(r.approval!.id)
+        return r.approval!.id
+      }
+      const first = await retry()
+      await retry() // while the first still waits: a second card, not a run
+      expect(svc.uiState().approvals.map(a => a.id)).toEqual(ids)
+      await svc.decide(first, false, 'menubar', null)
+      await retry() // after a deny
+      now += TTL + 1
+      approvals.sweep()
+      await retry() // after a timeout
+      expect(new Set(ids).size).toBe(4)
+      nothingChanged()
+    })
+
+    test(`an approved ${action} runs once: a second approval of the same id, at the same moment or later, is refused`, async () => {
+      const id = await ownMessage()
+      const r = await svc.call('s1', tool, args(id))
+      const both = await Promise.allSettled([
+        svc.decide(r.approval!.id, true, 'menubar', null),
+        svc.decide(r.approval!.id, true, 'menubar', null),
+      ])
+      expect(both.map(x => x.status).sort()).toEqual(['fulfilled', 'rejected'])
+      await expect(svc.decide(r.approval!.id, true, 'menubar', null)).rejects.toThrow('already approved')
+      expect((await svc.call('s1', 'telegram_confirm_send', { approvalId: r.approval!.id })).isError).toBe(true)
+      expect(tg.edits.length + tg.deleted.length).toBe(1)
+    })
+  }
+
+  test('an approval id makes only the edit it was asked for, whatever is passed with it', async () => {
+    const id = await ownMessage()
+    const one = await svc.call('s1', 'telegram_edit_message', args(id, 'one'))
+    const two = await svc.call('s1', 'telegram_edit_message', args(id, 'two'))
+    // Extra arguments to confirm are not part of its input: they can't swap the text or the message.
+    const ok = await svc.call('s1', 'telegram_confirm_send', { approvalId: one.approval!.id, text: 'evil', messageId: 1, chat: 'anna' })
+    expect(ok.text).toBe(`Approved in chat. Edited message #${id} in Leo Perera [leo].`)
+    expect(tg.edits).toEqual([{ chatId: LEO.id, messageId: id, text: `one${FOOTER}`, parseMode: 'plain' }])
+    // The other ask is still its own, with its own text.
+    expect(svc.uiState().approvals).toEqual([expect.objectContaining({ id: two.approval!.id, text: `two${FOOTER}`, previousText: `one${FOOTER}` })])
+  })
+
+  test("an approval id deletes only the message it was asked for", async () => {
+    const [keep, gone] = (await ownMessages('keep me', 'take me back')) as [number, number]
+    const r = await svc.call('s1', 'telegram_delete_message', { chat: 'leo', messageId: gone })
+    await svc.call('s1', 'telegram_confirm_send', { approvalId: r.approval!.id, messageId: keep })
+    expect(tg.deleted).toEqual([{ chatId: LEO.id, messageId: gone }])
+    expect(svc.uiState().recent.map(x => x.messageId)).toEqual([keep])
+  })
+
+  test("an edit's approval id can't approve anything else once used: not a later edit, not a delete", async () => {
+    const id = await ownMessage()
+    const edit = await svc.call('s1', 'telegram_edit_message', args(id, 'one'))
+    await svc.decide(edit.approval!.id, true, 'menubar', null)
+    const later = await svc.call('s1', 'telegram_edit_message', args(id, 'two'))
+    const del = await svc.call('s1', 'telegram_delete_message', { chat: 'leo', messageId: id })
+    expect((await svc.call('s1', 'telegram_confirm_send', { approvalId: edit.approval!.id })).isError).toBe(true)
+    expect(tg.edits).toHaveLength(1)
+    expect(tg.deleted).toEqual([])
+    expect(svc.uiState().approvals.map(a => a.id)).toEqual([later.approval!.id, del.approval!.id])
+  })
+})
+
 describe('who has read a message', () => {
   beforeEach(() => setup(baseConfig))
 
