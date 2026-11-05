@@ -71,9 +71,12 @@ public static class Contacts
         _ => "May listen and reply without asking",
     };
 
-    /// <summary>The flash after a listen switch: turning a chat's auto-reply on or off.</summary>
+    /// <summary>
+    /// The flash after a listen switch: turning a chat's auto-reply on or off. On says only that Claude may
+    /// listen: a blocked chat still can't be replied to, and an ask-every-time one still asks.
+    /// </summary>
     public static string ListenFlash(bool on, string label) => on
-        ? $"Auto-reply on for {label}: Claude may listen and reply there."
+        ? $"Auto-reply on for {label}: Claude may listen there."
         : $"Auto-reply off for {label}: new messages there aren't passed to Claude.";
 
     /// <summary>

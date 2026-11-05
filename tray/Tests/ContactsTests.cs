@@ -120,7 +120,7 @@ public class ContactsTests
     [Fact]
     public void Listen_flash_says_what_the_switch_did()
     {
-        Assert.Equal("Auto-reply on for leo: Claude may listen and reply there.", Contacts.ListenFlash(true, "leo"));
+        Assert.Equal("Auto-reply on for leo: Claude may listen there.", Contacts.ListenFlash(true, "leo"));
         Assert.Equal("Auto-reply off for leo: new messages there aren't passed to Claude.", Contacts.ListenFlash(false, "leo"));
     }
 
