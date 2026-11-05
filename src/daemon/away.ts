@@ -114,6 +114,8 @@ interface Waiting {
   chat: PeerInfo
   msg: IncomingMessage
   paged: boolean
+  /** The schedule's wait. Only this much counts on top of the age limit: a timer that fires late (the laptop slept) is too late. */
+  delayMs: number
   timer: { cancel(): void }
 }
 
@@ -174,7 +176,8 @@ export class AwayResponder {
 
   /**
    * Every rule but the wait, checked when the message arrives and again when the wait is over.
-   * `extraAge`: the wait already served, which doesn't count against the message's age.
+   * `extraAge`: the schedule's wait, which doesn't count against the message's age. Only the wait as
+   * set: a timer that fires late (the laptop slept through it) finds the message too old.
    */
   #check(config: Config, msg: IncomingMessage, at: number, paged: boolean, extraAge: number): Skip | Ok {
     const { away } = config
@@ -217,7 +220,7 @@ export class AwayResponder {
       const delay = r.window.schedule.delaySeconds
       if (delay === 0) return await this.#reply(msg, at, paged, 0)
       const timer = (this.d.setTimer ?? realTimer)(() => this.#afterWait(chat.id), delay * 1000)
-      this.#waiting.set(chat.id, { at, chat, msg, paged, timer })
+      this.#waiting.set(chat.id, { at, chat, msg, paged, delayMs: delay * 1000, timer })
       return 'waiting'
     } catch (e) {
       this.#log(`away: ${e instanceof Error ? e.message : String(e)}`)
@@ -231,7 +234,7 @@ export class AwayResponder {
     this.#waiting.delete(chatId)
     try {
       if (this.#lastSeen >= w.at) return 'skipped'
-      return await this.#reply(w.msg, w.at, w.paged, this.#now() - w.at)
+      return await this.#reply(w.msg, w.at, w.paged, w.delayMs)
     } catch (e) {
       this.#log(`away: ${e instanceof Error ? e.message : String(e)}`)
       return 'skipped'

@@ -440,6 +440,22 @@ describe('waiting for you', () => {
     expect(tg.sent).toEqual([])
   })
 
+  test('a wait that ends late (the laptop slept) sends nothing', async () => {
+    const r = make()
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('waiting')
+    // The timer only fires after the laptop wakes, 40 minutes on: the message is old news by then.
+    clock += 40 * 60_000
+    expect(await timers[0]!.fn()).toBe('skipped')
+    expect(tg.sent).toEqual([])
+  })
+
+  test('a wait that ends a little late still replies', async () => {
+    const r = make()
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('waiting')
+    clock += 5 * 60_000
+    expect(await timers[0]!.fn()).toBe('sent')
+  })
+
   test('a chat can get another reply after the repeat minutes', async () => {
     const r = make()
     await r.onIncoming(msg(ANNA), false)
