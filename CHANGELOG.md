@@ -5,6 +5,7 @@ Each release's section here becomes its "What's new" on GitHub. Add the next one
 
 ## Unreleased
 
+- **Tray: auto-reply you can find again**: an open contact on Contacts has its **Auto-reply On / Off** back (with what listening there comes to), and the row switch and filter say **Auto-reply** (**All / Auto-reply on / Auto-reply off**) instead of Listen. Home gets a fourth tile, **Auto-reply**, two by two with the others: it counts the chats with auto-reply on, its chip says whether the away reply is off, on or replying now, and its section has the **away auto-reply switch** (on or off without opening the Away tab; **Hours and message** opens it) and **Auto-reply in chats**, every saved chat with its switch (moved here from Listening).
 - **Tray: choose who Claude listens to, and one section at a time**: Home's tiles are now **Waiting / Listening / Sent**, and the one you click is the section shown below them (a new draft switches back to Waiting). Under **Listening now** each watched chat has a switch to pause or resume it, a session watching several saved chats has an **all** switch, and **Chats Claude may listen to** lists every saved chat with its switch. Contacts rows get a **Listen** switch and an **All / Listening / Not listening** filter. A switch is the chat's auto-reply, so pausing stops its messages reaching every session at once while the watches stay.
 
 ## 1.1.0
