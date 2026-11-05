@@ -109,8 +109,10 @@ type Skip = { skip: string }
 type Ok = { window: AwayWindow }
 
 interface Waiting {
-  /** When the message came in (its own date, epoch ms). */
+  /** The message's own date (Telegram's clock, epoch ms). */
   at: number
+  /** When it reached the daemon (this PC's clock), for comparing with reads, which only this clock times. */
+  arrived: number
   chat: PeerInfo
   msg: IncomingMessage
   paged: boolean
@@ -130,8 +132,12 @@ export class AwayResponder {
   #lastOutgoing = new Map<number, number>()
   /** Replies waiting out a schedule's delay, by chat. */
   #waiting = new Map<number, Waiting>()
-  /** When you were last seen on Telegram (read a chat or sent a message yourself). */
-  #lastSeen = 0
+  /**
+   * When you were last seen on Telegram. Two clocks, never compared with each other: a read is timed by
+   * this PC, a message you sent by Telegram, and the two can be seconds apart.
+   */
+  #lastRead = 0
+  #lastSent = 0
   /** The hour whose limit was last logged, so it's logged once. */
   #limitLogged: number | null = null
 
@@ -220,7 +226,7 @@ export class AwayResponder {
       const delay = r.window.schedule.delaySeconds
       if (delay === 0) return await this.#reply(msg, at, paged, 0)
       const timer = (this.d.setTimer ?? realTimer)(() => this.#afterWait(chat.id), delay * 1000)
-      this.#waiting.set(chat.id, { at, chat, msg, paged, delayMs: delay * 1000, timer })
+      this.#waiting.set(chat.id, { at, arrived: this.#now(), chat, msg, paged, delayMs: delay * 1000, timer })
       return 'waiting'
     } catch (e) {
       this.#log(`away: ${e instanceof Error ? e.message : String(e)}`)
@@ -233,7 +239,7 @@ export class AwayResponder {
     if (!w) return 'skipped'
     this.#waiting.delete(chatId)
     try {
-      if (this.#lastSeen >= w.at) return 'skipped'
+      if (this.#lastRead >= w.arrived || this.#lastSent >= w.at) return 'skipped'
       return await this.#reply(w.msg, w.at, w.paged, w.delayMs)
     } catch (e) {
       this.#log(`away: ${e instanceof Error ? e.message : String(e)}`)
@@ -287,13 +293,26 @@ export class AwayResponder {
   }
 
   /**
-   * You are around: you read a chat or sent a message yourself, on any device. Replies still waiting
-   * for a message that came in before this are dropped.
+   * You read a chat, on any device: you are around. `at` is this PC's clock (Telegram's read updates
+   * carry no time). Replies waiting for a message that reached the daemon before then are dropped.
    */
-  notePresence(at: number = this.#now()) {
-    if (at > this.#lastSeen) this.#lastSeen = at
+  noteRead(at: number = this.#now()) {
+    if (at > this.#lastRead) this.#lastRead = at
+    this.#dropWaiting(w => w.arrived <= at)
+  }
+
+  /**
+   * You sent a message yourself (not Claude, the pager or an away reply), on any device. `sentAt` is the
+   * message's own date, Telegram's clock, so it's compared with the waiting messages' own dates.
+   */
+  noteSent(sentAt: number) {
+    if (sentAt > this.#lastSent) this.#lastSent = sentAt
+    this.#dropWaiting(w => w.at <= sentAt)
+  }
+
+  #dropWaiting(before: (w: Waiting) => boolean) {
     for (const [chatId, w] of this.#waiting) {
-      if (w.at > at) continue
+      if (!before(w)) continue
       w.timer.cancel()
       this.#waiting.delete(chatId)
       this.#log(`away: you're back, no away reply to ${chatId}`)

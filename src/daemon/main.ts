@@ -123,7 +123,7 @@ export async function createDaemon(o: DaemonOptions) {
       // Typed by you on a phone or desktop (not Claude, the pager or an away reply): you're back, so
       // replies still waiting out a schedule's delay are dropped. A catch-up replay is old news.
       if (!Number.isNaN(sentAt) && Date.now() - sentAt < PAGE_MAX_AGE_MS) {
-        void service.isOwnSend(msg).then(own => own || away.notePresence(sentAt))
+        void service.isOwnSend(msg).then(own => own || away.noteSent(sentAt))
       }
       service
         .handleOwnMessage(msg)
@@ -158,7 +158,7 @@ export async function createDaemon(o: DaemonOptions) {
     if (n > 0) log(`message ${msg.chatId}:${msg.id} -> ${n} session(s)`)
   })
   // Reading a chat anywhere means you're around: waiting away replies are dropped.
-  tg.onRead(() => away.notePresence())
+  tg.onRead(() => away.noteRead())
   tg.start()
   bot?.start()
   const pageTimer = setInterval(() => void pager.tick(), o.pageTickMs ?? 5_000)

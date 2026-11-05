@@ -405,7 +405,7 @@ describe('waiting for you', () => {
     expect(await r.onIncoming(msg(ANNA), false)).toBe('waiting')
     expect(await r.onIncoming(msg(LEO), false)).toBe('waiting')
     clock += 10_000
-    r.notePresence()
+    r.noteRead()
     expect(timers.map(t => t.cancelled)).toEqual([true, true])
     expect(logs).toContain(`away: you're back, no away reply to ${ANNA.id}`)
     expect(await fire(0)).toBe('skipped')
@@ -415,8 +415,41 @@ describe('waiting for you', () => {
 
   test('being around before the message came in does not stop it', async () => {
     const r = make()
-    r.notePresence(clock - 5_000)
+    r.noteRead(clock - 5_000)
     expect(await r.onIncoming(msg(ANNA), false)).toBe('waiting')
+    expect(timers[0]!.cancelled).toBe(false)
+    expect(await fire()).toBe('sent')
+  })
+
+  test('sending a message yourself drops the replies waiting for older messages', async () => {
+    const r = make()
+    expect(await r.onIncoming(msg(ANNA), false)).toBe('waiting')
+    clock += 10_000
+    expect(await r.onIncoming(msg(LEO), false)).toBe('waiting')
+    // You typed something on your phone between the two.
+    r.noteSent(clock - 5_000)
+    expect(timers.map(t => t.cancelled)).toEqual([true, false])
+    expect(await fire(1)).toBe('sent')
+    expect(tg.sent.map(s => s.chatId)).toEqual([LEO.id])
+  })
+
+  test("Telegram's clock running ahead of this PC doesn't hide that you read", async () => {
+    const r = make()
+    // The message is dated by Telegram 20 s ahead of this PC.
+    expect(await r.onIncoming(msg(ANNA, new Date(clock + 20_000)), false)).toBe('waiting')
+    clock += 10_000
+    r.noteRead()
+    expect(timers[0]!.cancelled).toBe(true)
+    expect(await fire()).toBe('skipped')
+    expect(tg.sent).toEqual([])
+  })
+
+  test("Telegram's clock running behind this PC doesn't drop a reply for a message after your read", async () => {
+    const r = make()
+    r.noteRead()
+    clock += 2_000
+    // Arrives after the read, but dated by Telegram 20 s behind this PC.
+    expect(await r.onIncoming(msg(ANNA, new Date(clock - 20_000)), false)).toBe('waiting')
     expect(timers[0]!.cancelled).toBe(false)
     expect(await fire()).toBe('sent')
   })
