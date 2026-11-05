@@ -216,7 +216,8 @@ public sealed class PanelViewModel : Observable
 
     /// <summary>Home → Auto-reply: the away switch, showing the value being saved until a poll brings it back.</summary>
     public bool AwayOn => _awayPending ?? State?.Away?.Enabled ?? false;
-    public bool AwayQuickIdle => !_awaySaving && State?.Away is not null;
+    /// <summary>Off while a change saves and until a poll that started after it shows what was saved.</summary>
+    public bool AwayQuickIdle => !_awaySaving && _awayPending is null && State?.Away is not null;
     public string AwayQuickTip => AwayOn ? "Turn the away reply off" : "Turn the away reply on, for the hours set on the Away tab";
 
     /// <summary>"Away until 09:00" on the main page while replies can go out.</summary>
@@ -325,30 +326,36 @@ public sealed class PanelViewModel : Observable
     /// </summary>
     async Task QuickAwayAsync(bool on)
     {
-        if (_awaySaving || State?.Away is null) return;
+        // Still saving, here or on the Away tab, or waiting for the poll after a save: refuse, and put
+        // back the switch that was clicked.
+        if (_awaySaving || _awayPending is not null || State?.Away is null)
+        {
+            RaiseAwayQuick();
+            return;
+        }
         _awayPending = on;
         _awaySaving = true;
         RaiseAwayQuick();
         CommandManager.InvalidateRequerySuggested();
-        ActionResult r;
         try
         {
-            r = await _api.SaveAwayAsync(new AwayChange(Enabled: on));
-        }
-        finally
-        {
-            _awaySaving = false;
-            CommandManager.InvalidateRequerySuggested();
-        }
-        if (r.Ok)
-        {
-            // The Away tab, if it was loaded, follows without a reload that would drop typing there.
-            if (_awaySaved is { } saved) _awaySaved = saved with { Enabled = on };
-            if (_awayLoaded) AwayEnabled = on;
-        }
-        ShowFlash(r.Text, r.Ok);
-        try
-        {
+            ActionResult r;
+            try
+            {
+                r = await _api.SaveAwayAsync(new AwayChange(Enabled: on));
+            }
+            finally
+            {
+                _awaySaving = false;
+                CommandManager.InvalidateRequerySuggested();
+            }
+            if (r.Ok)
+            {
+                // The Away tab, if it was loaded, follows without a reload that would drop typing there.
+                if (_awaySaved is { } saved) _awaySaved = saved with { Enabled = on };
+                if (_awayLoaded) AwayEnabled = on;
+            }
+            ShowFlash(r.Text, r.Ok);
             await PollFreshAsync();
         }
         finally
