@@ -49,7 +49,9 @@ public sealed record PollResult(UiState? State, string? Problem)
 public sealed record Decision(bool Approve, string? Remember = null, string? Nickname = null);
 
 /// <summary>An Away-page edit for POST /ui/away: only the fields that are set go in the body.</summary>
-public sealed record AwayChange(bool? Enabled = null, string? From = null, string? Until = null, string? Message = null, int? QuietMinutes = null);
+public sealed record AwayChange(bool? Enabled = null, string? From = null, string? Until = null, string? Message = null, int? QuietMinutes = null,
+    /// <summary>The whole list, replacing what is saved.</summary>
+    IReadOnlyList<ScheduleData>? Schedules = null);
 
 /// <summary>A Contacts-page edit; null fields stay as they are.</summary>
 public sealed record ContactChange(string Nickname, string? SendMode = null, bool? AutoReply = null, string? Rename = null, bool? PageFrom = null);
@@ -141,6 +143,22 @@ public sealed class DaemonApi(HttpClient http, int port, ITokenSource tokens, Ti
         if (change.Until is not null) body["until"] = change.Until;
         if (change.Message is not null) body["message"] = change.Message;
         if (change.QuietMinutes is { } quiet) body["quietMinutes"] = quiet;
+        if (change.Schedules is { } list)
+        {
+            var arr = new JsonArray();
+            foreach (var x in list)
+            {
+                var days = new JsonArray();
+                foreach (var d in x.Days) days.Add(d);
+                arr.Add(new JsonObject
+                {
+                    ["id"] = x.Id, ["name"] = x.Name, ["enabled"] = x.Enabled, ["from"] = x.From, ["until"] = x.Until,
+                    ["days"] = days, ["startDate"] = x.StartDate, ["endDate"] = x.EndDate,
+                    ["delaySeconds"] = x.DelaySeconds, ["repeatMinutes"] = x.RepeatMinutes, ["message"] = x.Message,
+                });
+            }
+            body["schedules"] = arr;
+        }
         return PostAsync("/ui/away", body, ok => ok ? "Saved." : "Not changed.", ct, notFound: Away.OlderDaemon);
     }
 

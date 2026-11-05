@@ -41,13 +41,14 @@ public sealed class PanelViewModel : Observable
     HomeSection _section = HomeSection.Waiting;
     IReadOnlyCollection<string> _lastWaiting = [];
     bool _contactsPage;
-    bool _awayPage, _awayLoaded, _awaySaving;
-    bool _awayEnabled;
-    /// <summary>The value Home's away switch is saving, until a poll after it shows what was saved.</summary>
+    bool _awayPage, _awaySaving, _showTemplates, _awayQuietLoaded;
+    /// <summary>The value the away switch is saving, until a poll after it shows what was saved.</summary>
     bool? _awayPending;
-    string _awayFrom = "", _awayUntil = "", _awayMessage = "", _awayQuiet = "";
-    /// <summary>What the daemon has saved as far as this page knows: the fields as loaded, then as last sent. Save diffs against it.</summary>
-    (bool Enabled, string From, string Until, string Message, int Quiet)? _awaySaved;
+    string _awayQuiet = "";
+    /// <summary>The schedule rows by id, kept across polls so typing and open rows survive.</summary>
+    readonly Dictionary<string, ScheduleVM> _schedules = [];
+    /// <summary>Schedules just saved: the next poll overwrites their fields with what the daemon kept.</summary>
+    readonly HashSet<string> _forceSchedule = [];
     string _search = "";
     string? _openNickname;
     ListenFilter _filter = ListenFilter.All;
@@ -74,12 +75,13 @@ public sealed class PanelViewModel : Observable
         ShowAway = new Command(_ =>
         {
             ContactsPage = false;
-            LoadAway();
             AwayPage = true;
         });
-        SetAwayEnabled = new Command(p => _ = ToggleAwayAsync(p as string == "on"), _ => !_awaySaving && AwayShown);
-        SaveAway = new Command(_ => _ = SaveAwayAsync(), _ => !_awaySaving && AwayError is null && AwayShown);
         ToggleAwayQuick = new Command(_ => _ = QuickAwayAsync(!AwayOn));
+        ShowAdd = new Command(_ => ShowTemplates = !ShowTemplates, _ => CanAddSchedule);
+        SaveQuiet = new Command(_ => _ = SaveQuietAsync(), _ => !_awaySaving && QuietError is null && QuietDirty);
+        foreach (var t in Away.Templates(DateOnly.FromDateTime(DateTime.Today)))
+            Templates.Add(new TemplateVM(t, new Command(_ => AddSchedule(t))));
         ClearSearch = new Command(_ => Search = "");
         OpenRules = new Command(_ => OpenFile("config.json"));
         OpenLog = new Command(_ => OpenFile("daemon.log"));
@@ -206,128 +208,75 @@ public sealed class PanelViewModel : Observable
         }
     }
 
-    /// <summary>The daemon sent an away state, so the page can show its fields.</summary>
-    public bool AwayShown => ShowContent && State?.Away is not null;
+    /// <summary>The daemon sent away schedules, so the page can show them.</summary>
+    public bool AwayShown => ShowContent && State?.Away?.Schedules is not null;
 
-    /// <summary>Instead of the fields: a daemon too old to know about away.</summary>
-    public string? AwayPlaceholder => ShowContent && State!.Away is null ? Away.OlderDaemon : null;
+    /// <summary>Instead of the page: a daemon too old to know about away, or about schedules.</summary>
+    public string? AwayPlaceholder =>
+        !ShowContent ? null : State!.Away is null ? Away.OlderDaemon : State.Away.Schedules is null ? Away.NoSchedules : null;
 
     public string? AwayStatus => State?.Away is { } a ? Away.Status(a) : null;
 
-    /// <summary>Home → Auto-reply: the away switch, showing the value being saved until a poll brings it back.</summary>
+    /// <summary>Away is on and a schedule is replying right now.</summary>
+    public bool AwayOnNow => State?.Away is { Enabled: true, Active: true };
+
+    /// <summary>The master switch (Home → Auto-reply and the Away tab), showing the value being saved until a poll brings it back.</summary>
     public bool AwayOn => _awayPending ?? State?.Away?.Enabled ?? false;
     /// <summary>Off while a change saves and until a poll that started after it shows what was saved.</summary>
     public bool AwayQuickIdle => !_awaySaving && _awayPending is null && State?.Away is not null;
-    public string AwayQuickTip => AwayOn ? "Turn the away reply off" : "Turn the away reply on, for the hours set on the Away tab";
+    public string AwayQuickTip => AwayOn ? "Turn every away reply off" : "Turn away replies on, for the schedules on the Away tab";
 
-    /// <summary>"Away until 09:00" on the main page while replies can go out.</summary>
+    /// <summary>"Daytime until 21:00" on the main page while replies can go out.</summary>
     public string? AwayBadge => ShowContent ? Away.Badge(State?.Away) : null;
 
-    public bool AwayEnabled
+    /// <summary>The Away tab's headline.</summary>
+    public string AwayHeadline => AwayOn ? "Away replies are on" : "Away replies are off";
+
+    /// <summary>The sun by day, the moon at night (or while off).</summary>
+    public string AwayIcon => State?.Away is { } a && Away.Current(a) is { } c ? (Away.IsNight(c.From, c.Until) ? "moon" : "sun") : "moon";
+
+    /// <summary>"1 chat is waiting for you…" while a reply waits out a schedule's delay.</summary>
+    public string? AwayWaiting => State?.Away is { Waiting: > 0 } a
+        ? $"{a.Waiting} chat{(a.Waiting == 1 ? " is" : "s are")} waiting for you. Read {(a.Waiting == 1 ? "it" : "them")} or reply and no away reply goes out."
+        : null;
+
+    /// <summary>Today's timeline: a lane per saved schedule.</summary>
+    public IReadOnlyList<TimelineLane> TimelineLanes { get; private set; } = [];
+    public double TimelineNow => DateTime.Now.TimeOfDay.TotalMinutes / 1440;
+
+    public ObservableCollection<ScheduleVM> Schedules { get; } = [];
+    public ObservableCollection<TemplateVM> Templates { get; } = [];
+
+    /// <summary>The template chips under "Add a schedule".</summary>
+    public bool ShowTemplates
     {
-        get => _awayEnabled;
-        set
-        {
-            if (!Set(ref _awayEnabled, value)) return;
-            Raise(nameof(AwayDisabled));
-        }
+        get => _showTemplates;
+        set => Set(ref _showTemplates, value);
     }
 
-    public bool AwayDisabled => !_awayEnabled;
-
-    public string AwayFrom
-    {
-        get => _awayFrom;
-        set => EditAway(ref _awayFrom, value);
-    }
-
-    public string AwayUntil
-    {
-        get => _awayUntil;
-        set => EditAway(ref _awayUntil, value);
-    }
+    public bool CanAddSchedule => Schedules.Count < Away.SchedulesMax;
+    public string? NoSchedulesYet => AwayShown && Schedules.Count == 0 ? "No schedules yet. Add one to start replying while you're away." : null;
 
     /// <summary>Quiet minutes as typed (a whole number, 0 to 1440).</summary>
     public string AwayQuiet
     {
         get => _awayQuiet;
-        set => EditAway(ref _awayQuiet, value);
-    }
-
-    public string AwayMessage
-    {
-        get => _awayMessage;
         set
         {
-            if (EditAway(ref _awayMessage, value)) Raise(nameof(AwayPreview));
-        }
-    }
-
-    /// <summary>The first problem with what is typed, or null. Live, so Save stays off until it is fixed.</summary>
-    public string? AwayError => Away.Check(_awayFrom.Trim(), _awayUntil.Trim(), _awayMessage, _awayQuiet);
-
-    /// <summary>What the typed message would send. The daemon's own preview shows only the saved one.</summary>
-    public string AwayPreview => Away.Preview(_awayMessage, State?.Telegram.Me?.Name, State?.Footer ?? "");
-
-    /// <summary>Sets one of the typed fields. The caller's name goes to Set, or the box bound to it would never hear of the change.</summary>
-    bool EditAway(ref string field, string? value, [CallerMemberName] string? name = null)
-    {
-        if (!Set(ref field, value ?? "", name)) return false;
-        Raise(nameof(AwayError));
-        CommandManager.InvalidateRequerySuggested();
-        return true;
-    }
-
-    /// <summary>Fills the fields from the daemon's saved state. Only when the page opens and after a save: polling leaves them alone.</summary>
-    void LoadAway()
-    {
-        if (State?.Away is not { } a) return;
-        _awayLoaded = true;
-        _awaySaved = (a.Enabled, a.From, a.Until, a.Message, a.QuietMinutes);
-        AwayEnabled = a.Enabled;
-        AwayFrom = a.From;
-        AwayUntil = a.Until;
-        AwayMessage = a.Message;
-        AwayQuiet = a.QuietMinutes.ToString(CultureInfo.InvariantCulture);
-        Raise(nameof(AwayPreview));
-    }
-
-    /// <summary>
-    /// On/Off saves at once, on its own: hours and message still wait for Save, so a half-typed
-    /// time never goes out with it. Shows the new state straight away and puts it back if the daemon says no.
-    /// </summary>
-    async Task ToggleAwayAsync(bool on)
-    {
-        if (_awaySaving || _awaySaved is null || on == _awayEnabled) return;
-        var before = _awayEnabled;
-        AwayEnabled = on;
-        ActionResult r;
-        _awaySaving = true;
-        CommandManager.InvalidateRequerySuggested();
-        try
-        {
-            r = await _api.SaveAwayAsync(new AwayChange(Enabled: on));
-        }
-        finally
-        {
-            _awaySaving = false;
+            if (!Set(ref _awayQuiet, value ?? "")) return;
+            Raise(nameof(QuietError));
+            Raise(nameof(QuietDirty));
             CommandManager.InvalidateRequerySuggested();
         }
-        // Read the baseline after the await: the page may have reloaded it meanwhile.
-        if (r.Ok && _awaySaved is { } saved) _awaySaved = saved with { Enabled = on };
-        else AwayEnabled = before;
-        ShowFlash(r.Text, r.Ok);
-        await PollAsync();
     }
 
-    /// <summary>
-    /// Home's away switch: on or off at once, as the Away tab's On / Off does, without opening it. Hours
-    /// and message stay as saved.
-    /// </summary>
+    public string? QuietError => Away.Quiet(_awayQuiet) is null ? $"A whole number of minutes, 0 to {Away.QuietMax}." : null;
+    public bool QuietDirty => State?.Away is { } a && Away.Quiet(_awayQuiet) is { } q && q != a.QuietMinutes;
+
+    /// <summary>Home's and the Away tab's switch: away on or off at once. The schedules stay as saved.</summary>
     async Task QuickAwayAsync(bool on)
     {
-        // Still saving, here or on the Away tab, or waiting for the poll after a save: refuse, and put
-        // back the switch that was clicked.
+        // Still saving, or waiting for the poll after a save: refuse, and put back the switch that was clicked.
         if (_awaySaving || _awayPending is not null || State?.Away is null)
         {
             RaiseAwayQuick();
@@ -349,12 +298,6 @@ public sealed class PanelViewModel : Observable
                 _awaySaving = false;
                 CommandManager.InvalidateRequerySuggested();
             }
-            if (r.Ok)
-            {
-                // The Away tab, if it was loaded, follows without a reload that would drop typing there.
-                if (_awaySaved is { } saved) _awaySaved = saved with { Enabled = on };
-                if (_awayLoaded) AwayEnabled = on;
-            }
             ShowFlash(r.Text, r.Ok);
             await PollFreshAsync();
         }
@@ -370,33 +313,84 @@ public sealed class PanelViewModel : Observable
         Raise(nameof(AwayOn));
         Raise(nameof(AwayQuickIdle));
         Raise(nameof(AwayQuickTip));
+        Raise(nameof(AwayHeadline));
     }
 
-    /// <summary>Sends only what differs from what was loaded or last saved. After a save the fields stay as typed (trimmed).</summary>
-    async Task SaveAwayAsync()
+    async Task SaveQuietAsync()
     {
-        if (_awaySaved is not { } saved || AwayError is not null) return;
-        // What goes out, captured before the await: typing during the round trip must not
-        // become the new baseline, or that edit would look already saved.
-        var typedFrom = _awayFrom;
-        var typedUntil = _awayUntil;
-        var typedQuiet = _awayQuiet;
-        // AwayError is null, so the quiet minutes parse.
-        var sent = (Enabled: _awayEnabled, From: typedFrom.Trim(), Until: typedUntil.Trim(), Message: _awayMessage, Quiet: Away.Quiet(typedQuiet)!.Value);
-        var change = new AwayChange(
-            sent.Enabled != saved.Enabled ? sent.Enabled : null,
-            sent.From != saved.From ? sent.From : null,
-            sent.Until != saved.Until ? sent.Until : null,
-            sent.Message != saved.Message ? sent.Message : null,
-            sent.Quiet != saved.Quiet ? sent.Quiet : null);
-        if (change == new AwayChange())
+        if (Away.Quiet(_awayQuiet) is not { } q) return;
+        await SaveAwayChangeAsync(new AwayChange(QuietMinutes: q), null);
+        _awayQuietLoaded = false;
+    }
+
+    /// <summary>The schedules as saved, each passed through `map` (null drops it), then `added` at the end.</summary>
+    List<ScheduleData> SavedSchedules(Func<ScheduleData, ScheduleData?> map, ScheduleData? added = null)
+    {
+        var list = (State?.Away?.Schedules ?? []).Select(s => map(s.ToData())).OfType<ScheduleData>().ToList();
+        if (added is not null) list.Add(added);
+        return list;
+    }
+
+    /// <summary>Save one schedule's edits (or add a new one); the others go back as saved.</summary>
+    public async Task SaveScheduleAsync(ScheduleVM vm)
+    {
+        if (vm.Error is not null) return;
+        var data = vm.Data();
+        var list = vm.IsNew ? SavedSchedules(s => s, data) : SavedSchedules(s => s.Id == vm.Id ? data : s);
+        if (await SaveAwayChangeAsync(new AwayChange(Schedules: list), vm, vm.IsNew ? $"Added {data.Name}." : $"Saved {data.Name}."))
         {
-            ShowFlash("Nothing changed.");
-            return;
+            vm.IsOpen = false;
+            _forceSchedule.Add(vm.Id);
         }
-        ActionResult r;
+        await PollFreshAsync();
+    }
+
+    public async Task SetScheduleEnabledAsync(ScheduleVM vm, bool on)
+    {
+        if (vm.IsNew) return;
+        await SaveAwayChangeAsync(new AwayChange(Schedules: SavedSchedules(s => s.Id == vm.Id ? s with { Enabled = on } : s)), vm,
+            $"{vm.Title} is {(on ? "on" : "off")}.");
+        await PollFreshAsync();
+    }
+
+    public async Task DeleteScheduleAsync(ScheduleVM vm)
+    {
+        if (await SaveAwayChangeAsync(new AwayChange(Schedules: SavedSchedules(s => s.Id == vm.Id ? null : s)), vm, $"Deleted {vm.Title}."))
+        {
+            _schedules.Remove(vm.Id);
+            Schedules.Remove(vm);
+            RaiseSchedules();
+        }
+        await PollFreshAsync();
+    }
+
+    /// <summary>A new schedule's Cancel: it was never saved, so it just goes.</summary>
+    public void DropNewSchedule(ScheduleVM vm)
+    {
+        _schedules.Remove(vm.Id);
+        Schedules.Remove(vm);
+        RaiseSchedules();
+    }
+
+    void AddSchedule(ScheduleTemplate t)
+    {
+        ShowTemplates = false;
+        if (!CanAddSchedule) return;
+        var id = Away.NewId(_schedules.Keys);
+        var vm = new ScheduleVM(this, null, t, id) { Index = Schedules.Count, IsOpen = true };
+        foreach (var other in Schedules) other.IsOpen = false;
+        _schedules[id] = vm;
+        Schedules.Add(vm);
+        RaiseSchedules();
+    }
+
+    /// <summary>POST /ui/away. The row (when there is one) is busy meanwhile. True when the daemon saved it.</summary>
+    async Task<bool> SaveAwayChangeAsync(AwayChange change, ScheduleVM? vm, string? okText = null)
+    {
+        if (vm is not null) vm.Busy = true;
         _awaySaving = true;
         CommandManager.InvalidateRequerySuggested();
+        ActionResult r;
         try
         {
             r = await _api.SaveAwayAsync(change);
@@ -404,18 +398,52 @@ public sealed class PanelViewModel : Observable
         finally
         {
             _awaySaving = false;
+            if (vm is not null) vm.Busy = false;
             CommandManager.InvalidateRequerySuggested();
         }
-        if (r.Ok)
+        ShowFlash(r.Ok && okText is not null ? okText : r.Text, r.Ok);
+        return r.Ok;
+    }
+
+    /// <summary>The schedule rows follow the daemon's list; new, unsaved ones stay at the end.</summary>
+    void SyncSchedules(DateTime now)
+    {
+        var saved = State?.Away?.Schedules ?? [];
+        foreach (var gone in _schedules.Where(kv => !kv.Value.IsNew && saved.All(s => s.Id != kv.Key)).Select(kv => kv.Key).ToList())
+            _schedules.Remove(gone);
+        var rows = new List<ScheduleVM>();
+        foreach (var s in saved)
         {
-            _awaySaved = sent;
-            // Show the trimmed times, but only in fields left alone since the save started.
-            if (_awayFrom == typedFrom) AwayFrom = sent.From;
-            if (_awayUntil == typedUntil) AwayUntil = sent.Until;
-            if (_awayQuiet == typedQuiet) AwayQuiet = sent.Quiet.ToString(CultureInfo.InvariantCulture);
+            if (_schedules.TryGetValue(s.Id, out var vm)) vm.Update(s, force: _forceSchedule.Remove(s.Id));
+            else _schedules[s.Id] = vm = new ScheduleVM(this, s, null, s.Id);
+            rows.Add(vm);
         }
-        ShowFlash(r.Text, r.Ok);
-        await PollAsync();
+        rows.AddRange(_schedules.Values.Where(v => v.IsNew && saved.All(s => s.Id != v.Id)));
+        for (var i = 0; i < rows.Count; i++)
+        {
+            rows[i].Index = i;
+            rows[i].RefreshPreview();
+        }
+        ListSync.Apply(Schedules, rows);
+
+        var on = State?.Away?.Enabled == true;
+        TimelineLanes = rows.Where(r => r.Saved is not null)
+            .Select(r => new TimelineLane(r.Color, Away.TodaySpans(r.Saved!, now), on && r.Saved!.Enabled, r.Title)).ToList();
+        Raise(nameof(TimelineLanes));
+        Raise(nameof(TimelineNow));
+        if (!_awayQuietLoaded && State?.Away is { } a)
+        {
+            _awayQuietLoaded = true;
+            AwayQuiet = a.QuietMinutes.ToString(CultureInfo.InvariantCulture);
+        }
+        RaiseSchedules();
+    }
+
+    void RaiseSchedules()
+    {
+        Raise(nameof(CanAddSchedule));
+        Raise(nameof(NoSchedulesYet));
+        Raise(nameof(QuietDirty));
     }
 
     public string Search
@@ -485,10 +513,11 @@ public sealed class PanelViewModel : Observable
 
     public ICommand ShowContacts { get; }
     public ICommand ShowAway { get; }
-    public ICommand SetAwayEnabled { get; }
-    public ICommand SaveAway { get; }
-    /// <summary>Home → Auto-reply: the away switch.</summary>
+    /// <summary>Home → Auto-reply and the Away tab: the away switch.</summary>
     public ICommand ToggleAwayQuick { get; }
+    /// <summary>"Add a schedule": shows the templates to start from.</summary>
+    public ICommand ShowAdd { get; }
+    public ICommand SaveQuiet { get; }
     public ICommand ShowMain { get; }
     /// <summary>The Contacts page's "N drafts waiting · Review": Home, on Waiting.</summary>
     public ICommand ReviewWaiting { get; }
@@ -697,8 +726,7 @@ public sealed class PanelViewModel : Observable
             ListSync.Apply(Recent, recent.Select(c => RecentChatVM.From(c, s!.Footer, now, _openRecent.Contains(c.ChatId), ToggleRecent)).ToList());
         }
 
-// The page was opened before the daemon answered: fill the fields once it does.
-        if (_awayPage && !_awayLoaded) LoadAway();
+        SyncSchedules(now.LocalDateTime);
 
         _stats = s is null ? [] : Presenter.Stats(s);
         if (s is not null)
@@ -713,8 +741,8 @@ public sealed class PanelViewModel : Observable
                  {
                      nameof(Header), nameof(ShowContent), nameof(ShownProblem), nameof(ConfigError), nameof(ApprovalCount),
                      nameof(NoApprovals), nameof(NoListening), nameof(NoRecent), nameof(ContactsSummary), nameof(WaitingBanner),
-                     nameof(AwayShown), nameof(AwayPlaceholder), nameof(AwayStatus), nameof(AwayBadge), nameof(AwayError), nameof(AwayPreview),
-                     nameof(AwayOn), nameof(AwayQuickIdle), nameof(AwayQuickTip),
+                     nameof(AwayShown), nameof(AwayPlaceholder), nameof(AwayStatus), nameof(AwayBadge), nameof(AwayOnNow),
+                     nameof(AwayOn), nameof(AwayQuickIdle), nameof(AwayQuickTip), nameof(AwayHeadline), nameof(AwayIcon), nameof(AwayWaiting),
                  })
         {
             Raise(name);

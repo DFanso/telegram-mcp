@@ -87,6 +87,39 @@ public class JsonTests
     }
 
     [Fact]
+    public void Parses_away_schedules()
+    {
+        var node = System.Text.Json.Nodes.JsonNode.Parse(Fixtures.WithContacts("\"defaultPolicy\": \"approve\""))!.AsObject();
+        var away = node["away"]!.AsObject();
+        away["current"] = "night";
+        away["currentUntil"] = "2026-11-03T02:30:00.000Z";
+        away["waiting"] = 2;
+        away["schedules"] = System.Text.Json.Nodes.JsonNode.Parse("""
+            [{"id":"night","name":"Night","enabled":true,"from":"21:00","until":"08:00","days":[0,1,2,3,4,5,6],
+              "startDate":null,"endDate":"2026-12-24","delaySeconds":0,"repeatMinutes":0,"message":"m","active":true,"preview":"p"}]
+            """);
+
+        var a = Json.ParseState(node.ToJsonString()).Away!;
+
+        Assert.Equal("night", a.Current);
+        Assert.Equal(2, a.Waiting);
+        var s = Assert.Single(a.Schedules!);
+        Assert.Equal(new UiAwaySchedule("night", "Night", true, "21:00", "08:00", s.Days, null, "2026-12-24", 0, 0, "m", true, "p"), s);
+        Assert.Equal([0, 1, 2, 3, 4, 5, 6], s.Days);
+        Assert.Same(s, Away.Current(a));
+    }
+
+    [Fact]
+    public void An_older_daemon_has_no_schedules()
+    {
+        var a = Fixtures.DemoState().Away!;
+
+        Assert.Null(a.Schedules);
+        Assert.Null(a.Current);
+        Assert.Equal(0, a.Waiting);
+    }
+
+    [Fact]
     public void A_null_next_change_parses()
     {
         var node = System.Text.Json.Nodes.JsonNode.Parse(Fixtures.WithContacts("\"defaultPolicy\": \"approve\""))!.AsObject();
