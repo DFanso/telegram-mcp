@@ -97,7 +97,7 @@ Downloads go to `~/Downloads/telegram-mcp/<chat>/` (`TELEGRAM_MCP_DOWNLOADS`), n
 ```jsonc
 {
   "guides": ["Free-text rules every session sees when it connects."],
-  "footer": "\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ",        // appended to every message, once
+  "footer": "\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ",        // appended to every message, once (see Footer)
   "defaultPolicy": "approve",                // chats in no list: "approve" or "block"
   "rules": {
     "blocked":         [5550001111],         // never send
@@ -207,39 +207,78 @@ The bot only messages the account you're logged in as, and ignores button presse
 
 ## Away auto-reply
 
-When you're off for the night, friends who write get one reply saying so. It's **off by default**. Turn it on and it answers during the hours you set (6pm to 9am unless you change it, in the laptop's local time; the start is included and the end is not):
+When you're away from the keyboard, people who write to you in a private chat get a reply saying so. It's **off by default**. It runs on **schedules**, each with its own hours, days, dates, wait and message. Out of the box there are two:
 
-> Chamodh is off the grid for the night and will get back to you tomorrow. If something's on fire, call them 🔥
+| Schedule | Hours | Waits | Replies |
+| --- | --- | --- | --- |
+| **Daytime** | 08:00 to 21:00, every day | 30 seconds, then again after an hour if they write again | Hi! Thanks for contacting me 🙏 I'm unavailable right now and will reply as soon as I'm back at my seat. |
+| **Night** | 21:00 to 08:00, every day | replies at once, once a night | Hi! Thanks for your message. I'm unavailable for the rest of the day and will get back to you when I'm back at work tomorrow 🌙 |
 
-`{name}` becomes your first name, and the footer is added as with any message. The reply goes out plain (not as a reply to their message) and without approval. The rules, so it never gets in the way:
+Hours are in the laptop's local time; the start is included and the end is not, and a window that ends before it starts runs past midnight. `{name}` in a message becomes your first name, and the [footer](#footer) is added as with any message. The reply goes out plain (not as a reply to their message) and **without approval**.
+
+**The wait lets you answer first.** A schedule with a wait holds the reply for that long (up to 10 minutes). If you come back in the meantime, nothing is sent. Coming back means reading a chat or sending a message yourself, on any device (phone, desktop or web). Claude's messages, the Page button's and the away reply's own don't count. `daemon.log` says "you're back, no away reply to …" when one is dropped.
+
+**Each schedule** has:
+
+- **Hours** (from, until), and **days** of the week (all, weekdays, weekends, or any you pick).
+- **Dates** (optional): only from one date, until another, or between the two, e.g. a holiday. Outside them the schedule does nothing.
+- **Wait**: 0 (reply at once) to 600 seconds.
+- **Repeat**: 0 means once per chat per window; a number of minutes means again after that long, if they write again.
+- **Message**: at most 1000 characters.
+
+Up to 12 schedules. When two cover the same moment, the more specific one replies: one with dates beats one without, then the shorter window wins. So a "Lunch break" 13:00–14:00 schedule takes over from Daytime for that hour, and a "Time off" schedule with dates covers whole days.
+
+The rules, so it never gets in the way:
 
 - Only private chats with people: not groups, bots, Saved Messages, or Telegram's service and support accounts.
-- Only chats whose rules allow a message without asking: never a **Blocked** or **Ask every time** chat, nor a chat that isn't saved when `defaultPolicy` is `"block"`. (Like the pager's fixed replies: nobody is there to approve it.)
-- Once per chat per night, and at most 20 replies a night in all, so a wave of messages from strangers doesn't look like spam from your account. A restart in the middle of the night doesn't reset either.
-- Only while it's still away hours: a message from 08:58 that the laptop picks up at 09:05 gets nothing.
+- Never a **Blocked** chat, nor a chat that isn't saved when `defaultPolicy` is `"block"`. **Ask every time** chats do get it: the reply is your own fixed text, so there is nothing to approve.
+- Once per chat per window (or per the schedule's repeat), and at most 20 replies in any hour in all, so a wave of messages doesn't look like spam from your account. A restart doesn't reset either.
+- Only while it's still the same away window: a message from 07:58 that the laptop picks up at 08:05 gets nothing, and one from 20:58 picked up at 21:01 gets neither reply.
 - Not for 30 minutes after anything was sent from your account in that chat, whether you typed it or Claude sent it (`quietMinutes`; 0 turns this off). The Page button's message and the away reply itself don't count.
 - Not while a Claude session is handling the chat (watching it, or after `/reply`).
 - Not to someone who is paging you, or whose page is still waiting.
-- Only for messages less than 10 minutes old, so catching up after the laptop sleeps doesn't send night-time replies in the morning.
+- Only for messages less than 10 minutes old (plus the wait), so catching up after the laptop sleeps doesn't send night-time replies in the morning.
 
-Change it from the Away page of the menu bar app (macOS) or the Away tab of the tray app (Windows), with `tgmcp away`, or in `config.json`:
+Set it up on the **Away** tab of the tray app (Windows), with `tgmcp away`, or in `config.json`. The menu bar app's Away page (macOS) and the `hours` / `message` commands change the first schedule.
 
 ```
-tgmcp away                          # show the settings and the reply text
+tgmcp away                          # every schedule, and what's replying now
 tgmcp away on | off
-tgmcp away hours 19:00 08:30        # from, until (24-hour HH:MM; they can't be equal)
-tgmcp away message "{name} is away until tomorrow."   # at most 1000 characters
 tgmcp away quiet 60
+tgmcp away hours 19:00 08:30        # the first schedule's hours
+tgmcp away message "{name} is away until tomorrow."   # the first schedule's message
 ```
 
 ```jsonc
 "away": {
-  "enabled": true, "from": "18:00", "until": "09:00",
-  "message": "{name} is away until tomorrow.", "quietMinutes": 30
+  "enabled": true,
+  "quietMinutes": 30,
+  "schedules": [
+    { "id": "day", "name": "Daytime", "enabled": true, "from": "08:00", "until": "21:00",
+      "days": [0, 1, 2, 3, 4, 5, 6], "delaySeconds": 30, "repeatMinutes": 60, "message": "…" },
+    { "id": "night", "name": "Night", "enabled": true, "from": "21:00", "until": "08:00",
+      "days": [0, 1, 2, 3, 4, 5, 6], "delaySeconds": 0, "repeatMinutes": 0, "message": "…" },
+    { "id": "trip", "name": "Time off", "enabled": true, "from": "00:00", "until": "00:00",
+      "startDate": "2026-12-24", "endDate": "2026-12-31", "delaySeconds": 0, "repeatMinutes": 0, "message": "…" }
+  ]
 }
 ```
 
-An away reply shows under Recently sent as "away reply". No MCP tool can change these settings, so sessions can't turn it on or rewrite the message; only you can, through the file, the CLI, the menu bar app or the tray (`POST /ui/away` with the token).
+`days` is 0 (Sunday) to 6 (Saturday); from and until equal means all day. A file with the older single window (`from`, `until`, `message`) still works: it's read as one schedule.
+
+An away reply shows under Recently sent as "away reply", and `daemon.log` names the schedule. No MCP tool can change these settings, so sessions can't turn it on or rewrite the message; only you can, through the file, the CLI, the menu bar app or the tray (`POST /ui/away` with the token).
+
+## Footer
+
+The footer goes under everything sent from your account for you: Claude's messages, away replies and the pager's fixed replies (not what you type yourself, and not stickers or `/page`). It's `"\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ"` unless you change it. Make it anything you like, up to 300 characters, emoji included, or switch it off: off keeps its text (`savedFooter`) for when you switch it back on.
+
+```
+tgmcp footer                        # show it, and whether it's on
+tgmcp footer on | off
+tgmcp footer "— sent by my assistant"   # new text; a blank line goes above it
+```
+
+The tray's **Footer** tab edits it with a live preview, ready-made ideas, letter styles that look the same in every Telegram app (𝗯𝗼𝗹𝗱, 𝘪𝘵𝘢𝘭𝘪𝘤, 𝚖𝚘𝚗𝚘, sᴍᴀʟʟ ᴄᴀᴘs) and the space above it (a blank line, a new line or the same line). Sessions can't change it.
 
 ## Menu bar app
 
@@ -251,7 +290,7 @@ An away reply shows under Recently sent as "away reply". No MCP tool can change 
   - **Listening now**: each session watching chats, whether its Monitor is connected, and a **switch on each chat** to pause or resume listening there. A session watching several saved chats also gets an **all** switch. A switch is the chat's auto-reply: off, the daemon stops passing that chat's messages to every session at once (the watches stay, so switching it back on resumes them). Under it, **Chats Claude may listen to** lists your saved chats, each with its switch, so you can choose who Claude may watch without opening Contacts.
   - **Recently sent**: the last 5 chats you sent to. Click a chat to see its messages, when they went, how they were approved, and from which session; click again to close it.
 - **Contacts**: every saved chat, to change its rules without editing `config.json`. See [Contacts](#contacts).
-- **Away**: the [away auto-reply](#away-auto-reply). The switch saves at once; the hours, quiet minutes and message save with **Save** (⌘S), with a preview of the reply. It says whether it's away now and until when. While it is, the tab shows a green dot and Home shows a line saying so.
+- **Away**: the [away auto-reply](#away-auto-reply). The switch saves at once; the first schedule's hours and message, and the quiet minutes, save with **Save** (⌘S), with a preview of the reply. It says whether it's away now and until when. While it is, the tab shows a green dot and Home shows a line saying so.
 
 Avatars show each chat's Telegram profile photo, with initials (or a glyph for groups, channels and bots) until it loads and when there's none. See [Avatars](#avatars).
 
@@ -300,15 +339,16 @@ On Windows, `tgmcp menubar` starts the tray app and sets it to start at login. S
 It is the menu bar app's counterpart:
 
 - **The tray icon** is the paper plane from `docs/icon.svg`, coloured by status: blue when connected, yellow while it reconnects, red when logged out, grey when the daemon can't be reached. A green dot means a session is listening. The amber badge is the number of drafts waiting for you, and `!` means something is wrong. Hover it for a summary.
-- **Click it for the panel**, a frosted-glass flyout (acrylic on Windows 11, following light or dark mode) with three tabs. **Home** shows the connection as a status pill and four tiles, two by two: **Waiting**, **Listening**, **Sent** and **Auto-reply**. The tile you click picks the one section shown below them, and a new draft switches back to Waiting:
+- **Click it for the panel**, a frosted-glass flyout (acrylic on Windows 11, following light or dark mode) with four tabs. **Home** shows the connection as a status pill and four tiles, two by two: **Waiting**, **Listening**, **Sent** and **Auto-reply**. The tile you click picks the one section shown below them, and a new draft switches back to Waiting:
   - **Waiting for approval**: who asked and why, with Send / Deny. A new chat says it's the first message, gets a nickname box, and offers Deny / **Send, ask next time** / **Send, always allow**.
   - **Listening now**: each session and the chats it watches, each chat with a **switch** to pause or resume listening there, plus an **all** switch for a session watching several saved chats. A switch is the chat's auto-reply. Off, the daemon stops passing that chat's messages to every session at once; the watches stay, so on resumes them.
-  - **Auto-reply**: both kinds in one place. The **away auto-reply** with its switch (on or off at once; **Hours and message** opens the Away tab), then **Auto-reply in chats**: your saved chats, each with its auto-reply switch, so you can choose who Claude may watch and answer without opening Contacts. The tile counts the chats with auto-reply on, and its chip says whether the away reply is off, on or replying now.
+  - **Auto-reply**: both kinds in one place. The **away auto-reply** with its switch (on or off at once; **Schedules and messages** opens the Away tab), then **Auto-reply in chats**: your saved chats, each with its auto-reply switch, so you can choose who Claude may watch and answer without opening Contacts. The tile counts the chats with auto-reply on, and its chip says whether the away reply is off, on or replying now.
   - **Recently sent**: click a chat to see its messages.
 
-  Each empty card says what would show up there. As in the menu bar app, a long draft and a recent chat open on click, never on hover. Results flash under the header: a green check when it worked, red when it didn't. Esc clears a search, then closes the panel; Ctrl+1 to Ctrl+3 switch tabs, Ctrl+F searches contacts, and Tab reaches every button, with a focus ring.
+  Each empty card says what would show up there. As in the menu bar app, a long draft and a recent chat open on click, never on hover. Results flash under the header: a green check when it worked, red when it didn't. Esc clears a search, then closes the panel; Ctrl+1 to Ctrl+4 switch tabs, Ctrl+F searches contacts, and Tab reaches every button, with a focus ring.
 - **Contacts** (the second tab) is the same page as the menu bar's (see [Contacts](#contacts) above): rename a saved chat, choose what happens when Claude sends there, turn its **Auto-reply** on or off, choose who can page you, and page someone. Each row also has an **Auto-reply** switch, and a filter shows **All**, **Auto-reply on** or **Auto-reply off** chats.
-- **Away** (the third tab) turns the [away auto-reply](#away-auto-reply) on or off (that saves at once), sets the hours, the quiet minutes and the message (those save with **Save**), and previews the reply with your footer. While replies can go out, the tab shows a green dot and Home says until when. Ctrl+3 opens it.
+- **Away** (the third tab) is the [away auto-reply](#away-auto-reply). The top card has the master switch, what's replying now and until when, how many replies are waiting out their wait, and a timeline of today with each schedule's hours and a line at now. Under it, each **schedule** is a card you can switch on or off (at once) and click to edit: name, from and until (time pickers in quarter hours), days (with Every day / Weekdays / Weekends), optional start and end dates (a calendar picker), the wait and repeat, and the message with a preview as people will get it. **Save** saves that schedule, **Discard** puts it back, **Delete** asks once more. **Add** starts a new one, blank or from a template (Lunch break, Weekend, Time off). The quiet minutes are under **How away replies work**. While replies can go out, the tab shows a green dot and Home says until when. Ctrl+3 opens it.
+- **Footer** (the fourth tab) is the [footer](#footer): switch it on or off (at once, keeping the text), change the words with a counter, start from an idea, pick a letter style and the space above it, and see a message as people will get it. **Save** saves, **Discard** puts it back, **Reset** goes back to the default. Ctrl+4 opens it.
 - **A Windows notification** for each draft has the same choices as buttons. Click the notification itself to open the panel.
 
 Right-click the icon for Open, Contacts, Rules, Log and Quit. Quit keeps it closed until your next login. `tgmcp menubar uninstall` quits it and stops it starting at login.
