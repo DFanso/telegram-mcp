@@ -96,8 +96,20 @@ export interface TgEvent {
 
 // ---- tool results ------------------------------------------------------------------
 
+/**
+ * What waits for a yes: a new message, or an edit or delete of one a session sent, where sending
+ * needs approval (the chat sees the change, so it needs the same yes as a send).
+ */
+export type ApprovalAction = 'send' | 'edit' | 'delete'
+
 export interface ApprovalRequest {
   id: string
+  /** Absent from a daemon older than edit and delete approvals: a send. */
+  action?: ApprovalAction
+  /** The message an edit or delete is for. */
+  messageId?: number
+  /** An edit: the text the chat sees now (`text` is the new text). A delete: absent, `text` is the message to remove. */
+  previousText?: string
   to: string
   text: string
   reason: string
@@ -134,6 +146,10 @@ export interface SentRecord {
 
 export interface UiApproval {
   id: string
+  /** send: a new message (text). edit: messageId would change from previousText to text. delete: messageId, saying text, would go for everyone. */
+  action: ApprovalAction
+  messageId: number | null
+  previousText: string | null
   /** The chat it goes to, for its avatar (GET /ui/avatars/:chatId). */
   chatId: number
   to: string

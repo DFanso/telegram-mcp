@@ -37,6 +37,18 @@ function readGuides(path: string): string[] {
   }
 }
 
+/** What Claude Code's approval dialog says: the message to send, the edit (old and new text), or the message to delete. */
+function dialogText(a: ApprovalRequest): string {
+  const why = `Asking because ${a.reason}.`
+  if (a.action === 'edit') {
+    return `Edit this Telegram message?\n\nIn: ${a.to} (message #${a.messageId})\n${why}\n\nNow:\n${a.previousText ?? ''}\n\nNew:\n${a.text}`
+  }
+  if (a.action === 'delete') {
+    return `Delete this Telegram message for everyone?\n\nIn: ${a.to} (message #${a.messageId})\n${why}\n\n${a.text}`
+  }
+  return `Send this Telegram message?\n\nTo: ${a.to}\n${why}${a.firstTime ? '\nFirst message to this chat.' : ''}\n\n${a.text}`
+}
+
 function channelPayload(e: TgEvent) {
   const meta: Record<string, string> = {
     chat: e.chatNickname ?? e.chatLabel,
@@ -117,7 +129,7 @@ export async function runProxy(opts: { channel: boolean }): Promise<void> {
       : {}
     try {
       answer = await server.elicitInput({
-        message: `Send this Telegram message?\n\nTo: ${a.to}\nAsking because ${a.reason}.${a.firstTime ? '\nFirst message to this chat.' : ''}\n\n${a.text}`,
+        message: dialogText(a),
         requestedSchema: { type: 'object', properties } as ElicitRequestFormParams['requestedSchema'],
       })
     } catch (e) {
@@ -131,7 +143,10 @@ export async function runProxy(opts: { channel: boolean }): Promise<void> {
       remember: content.next_time === 'autoSend' ? 'autoSend' : 'requireApproval',
       nickname: content.nickname,
     })
-    if (answer.action === 'cancel' && !result.isError) return { text: 'The user dismissed the approval. Nothing was sent.' }
+    if (answer.action === 'cancel' && !result.isError) {
+      const what = a.action === 'edit' ? 'The message was not edited.' : a.action === 'delete' ? 'The message was not deleted.' : 'Nothing was sent.'
+      return { text: `The user dismissed the approval. ${what}` }
+    }
     return result
   }
 
