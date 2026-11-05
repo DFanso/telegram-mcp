@@ -27,7 +27,7 @@ public static class Contacts
     public static string NoMatch(string query) => $"No saved chat matches “{query.Trim()}”";
 
     public static string Summary(int count, int listening) =>
-        $"{count} saved chat{(count == 1 ? "" : "s")} · Claude may listen to {listening} · changes save to config.json at once";
+        $"{count} saved chat{(count == 1 ? "" : "s")} · auto-reply on in {listening} · changes save to config.json at once";
 
     /// <summary>The Contacts tab's filter: every chat, or only those Claude may (or may not) listen to.</summary>
     public static IReadOnlyList<UiContact> FilterListening(IReadOnlyList<UiContact> contacts, ListenFilter filter) => filter switch
@@ -43,8 +43,8 @@ public static class Contacts
         var q = query.Trim();
         return filter switch
         {
-            ListenFilter.On => q.Length == 0 ? "Claude may listen to none of your chats. Switch one on to let it." : $"No chat Claude may listen to matches “{q}”",
-            ListenFilter.Off => q.Length == 0 ? "Claude may listen to every saved chat." : $"No chat Claude can't listen to matches “{q}”",
+            ListenFilter.On => q.Length == 0 ? "Auto-reply is off in every chat. Switch it on in one to let Claude listen and reply there." : $"No chat with auto-reply on matches “{q}”",
+            ListenFilter.Off => q.Length == 0 ? "Auto-reply is on in every saved chat." : $"No chat with auto-reply off matches “{q}”",
             _ => NoMatch(q),
         };
     }
@@ -71,10 +71,13 @@ public static class Contacts
         _ => "May listen and reply without asking",
     };
 
-    /// <summary>The flash after a listen switch: turning a chat's auto-reply on or off.</summary>
+    /// <summary>
+    /// The flash after a listen switch: turning a chat's auto-reply on or off. On says only that Claude may
+    /// listen: a blocked chat still can't be replied to, and an ask-every-time one still asks.
+    /// </summary>
     public static string ListenFlash(bool on, string label) => on
-        ? $"Claude may listen to {label} again."
-        : $"Paused {label}: new messages there aren't passed to Claude.";
+        ? $"Auto-reply on for {label}: Claude may listen there."
+        : $"Auto-reply off for {label}: new messages there aren't passed to Claude.";
 
     /// <summary>
     /// The flash when the daemon refused one chat partway through: which chats had already been switched
@@ -82,7 +85,7 @@ public static class Contacts
     /// </summary>
     public static string ListenStopped(bool on, IReadOnlyList<string> done, string failure) => done.Count == 0
         ? failure
-        : $"{(on ? "Resumed" : "Paused")} {And(done)}, then stopped. {failure}";
+        : $"Turned auto-reply {(on ? "on" : "off")} for {And(done)}, then stopped. {failure}";
 
     static string And(IReadOnlyList<string> names) =>
         names.Count == 1 ? names[0] : $"{string.Join(", ", names.Take(names.Count - 1))} and {names[^1]}";

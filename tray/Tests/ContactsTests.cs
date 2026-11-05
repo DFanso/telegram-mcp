@@ -81,8 +81,8 @@ public class ContactsTests
     [Fact]
     public void Summary_counts_saved_chats_and_those_Claude_may_listen_to()
     {
-        Assert.Equal("1 saved chat · Claude may listen to 0 · changes save to config.json at once", Contacts.Summary(1, 0));
-        Assert.Equal("4 saved chats · Claude may listen to 2 · changes save to config.json at once", Contacts.Summary(4, 2));
+        Assert.Equal("1 saved chat · auto-reply on in 0 · changes save to config.json at once", Contacts.Summary(1, 0));
+        Assert.Equal("4 saved chats · auto-reply on in 2 · changes save to config.json at once", Contacts.Summary(4, 2));
     }
 
     [Theory]
@@ -97,10 +97,10 @@ public class ContactsTests
     }
 
     [Theory]
-    [InlineData("", ListenFilter.On, "Claude may listen to none of your chats. Switch one on to let it.")]
-    [InlineData(" leo ", ListenFilter.On, "No chat Claude may listen to matches “leo”")]
-    [InlineData("", ListenFilter.Off, "Claude may listen to every saved chat.")]
-    [InlineData("leo", ListenFilter.Off, "No chat Claude can't listen to matches “leo”")]
+    [InlineData("", ListenFilter.On, "Auto-reply is off in every chat. Switch it on in one to let Claude listen and reply there.")]
+    [InlineData(" leo ", ListenFilter.On, "No chat with auto-reply on matches “leo”")]
+    [InlineData("", ListenFilter.Off, "Auto-reply is on in every saved chat.")]
+    [InlineData("leo", ListenFilter.Off, "No chat with auto-reply off matches “leo”")]
     public void None_shown_says_why(string query, ListenFilter filter, string expected)
     {
         Assert.Equal(expected, Contacts.NoneShown(query, filter));
@@ -120,8 +120,8 @@ public class ContactsTests
     [Fact]
     public void Listen_flash_says_what_the_switch_did()
     {
-        Assert.Equal("Claude may listen to leo again.", Contacts.ListenFlash(true, "leo"));
-        Assert.Equal("Paused leo: new messages there aren't passed to Claude.", Contacts.ListenFlash(false, "leo"));
+        Assert.Equal("Auto-reply on for leo: Claude may listen there.", Contacts.ListenFlash(true, "leo"));
+        Assert.Equal("Auto-reply off for leo: new messages there aren't passed to Claude.", Contacts.ListenFlash(false, "leo"));
     }
 
     [Fact]
@@ -129,8 +129,8 @@ public class ContactsTests
     {
         const string why = "Not changed: No saved chat called \"c\".";
         Assert.Equal(why, Contacts.ListenStopped(false, [], why));
-        Assert.Equal($"Paused a and b, then stopped. {why}", Contacts.ListenStopped(false, ["a", "b"], why));
-        Assert.Equal($"Resumed a, b and c, then stopped. {why}", Contacts.ListenStopped(true, ["a", "b", "c"], why));
+        Assert.Equal($"Turned auto-reply off for a and b, then stopped. {why}", Contacts.ListenStopped(false, ["a", "b"], why));
+        Assert.Equal($"Turned auto-reply on for a, b and c, then stopped. {why}", Contacts.ListenStopped(true, ["a", "b", "c"], why));
     }
 
     [Theory]
