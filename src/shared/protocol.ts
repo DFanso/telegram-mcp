@@ -140,6 +140,8 @@ export interface SentRecord {
   sessionId?: string
   /** What went out. Only a text message can be edited. */
   kind?: 'text' | 'file' | 'sticker'
+  /** The footer it carries (a text message), so an edit after the footer changed can take the old one off. */
+  footer?: string
   /** Set once a session edited it: when, by which session, and the text before the first edit. */
   edited?: { at: string; by: string | null; original: string }
 }
@@ -207,7 +209,11 @@ export interface UiContact {
 export interface UiState {
   telegram: TelegramState
   configError: string | null
+  /** Added to every message; '' while it's off. */
   footer: string
+  /** The footer's text even while it's off, for the tray's editor. */
+  footerText: string
+  footerOn: boolean
   defaultPolicy: 'approve' | 'block'
   approvals: UiApproval[]
   sessions: UiSession[]
@@ -218,7 +224,10 @@ export interface UiState {
   away: UiAway
 }
 
-/** The away auto-reply as the tray shows it. `preview` is the text a sender would get. */
+/**
+ * The away auto-reply as the tray shows it. `from`, `until`, `message` and `preview` are the schedule
+ * replying now (else the first one switched on), for apps that know a single window.
+ */
 export interface UiAway {
   enabled: boolean
   from: string
@@ -227,6 +236,31 @@ export interface UiAway {
   quietMinutes: number
   active: boolean
   nextChange: string | null
+  preview: string
+  /** The id of the schedule replying now, and when its window ends. */
+  current: string | null
+  currentUntil: string | null
+  /** Chats whose reply is waiting for you right now (a schedule's delay). */
+  waiting: number
+  schedules: UiAwaySchedule[]
+}
+
+export interface UiAwaySchedule {
+  id: string
+  name: string
+  enabled: boolean
+  from: string
+  until: string
+  /** 0 = Sunday … 6 = Saturday. */
+  days: number[]
+  startDate: string | null
+  endDate: string | null
+  delaySeconds: number
+  repeatMinutes: number
+  message: string
+  /** This one is replying now. */
+  active: boolean
+  /** What a sender gets, footer included. */
   preview: string
 }
 

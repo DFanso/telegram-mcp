@@ -75,4 +75,103 @@ public class AwayTests
         Assert.Equal("Hi X" + foot, Away.Preview("Hi X" + foot, "A", foot));
         Assert.Equal("Hi A A", Away.Preview("Hi {name} {name}", "A B", "  "));
     }
+
+    // ---- schedules ---------------------------------------------------------------------------
+
+    static UiAwaySchedule S(string id = "day", string from = "08:00", string until = "21:00", int delay = 30, bool enabled = true,
+        int[]? days = null, string? start = null, string? end = null, bool active = false) =>
+        new(id, id == "day" ? "Daytime" : "Night", enabled, from, until, days ?? [0, 1, 2, 3, 4, 5, 6], start, end, delay, 60, "m", active, "p");
+
+    static UiAway WithSchedules(bool enabled, string? current, params UiAwaySchedule[] list) =>
+        new(enabled, "08:00", "21:00", "m", 30, current is not null, DateTimeOffset.Parse("2026-11-03T15:30:00Z"), "p", current, null, 0, list);
+
+    [Fact]
+    public void Status_and_badge_name_the_schedule_replying_now()
+    {
+        var day = S(active: true);
+        var night = S("night", "21:00", "08:00", 0);
+        Assert.Equal("Daytime until 21:00, waits 30 s for you", Away.Status(WithSchedules(true, "day", day, night)));
+        Assert.Equal("Daytime until 21:00", Away.Badge(WithSchedules(true, "day", day, night)));
+        Assert.Equal("Off", Away.Status(WithSchedules(false, null, day, night)));
+        Assert.Equal("On, but every schedule is switched off", Away.Status(WithSchedules(true, null, S(enabled: false))));
+        Assert.StartsWith("Next at ", Away.Status(WithSchedules(true, null, day)));
+        Assert.Null(Away.Badge(WithSchedules(true, null, day)));
+    }
+
+    [Fact]
+    public void CheckSchedule_catches_what_the_daemon_would_refuse()
+    {
+        int[] week = [1, 2, 3, 4, 5];
+        Assert.Null(Away.CheckSchedule("Lunch", "12:00", "13:00", week, null, null, "brb"));
+        Assert.Equal("Give it a name, like Lunch or Holiday.", Away.CheckSchedule(" ", "12:00", "13:00", week, null, null, "brb"));
+        Assert.Equal("It can't start and end at the same time.", Away.CheckSchedule("L", "12:00", "12:00", week, null, null, "brb"));
+        Assert.Equal("Pick at least one day.", Away.CheckSchedule("L", "12:00", "13:00", [], null, null, "brb"));
+        Assert.Equal("The first date must be on or before the last.",
+            Away.CheckSchedule("L", "12:00", "13:00", week, new DateOnly(2026, 12, 2), new DateOnly(2026, 12, 1), "brb"));
+        Assert.Equal("The message can't be empty.", Away.CheckSchedule("L", "12:00", "13:00", week, null, null, " "));
+        Assert.Equal("The name is 40 characters at most.", Away.CheckSchedule(new string('n', 41), "12:00", "13:00", week, null, null, "m"));
+    }
+
+    [Fact]
+    public void Words_for_days_waits_repeats_and_dates()
+    {
+        Assert.Equal("Every day", Away.DaysText([0, 1, 2, 3, 4, 5, 6]));
+        Assert.Equal("Weekdays", Away.DaysText([5, 4, 3, 2, 1]));
+        Assert.Equal("Weekends", Away.DaysText([6, 0]));
+        Assert.Equal("Mon, Wed, Sun", Away.DaysText([0, 1, 3]));
+        Assert.Equal("replies at once", Away.DelayText(0));
+        Assert.Equal("waits 30 s for you", Away.DelayText(30));
+        Assert.Equal("waits 2 min for you", Away.DelayText(120));
+        Assert.Equal(["At once", "30 s", "1 min", "2 min", "5 min"], Away.Delays.Select(Away.DelayChip));
+        Assert.Equal(["Once", "Every 1 h", "Every 3 h"], Away.Repeats.Select(Away.RepeatChip));
+        Assert.Equal("A chat can get another reply after 1 hour.", Away.RepeatText(60));
+        Assert.Null(Away.DatesText(null, null));
+        Assert.Equal("1 Dec – 24 Dec 2026", Away.DatesText(new DateOnly(2026, 12, 1), new DateOnly(2026, 12, 24)));
+        Assert.Equal("On 1 Dec 2026", Away.DatesText(new DateOnly(2026, 12, 1), new DateOnly(2026, 12, 1)));
+        Assert.Equal("From 1 Dec 2026", Away.DatesText(new DateOnly(2026, 12, 1), null));
+        Assert.Equal(new DateOnly(2026, 12, 1), Away.ParseDate("2026-12-01"));
+        Assert.Null(Away.ParseDate("1 Dec"));
+        Assert.Equal("2026-12-01", Away.FormatDate(new DateOnly(2026, 12, 1)));
+        Assert.True(Away.IsNight("21:00", "08:00"));
+        Assert.True(Away.IsNight("19:00", "23:00"));
+        Assert.False(Away.IsNight("08:00", "21:00"));
+    }
+
+    [Fact]
+    public void TimeOptions_are_quarter_hours_plus_the_saved_time()
+    {
+        var all = Away.TimeOptions();
+        Assert.Equal(96, all.Count);
+        Assert.Equal("00:00", all[0]);
+        Assert.Equal("23:45", all[^1]);
+        var odd = Away.TimeOptions("08:10");
+        Assert.Equal(97, odd.Count);
+        Assert.Equal("08:10", odd[odd.ToList().IndexOf("08:00") + 1]);
+        Assert.Equal(96, Away.TimeOptions("nonsense").Count);
+    }
+
+    [Fact]
+    public void NewId_and_templates()
+    {
+        Assert.Equal("s1", Away.NewId(["day", "night"]));
+        Assert.Equal("s3", Away.NewId(["s1", "s2"]));
+        var t = Away.Templates(new DateOnly(2026, 11, 3));
+        Assert.Equal(["Lunch break", "Weekend", "Time off", "Blank"], t.Select(x => x.Label));
+        Assert.All(t, x => Assert.Null(Away.CheckSchedule(x.Name, x.From, x.Until, x.Days.ToList(), x.StartDate, x.EndDate, x.Message)));
+        Assert.Equal(new DateOnly(2026, 11, 9), t[2].EndDate);
+    }
+
+    [Fact]
+    public void TodaySpans_include_last_nights_tail()
+    {
+        var now = new DateTime(2026, 11, 3, 15, 0, 0); // a Tuesday
+        Assert.Equal([(8 / 24.0, 21 / 24.0)], Away.TodaySpans(S(), now));
+        Assert.Equal([(0.0, 8 / 24.0), (21 / 24.0, 1.0)], Away.TodaySpans(S("night", "21:00", "08:00"), now));
+        // Weekdays only: Monday night's tail shows on Tuesday, and Tuesday night starts.
+        Assert.Equal(2, Away.TodaySpans(S("night", "21:00", "08:00", days: [1, 2, 3, 4, 5]), now).Count);
+        // Not today's weekday, and outside its dates: nothing.
+        Assert.Empty(Away.TodaySpans(S(days: [0]), now));
+        Assert.Empty(Away.TodaySpans(S(start: "2026-11-04"), now));
+        Assert.Single(Away.TodaySpans(S(start: "2026-11-03", end: "2026-11-03"), now));
+    }
 }

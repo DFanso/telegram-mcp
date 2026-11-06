@@ -75,12 +75,40 @@ public sealed record UiState(
     /// <summary>Null from a daemon older than pages.</summary>
     IReadOnlyList<UiPage>? Pages = null,
     /// <summary>Null from a daemon older than away hours.</summary>
-    UiAway? Away = null);
+    UiAway? Away = null,
+    /// <summary>The footer's text even while it's off. Null from a daemon older than the footer editor.</summary>
+    string? FooterText = null,
+    bool? FooterOn = null);
 
-/// <summary>The away auto-reply settings and where the clock puts them (UiAway in src/shared/protocol.ts).</summary>
+/// <summary>
+/// The away auto-reply settings and where the clock puts them (UiAway in src/shared/protocol.ts).
+/// From, Until, Message and Preview are the schedule replying now (else the first one on).
+/// </summary>
 public sealed record UiAway(
     bool Enabled, string From, string Until, string Message, int QuietMinutes,
-    bool Active, DateTimeOffset? NextChange, string Preview);
+    bool Active, DateTimeOffset? NextChange, string Preview,
+    /// <summary>The schedule replying now. Null when none is, or from a daemon older than schedules.</summary>
+    string? Current = null,
+    DateTimeOffset? CurrentUntil = null,
+    /// <summary>Chats whose reply is waiting for you right now.</summary>
+    int Waiting = 0,
+    /// <summary>Null from a daemon older than schedules (it has one window: From, Until, Message).</summary>
+    IReadOnlyList<UiAwaySchedule>? Schedules = null);
+
+/// <summary>One away schedule (UiAwaySchedule in src/shared/protocol.ts). Days: 0 = Sunday … 6 = Saturday.</summary>
+public sealed record UiAwaySchedule(
+    string Id, string Name, bool Enabled, string From, string Until, IReadOnlyList<int> Days,
+    string? StartDate, string? EndDate, int DelaySeconds, int RepeatMinutes, string Message,
+    bool Active, string Preview)
+{
+    /// <summary>What POST /ui/away takes back for it.</summary>
+    public ScheduleData ToData() => new(Id, Name, Enabled, From, Until, Days, StartDate, EndDate, DelaySeconds, RepeatMinutes, Message);
+}
+
+/// <summary>A schedule as POST /ui/away saves it.</summary>
+public sealed record ScheduleData(
+    string Id, string Name, bool Enabled, string From, string Until, IReadOnlyList<int> Days,
+    string? StartDate, string? EndDate, int DelaySeconds, int RepeatMinutes, string Message);
 
 public static class Json
 {

@@ -55,11 +55,34 @@ export function policyLabel(config: Config, chat: { id: number; username?: strin
   return config.defaultPolicy === 'block' ? 'blocked (default)' : 'needs approval (default)'
 }
 
-/** Appends the footer once. Text that already ends with it is left alone. */
-export function withFooter(text: string, footer: string): string {
-  const mark = footer.trim()
-  if (mark === '') return text
+/**
+ * The footer written in the message's parse mode, so it reads exactly as typed: markdown characters
+ * are escaped (a footer with * or _ would otherwise turn bold or swallow its markers), and in html
+ * <, > and & are escaped and line breaks become <br> (html drops plain line breaks).
+ */
+export function footerFor(footer: string, parseMode: 'plain' | 'markdown' | 'html' = 'plain'): string {
+  if (parseMode === 'markdown') return footer.replace(/[\\*_~`[\]()|>]/g, '\\$&')
+  if (parseMode === 'html') return footer.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/\n/g, '<br>')
+  return footer
+}
+
+/**
+ * Takes an earlier footer off the end of a text, as written plain or in the parse mode: a session
+ * editing a message it copied, footer and all, after the footer changed.
+ */
+export function withoutFooter(text: string, footer: string, parseMode: 'plain' | 'markdown' | 'html' = 'plain'): string {
   const body = text.trimEnd()
-  if (body.endsWith(mark)) return body
-  return body + footer
+  for (const mark of [footerFor(footer, parseMode).trim(), footer.trim()]) {
+    if (mark !== '' && body.endsWith(mark)) return body.slice(0, body.length - mark.length).trimEnd()
+  }
+  return text
+}
+
+/** Appends the footer once, in the message's parse mode. Text that already ends with it is left alone. */
+export function withFooter(text: string, footer: string, parseMode: 'plain' | 'markdown' | 'html' = 'plain'): string {
+  if (footer.trim() === '') return text
+  const written = footerFor(footer, parseMode)
+  const body = text.trimEnd()
+  if (body.endsWith(written.trim()) || body.endsWith(footer.trim())) return body
+  return body + written
 }

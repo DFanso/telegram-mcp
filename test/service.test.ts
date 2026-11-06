@@ -606,11 +606,11 @@ describe('away in the service', () => {
     setup(baseConfig)
     writeFileSync(path, JSON.stringify({ footer: FOOTER, ...baseConfig, away: { message: 'typed by hand' } }))
     expect(svc.editAway({ enabled: true })).toMatchObject({ ok: true })
-    expect(onDisk().away).toMatchObject({ enabled: true, message: 'typed by hand' })
+    expect(onDisk().away).toMatchObject({ enabled: true, schedules: [{ id: 'away', message: 'typed by hand' }] })
     // A patch that only fails against the fresh file is refused and the file kept.
     writeFileSync(path, JSON.stringify({ footer: FOOTER, ...baseConfig, away: { until: '07:00' } }))
     const before = readFileSync(path, 'utf8')
-    expect(svc.editAway({ from: '07:00' })).toMatchObject({ ok: false, text: "From and until can't be the same time." })
+    expect(svc.editAway({ from: '07:00' })).toMatchObject({ ok: false, text: "Away: From and until can't be the same time." })
     expect(readFileSync(path, 'utf8')).toBe(before)
   })
 
@@ -636,6 +636,19 @@ describe('editing a sent message', () => {
     expect(r.isError).toBeFalsy()
     expect(r.text).toContain(`Edited message #${id}`)
     expect(tg.edits).toEqual([{ chatId: LEO.id, messageId: id, text: `fixed${FOOTER}`, parseMode: 'plain' }])
+  })
+
+  test('after the footer changed, an edit that copied the old footer gets only the new one', async () => {
+    const id = await sentId('leo')
+    store.update(c => {
+      c.footer = '\n\n— new'
+    })
+    const r = await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: id, text: `fixed${FOOTER}` })
+    expect(r.isError).toBeFalsy()
+    expect(tg.edits.at(-1)!.text).toBe('fixed\n\n— new')
+    // And the next edit knows the footer is the new one now.
+    await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: id, text: 'again\n\n— new' })
+    expect(tg.edits.at(-1)!.text).toBe('again\n\n— new')
   })
 
   // The rule is checked at edit time: a chat that moved to Ask every time waits for a yes, one that
@@ -830,6 +843,18 @@ describe('editing a sent message', () => {
     expect(r.isError).toBe(true)
     expect(r.text).toContain('Only text messages')
     expect(tg.edits).toEqual([])
+  })
+
+  test('a caption that the footer takes past 1024 characters is refused before anything goes', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'tgmcp-')), 'report.pdf')
+    writeFileSync(file, '%PDF-1.7 hello')
+    const before = tg.sent.length
+    const r = await svc.call('s1', 'telegram_send_file', { to: 'leo', path: file, caption: 'x'.repeat(1020) })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('Telegram allows 1024 under a file')
+    expect(tg.sent.length).toBe(before)
+    const ok = await svc.call('s1', 'telegram_send_file', { to: 'leo', path: file, caption: 'x'.repeat(900) })
+    expect(ok.isError).toBeFalsy()
   })
 
   test('text that starts with /reply is refused', async () => {

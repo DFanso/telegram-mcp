@@ -243,6 +243,37 @@ public class DaemonApiTests
     }
 
     [Fact]
+    public async Task Save_away_sends_the_whole_schedule_list()
+    {
+        _net.Answer(HttpStatusCode.OK, """{"ok":true,"text":"done"}""");
+
+        await Api(new FakeTokens(Good)).SaveAwayAsync(new AwayChange(Schedules:
+        [
+            new ScheduleData("day", "Daytime", true, "08:00", "21:00", [1, 2], null, "2026-12-24", 30, 60, "brb"),
+        ]), Ct);
+
+        Assert.Equal("""{"schedules":[{"id":"day","name":"Daytime","enabled":true,"from":"08:00","until":"21:00","days":[1,2],"startDate":null,"endDate":"2026-12-24","delaySeconds":30,"repeatMinutes":60,"message":"brb"}]}""",
+            _net.Requests[0].Body);
+    }
+
+    [Fact]
+    public async Task Save_footer_posts_the_text_and_the_switch()
+    {
+        _net.Answer(HttpStatusCode.OK, """{"ok":true,"text":"Saved. The footer is off."}""")
+            .Answer(HttpStatusCode.NotFound, "not found\n");
+        var api = Api(new FakeTokens(Good));
+
+        var r = await api.SaveFooterAsync("\n\nme", false, Ct);
+        var old = await api.SaveFooterAsync(null, true, Ct);
+
+        Assert.Equal(new ActionResult(true, "Saved. The footer is off."), r);
+        Assert.Equal("http://127.0.0.1:47901/ui/footer", _net.Requests[0].Uri.ToString());
+        Assert.Equal("""{"footer":"\n\nme","enabled":false}""", _net.Requests[0].Body);
+        Assert.Equal("""{"enabled":true}""", _net.Requests[1].Body);
+        Assert.Equal(new ActionResult(false, Footer.OlderDaemon), old);
+    }
+
+    [Fact]
     public async Task Save_away_on_an_older_daemon_asks_for_a_restart()
     {
         _net.Answer(HttpStatusCode.NotFound, "not found\n");

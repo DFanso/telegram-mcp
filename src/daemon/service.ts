@@ -17,7 +17,8 @@ import {
 } from '../shared/config'
 import { listContacts, pageTarget, renameContact, setAutoReply, setPageFrom, setSendMode } from '../shared/contacts'
 import { applyAwayPatch, awaySummary } from '../shared/away'
-import { decideSend, policyLabel, withFooter } from '../shared/policy'
+import { applyFooterPatch, footerOn, footerSummary, footerText } from '../shared/footer'
+import { decideSend, policyLabel, withFooter, withoutFooter } from '../shared/policy'
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -112,6 +113,8 @@ function autoReplyText(c: UiContact): string {
 }
 
 const STICKER_TEXT = '[sticker]'
+/** The longest caption Telegram takes under a file (without Premium). */
+const CAPTION_MAX = 1024
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 const fail = (text: string): ToolResult => ({ text, isError: true })
@@ -328,6 +331,23 @@ export class Service {
     return sending
   }
 
+  /**
+   * The away responder's send. Not you speaking (it must not start R7's quiet time), and marked as the
+   * daemon's own, so its echo never reads as you being back.
+   */
+  sendAway(chatId: number, text: string): Promise<MessageInfo> {
+    return this.#deliver(chatId, text, undefined, {}, undefined, false)
+  }
+
+  /**
+   * Was this outgoing message sent by the daemon (Claude, the pager, an away reply), rather than typed
+   * by you on a phone or desktop? Waits for sends still on the way, whose echo can beat their id.
+   */
+  async isOwnSend(msg: Pick<IncomingMessage, 'chatId' | 'id'>): Promise<boolean> {
+    await Promise.allSettled(this.#inflight.get(msg.chatId) ?? [])
+    return this.#ownSent.has(`${msg.chatId}:${msg.id}`)
+  }
+
   /** For the away responder, whose replies show in Recent like any other send. */
   recordSent(r: Omit<SentRecord, 'at'>): void {
     this.#record(r)
@@ -424,6 +444,7 @@ export class Service {
             sessionLabel: item.sessionLabel,
             sessionId: item.sessionId,
             kind: item.sticker ? 'sticker' : file ? 'file' : 'text',
+            footer: item.footer,
           })
           let saved = ''
           if (item.firstTime) {
@@ -587,6 +608,24 @@ export class Service {
     }
   }
 
+  /** The tray's footer edit: validates (a rejected patch never touches the file), then saves to the rules file. */
+  editFooter(patch: unknown): { ok: boolean; text: string } {
+    const r = applyFooterPatch(this.d.store.get(), patch)
+    if (!r.ok) return { ok: false, text: r.error }
+    try {
+      const saved = this.d.store.update(c => {
+        const fresh = applyFooterPatch(c, patch)
+        if (!fresh.ok) throw new Error(fresh.error)
+        c.footer = fresh.footer
+        if (fresh.savedFooter === undefined) delete c.savedFooter
+        else c.savedFooter = fresh.savedFooter
+      })
+      return { ok: true, text: footerOn(saved) ? 'Saved. The footer is on.' : 'Saved. The footer is off.' }
+    } catch (e) {
+      return { ok: false, text: errText(e) }
+    }
+  }
+
   /**
    * The chats the apps show an avatar for: saved contacts, drafts waiting, watched chats, recent
    * sends and pages. GET /ui/avatars only fetches photos for these, so nothing else reaches Telegram.
@@ -609,6 +648,8 @@ export class Service {
       telegram: this.d.tg.state(),
       configError: this.d.store.error(),
       footer: config.footer,
+      footerText: footerText(config),
+      footerOn: footerOn(config),
       defaultPolicy: config.defaultPolicy,
       contacts: listContacts(config, this.d.tg.state().me?.id),
       pages: (this.d.pager?.active() ?? []).map(uiPage),
@@ -660,8 +701,20 @@ export class Service {
     if (decision.action === 'block') return fail(`Not sent to ${t.label}: ${decision.reason}.`)
     // A file with no caption still carries the footer, without the blank lines that lead into it.
     // A sticker takes no caption, so it goes out without the footer.
-    const footed = draft.sticker ? '' : withFooter(draft.text, config.footer)
-    const text = file && draft.text.trim() === '' ? footed.trimStart() : footed
+    const footed = draft.sticker
+      ? ''
+      : file && draft.text.trim() === ''
+        ? withFooter('', config.footer.trimStart(), p.parseMode)
+        : withFooter(draft.text, config.footer, p.parseMode)
+    const text = footed
+    // Telegram takes at most 1024 characters under a file. Say so now rather than after an approval.
+    const captionLength = file ? visibleText(text, p.parseMode).length : 0
+    if (captionLength > CAPTION_MAX) {
+      return fail(
+        `Not sent: the caption with the footer is ${captionLength} characters, and Telegram allows ${CAPTION_MAX} under a file. ` +
+          'Shorten the caption, or send the text as a message and the file without it.',
+      )
+    }
     const shown = draft.sticker ? STICKER_TEXT : describeOutgoing(text, file)
     if (decision.action === 'send') {
       const sent = await this.#deliver(
@@ -680,6 +733,7 @@ export class Service {
         sessionLabel: this.d.hub.label(sid),
         sessionId: sid,
         kind: draft.sticker ? 'sticker' : file ? 'file' : 'text',
+        footer: draft.sticker || file ? undefined : config.footer,
       })
       return { text: `Sent to ${t.label} (message #${sent.id}${topicId ? `, topic ${topicId}` : ''}). Allowed because ${decision.reason}.` }
     }
@@ -707,6 +761,7 @@ export class Service {
       replyTo: p.replyTo,
       topicId,
       parseMode: p.parseMode,
+      footer: draft.sticker || file ? undefined : config.footer,
       reason: decision.reason,
     })
     return {
@@ -848,7 +903,9 @@ export class Service {
     const edited = await this.d.tg.editMessage(chatId, messageId, text, { parseMode })
     const at = new Date().toISOString()
     this.#recent = this.#recent.map(r =>
-      r.chatId === chatId && r.messageId === messageId ? { ...r, text, edited: { at, by, original: r.edited?.original ?? r.text } } : r,
+      r.chatId === chatId && r.messageId === messageId
+        ? { ...r, text, footer: this.d.store.get().footer, edited: { at, by, original: r.edited?.original ?? r.text } }
+        : r,
     )
     this.#saveRecent()
     return edited
@@ -922,7 +979,7 @@ export class Service {
         return String(ref)
       }
       const out = ['Guides:', ...(c.guides.length ? c.guides.map(g => `- ${g}`) : ['- (none)'])]
-      out.push('', `Footer added to every message: ${c.footer.trim() ? JSON.stringify(c.footer) : '(none)'}`)
+      out.push('', `Footer added to every message: ${footerSummary(c)}`)
       out.push(`Chats in no list: ${c.defaultPolicy === 'block' ? 'blocked' : 'need approval'}`)
       out.push(`Away auto-reply: ${this.d.away?.summary() ?? awaySummary(c.away, new Date())}`)
       for (const list of RULE_LISTS) {
@@ -1047,7 +1104,11 @@ export class Service {
         takenOver: this.d.hub.isTakenOverBy(sid, t.peer.id),
       })
       if (decision.action === 'block') return fail(`Not edited in ${t.label}: ${decision.reason}.`)
-      const text = withFooter(p.text, config.footer)
+      // The session may have copied the message with the footer it had then: take that one off, so a
+      // changed footer isn't added after the old one.
+      const old = rec.footer
+      const body = old !== undefined && old.trim() !== config.footer.trim() ? withoutFooter(p.text, old, p.parseMode) : p.text
+      const text = withFooter(body, config.footer, p.parseMode)
       if (decision.action === 'approve') {
         return this.#askToChange(sid, t, decision.reason, { action: 'edit', messageId: p.messageId, previousText: rec.text, text, parseMode: p.parseMode })
       }

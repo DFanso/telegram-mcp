@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import { parseConfig } from '../src/shared/config'
+import { visibleText } from '../src/daemon/formatting'
 import { decideSend, withFooter } from '../src/shared/policy'
 
 const config = parseConfig(
@@ -54,5 +55,16 @@ describe('withFooter', () => {
   })
   test('no footer configured', () => {
     expect(withFooter('hi', '')).toBe('hi')
+  })
+  test('in markdown and html the footer reads as typed', () => {
+    const odd = '\n\n*by* _me_ <3 & [x](y) ||z|| `c` \\ ~~s~~'
+    const plain = `**hi**${odd}`.replace('**hi**', 'hi')
+    expect(visibleText(withFooter('**hi**', odd, 'markdown'), 'markdown')).toBe(plain)
+    expect(visibleText(withFooter('<b>hi</b>', odd, 'html'), 'html')).toBe(plain)
+    // Still once.
+    const md = withFooter('hi', odd, 'markdown')
+    expect(withFooter(md, odd, 'markdown')).toBe(md)
+    // A footer with nothing to escape is the same in every mode.
+    expect(withFooter('hi', footer, 'markdown')).toBe(`hi${footer}`)
   })
 })

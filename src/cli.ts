@@ -5,8 +5,9 @@ import { ensureHome } from './shared/files'
 import { getPaths, getPort } from './shared/paths'
 import { FileSecretStore, loadCredentials, openSecretStore, readToken, saveCredentials } from './shared/secrets'
 import { ConfigStore, type Config } from './shared/config'
-import { applyAwayPatch, awaySummary, firstName, parseAwayArgs, renderAwayMessage } from './shared/away'
+import { applyAwayPatch, awaySummary, firstName, parseAwayArgs, renderAwayMessage, scheduleSummary } from './shared/away'
 import { readDaemonReply } from './shared/daemon-reply'
+import { applyFooterPatch, footerSummary, parseFooterArgs } from './shared/footer'
 import { withFooter } from './shared/policy'
 import { VERSION, isCompiled, selfCommand, shellJoin } from './shared/runtime'
 
@@ -25,7 +26,8 @@ const HELP = `tgmcp ${VERSION}: always-on Telegram daemon + per-session MCP brid
   tgmcp menubar uninstall
   tgmcp page setup    connect your own pager bot (from @BotFather) so pages reach your phone
   tgmcp page test     ring a test page: hear the alarm, check the volume, try Ack
-  tgmcp away          show the away auto-reply; tgmcp away on|off|hours HH:MM HH:MM|message <text>|quiet <minutes>
+  tgmcp away          show the away schedules; tgmcp away on|off|quiet <minutes>, or [<schedule>] hours HH:MM HH:MM|message <text>
+  tgmcp footer        show the footer added to every message; tgmcp footer on|off|<text>
   tgmcp call <tool> [json]   call a tool as a one-off session, e.g. tgmcp call telegram_get_rules
   tgmcp mcp-add       print the command that registers the MCP server with Claude Code
   tgmcp daemon        run the daemon in the foreground
@@ -48,19 +50,18 @@ async function daemonFetch(path: string, init?: RequestInit, timeoutMs = 3_000):
  * The reply as it would go out, rendered here from the config just read or saved. Only the name
  * comes from the daemon: its own preview lags a save by its 150 ms reload. No daemon keeps {name}.
  */
-async function awayPreview(config: Config): Promise<string> {
-  let name: string | null = null
+async function awayName(): Promise<string | null> {
   try {
     const res = await daemonFetch('/ui/state')
     if (res.ok) {
       const body = (await res.json()) as { telegram?: { me?: { name?: unknown } | null } }
       const me = body.telegram?.me
-      if (typeof me?.name === 'string') name = firstName({ name: me.name })
+      if (typeof me?.name === 'string') return firstName({ name: me.name })
     }
   } catch {
     // daemon not running: render without a name
   }
-  return withFooter(renderAwayMessage(config.away.message, name), config.footer)
+  return null
 }
 
 async function away(args: string[]) {
@@ -95,12 +96,52 @@ async function away(args: string[]) {
     process.exitCode = 1
     return
   }
-  const { away: a } = store.get()
+  const config = store.get()
+  const { away: a } = config
   console.log(`Away auto-reply: ${awaySummary(a, new Date())}`)
-  console.log(`Hours: ${a.from}–${a.until}`)
   console.log(`Quiet after you or Claude write there: ${a.quietMinutes} min`)
-  console.log('Preview:')
-  console.log((await awayPreview(store.get())).replace(/^/gm, '  '))
+  const name = await awayName()
+  for (const s of a.schedules) {
+    console.log('')
+    console.log(scheduleSummary(s))
+    console.log(withFooter(renderAwayMessage(s.message, name), config.footer).replace(/^/gm, '  '))
+  }
+  if (a.schedules.length === 0) console.log('No schedules: add one in the tray or menu bar app, or in config.json.')
+}
+
+function footer(args: string[]) {
+  const parsed = parseFooterArgs(args)
+  if (parsed.kind === 'error') {
+    console.log(parsed.usage)
+    process.exitCode = 1
+    return
+  }
+  const store = new ConfigStore(getPaths().config)
+  try {
+    if (parsed.kind === 'patch') {
+      const checked = applyFooterPatch(store.get(), parsed.patch)
+      if (!checked.ok) {
+        console.log(checked.error)
+        process.exitCode = 1
+        return
+      }
+      store.update(c => {
+        const r = applyFooterPatch(c, parsed.patch)
+        if (!r.ok) throw new Error(r.error)
+        c.footer = r.footer
+        if (r.savedFooter === undefined) delete c.savedFooter
+        else c.savedFooter = r.savedFooter
+      })
+      console.log('Saved.')
+    } else if (store.error()) {
+      throw new Error(store.error()!)
+    }
+  } catch (e) {
+    console.log(e instanceof Error ? e.message : String(e))
+    process.exitCode = 1
+    return
+  }
+  console.log(`Footer: ${footerSummary(store.get())}`)
 }
 
 /** install / uninstall / restart run the daemon under launchd. */
@@ -372,6 +413,9 @@ switch (cmd) {
   }
   case 'away':
     await away(rest)
+    break
+  case 'footer':
+    footer(rest)
     break
   case 'mcp-add':
     mcpAdd()

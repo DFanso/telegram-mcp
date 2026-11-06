@@ -40,6 +40,8 @@ export interface TelegramPort {
   stop(): Promise<void>
   reconnect(reason: string): Promise<void>
   onMessage(cb: (msg: IncomingMessage) => void): void
+  /** You read messages in a chat, on any of your devices (Telegram's read-inbox update). */
+  onRead(cb: (chatId: number) => void): void
   getPeer(ref: number | string): Promise<PeerInfo>
   sendText(chatId: number, text: string, opts?: SendOptions): Promise<MessageInfo>
   sendFile(chatId: number, file: OutgoingFile, caption: string, opts?: SendFileOptions): Promise<MessageInfo>
@@ -219,6 +221,7 @@ export class MtcuteTelegram implements TelegramPort {
   #client: TelegramClient | null = null
   #state: TelegramState = { phase: 'starting', me: null, since: Date.now(), reconnects: 0, lastError: null }
   #listeners: ((msg: IncomingMessage) => void)[] = []
+  #readListeners: ((chatId: number) => void)[] = []
   #restarting: Promise<void> | null = null
   #timer: ReturnType<typeof setInterval> | null = null
   #stopped = false
@@ -234,6 +237,10 @@ export class MtcuteTelegram implements TelegramPort {
 
   state(): TelegramState {
     return { ...this.#state }
+  }
+
+  onRead(cb: (chatId: number) => void): void {
+    this.#readListeners.push(cb)
   }
 
   onMessage(cb: (msg: IncomingMessage) => void): void {
@@ -326,6 +333,17 @@ export class MtcuteTelegram implements TelegramPort {
       this.#client = client
       client.onConnectionState.add(s => this.#onConnection(client, s))
       client.onNewMessage.add(m => this.#onNewMessage(client, m))
+      client.onHistoryRead.add(u => {
+        // Inbox only: someone reading what you sent says nothing about you.
+        if (client !== this.#client || u.isOutbox) return
+        for (const cb of this.#readListeners) {
+          try {
+            cb(u.chatId)
+          } catch (e) {
+            this.#o.log(`telegram: read listener failed: ${errText(e)}`)
+          }
+        }
+      })
       client.onError.add(e => this.#o.log(`telegram client error: ${errText(e)}`))
       try {
         // Not client.start(): the Bun wrapper would prompt on stdin for a phone number and hang the daemon.

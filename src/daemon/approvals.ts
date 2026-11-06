@@ -28,6 +28,8 @@ export interface PendingSend {
   replyTo?: number
   topicId?: number
   parseMode: 'plain' | 'markdown' | 'html'
+  /** The footer added to a text message (for its Recently sent record). */
+  footer?: string
   reason: string
   createdAt: number
   peer: PeerInfo

@@ -1,8 +1,21 @@
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
-import { AWAY_MAX_AGE_MS, AWAY_MAX_PER_WINDOW, awaySummary, awayWindowAt, firstName, nextAwayChange, renderAwayMessage } from '../shared/away'
+import {
+  AWAY_MAX_AGE_MS,
+  AWAY_MAX_PER_HOUR,
+  AWAY_MAX_PER_WINDOW,
+  AWAY_MIN_GAP_MINUTES,
+  awaySummary,
+  awayWindowAt,
+  firstName,
+  nextAwayChange,
+  primarySchedule,
+  renderAwayMessage,
+  type AwaySchedule,
+  type AwayWindow,
+} from '../shared/away'
 import { isListed, type Config } from '../shared/config'
 import { decideSend, withFooter } from '../shared/policy'
-import type { IncomingMessage, SentRecord, UiAway } from '../shared/protocol'
+import type { IncomingMessage, MessageInfo, PeerInfo, SentRecord, UiAway } from '../shared/protocol'
 import type { SessionHub } from './sessions'
 import type { TelegramPort } from './telegram'
 
@@ -15,17 +28,30 @@ export interface AwayDeps {
   pages: () => { senderKey: string }[]
   /** Service.recordSent */
   record: (r: Omit<SentRecord, 'at'>) => void
+  /**
+   * Sends the reply. Defaults to tg.sendText; the daemon passes Service.sendAway, which marks the
+   * message as its own so its echo is never mistaken for you being back.
+   */
+  send?: (chatId: number, text: string) => Promise<MessageInfo>
   /** away.json; absent = memory only. */
   statePath?: string
   now?: () => number
+  /** Runs `fn` after `ms`; tests drive it by hand (and can await what `fn` returns). */
+  setTimer?: (fn: () => Promise<unknown>, ms: number) => { cancel(): void }
   log?: (msg: string) => void
 }
 
 /** Entries older than this are dropped on save: no away window is longer than a day. */
 const REPLIED_KEEP_MS = 48 * 3_600_000
+const HOUR_MS = 3_600_000
 
 /** Telegram's own service account (login codes, security notices): never a person to answer. */
 const TELEGRAM_SERVICE_ID = 777000
+
+const realTimer = (fn: () => Promise<unknown>, ms: number) => {
+  const t = setTimeout(() => void fn(), ms)
+  return { cancel: () => clearTimeout(t) }
+}
 
 /**
  * away.json as an earlier build wrote it: `{ window: "YYYY-MM-DDTHH:MM", chats: [...] }`, the window
@@ -41,42 +67,89 @@ function fromOldFormat(raw: { window: string; chats: unknown[] }): Map<number, n
   return out
 }
 
-/** What a sender gets: the message with {name} filled in, plus the footer. */
-export function awayText(config: Config, me: { name: string } | null | undefined): string {
-  return withFooter(renderAwayMessage(config.away.message, firstName(me)), config.footer)
+/** What a sender gets from this schedule: its message with {name} filled in, plus the footer. */
+export function awayText(config: Config, me: { name: string } | null | undefined, schedule: Pick<AwaySchedule, 'message'>): string {
+  return withFooter(renderAwayMessage(schedule.message, firstName(me)), config.footer)
 }
 
 /** The away settings as the tray shows them. One place, so the responder and a Service without one agree. */
-export function uiAway(config: Config, me: { name: string } | null | undefined, at: Date): UiAway {
+export function uiAway(config: Config, me: { name: string } | null | undefined, at: Date, waiting = 0): UiAway {
   const { away } = config
+  const current = awayWindowAt(away, at)
+  // The fields an earlier tray and the menu bar read, and write back to the same schedule (applyAwayPatch).
+  const primary = primarySchedule(away, at)
   return {
     enabled: away.enabled,
-    from: away.from,
-    until: away.until,
-    message: away.message,
+    from: primary?.from ?? '18:00',
+    until: primary?.until ?? '09:00',
+    message: primary?.message ?? '',
     quietMinutes: away.quietMinutes,
-    active: away.enabled && awayWindowAt(away, at) !== null,
+    active: current !== null,
     nextChange: nextAwayChange(away, at)?.toISOString() ?? null,
-    preview: awayText(config, me),
+    preview: primary ? awayText(config, me, primary) : '',
+    current: current?.schedule.id ?? null,
+    currentUntil: current?.end.toISOString() ?? null,
+    waiting,
+    schedules: away.schedules.map(s => ({
+      id: s.id,
+      name: s.name,
+      enabled: s.enabled,
+      from: s.from,
+      until: s.until,
+      days: s.days,
+      startDate: s.startDate,
+      endDate: s.endDate,
+      delaySeconds: s.delaySeconds,
+      repeatMinutes: s.repeatMinutes,
+      message: s.message,
+      active: current?.schedule.id === s.id,
+      preview: awayText(config, me, s),
+    })),
   }
 }
 
-/** Sends at most one away reply per chat per away window, to people only, and never over a live Claude or page. */
+type Skip = { skip: string }
+type Ok = { window: AwayWindow }
+
+interface Waiting {
+  /** The message's own date (Telegram's clock, epoch ms). */
+  at: number
+  /** When it reached the daemon (this PC's clock), for comparing with reads, which only this clock times. */
+  arrived: number
+  chat: PeerInfo
+  msg: IncomingMessage
+  paged: boolean
+  /** The schedule's wait. Only this much counts on top of the age limit: a timer that fires late (the laptop slept) is too late. */
+  delayMs: number
+  timer: { cancel(): void }
+}
+
+/**
+ * Sends away replies to people only, never over a live Claude or page. A schedule with a wait holds
+ * the reply that long and drops it if you show up meanwhile (you read a chat or send something
+ * yourself, on any device).
+ */
 export class AwayResponder {
   /** chat id -> when it last got an away reply (epoch ms). Loaded lazily from away.json. */
   #replied: Map<number, number> | null = null
+  /** When each away reply of the last two days went (epoch ms), for the hourly and per-window limits. */
+  #sentLog: number[] = []
   #lastOutgoing = new Map<number, number>()
-  /** The window whose nightly limit was last logged, so it's logged once a night. */
+  /** Replies waiting out a schedule's delay, by chat. */
+  #waiting = new Map<number, Waiting>()
+  /**
+   * When you were last seen on Telegram. Two clocks, never compared with each other: a read is timed by
+   * this PC, a message you sent by Telegram, and the two can be seconds apart.
+   */
+  #lastRead = 0
+  #lastSent = 0
+  /** The limit last logged and when (hour or window id), so each is logged once. */
   #limitLogged: string | null = null
 
   constructor(private d: AwayDeps) {}
 
   #now = () => (this.d.now ?? Date.now)()
   #log = (m: string) => this.d.log?.(m)
-
-  #text(config: Config): string {
-    return awayText(config, this.d.tg.state().me)
-  }
 
   /** Who got an away reply when. Keyed by time, not by window, so editing the hours mid-night can't reset it. */
   #repliedMap(): Map<number, number> {
@@ -90,8 +163,13 @@ export class AwayResponder {
           const id = Number(k)
           if (Number.isFinite(id) && typeof v === 'number' && Number.isFinite(v)) this.#replied.set(id, v)
         }
+        // A file from before the log: each chat's last reply is the best there is.
+        this.#sentLog = Array.isArray(raw.sent)
+          ? raw.sent.filter((t: unknown): t is number => typeof t === 'number' && Number.isFinite(t))
+          : [...this.#replied.values()]
       } else if (typeof raw?.window === 'string' && Array.isArray(raw.chats)) {
         this.#replied = fromOldFormat(raw)
+        this.#sentLog = [...this.#replied.values()]
       }
     } catch {}
     return this.#replied
@@ -102,87 +180,180 @@ export class AwayResponder {
     if (!replied) return
     const cutoff = this.#now() - REPLIED_KEEP_MS
     for (const [id, t] of replied) if (t < cutoff) replied.delete(id)
+    this.#sentLog = this.#sentLog.filter(t => t >= cutoff)
     if (!this.d.statePath) return
     try {
       const tmp = `${this.d.statePath}.tmp`
-      writeFileSync(tmp, JSON.stringify({ replied: Object.fromEntries(replied) }), { mode: 0o600 })
+      writeFileSync(tmp, JSON.stringify({ replied: Object.fromEntries(replied), sent: this.#sentLog }), { mode: 0o600 })
       renameSync(tmp, this.d.statePath)
     } catch (e) {
       this.#log(`away: could not save state: ${e instanceof Error ? e.message : String(e)}`)
     }
   }
 
-  async onIncoming(msg: IncomingMessage, paged: boolean): Promise<'sent' | 'skipped'> {
+  /**
+   * Every rule but the wait, checked when the message arrives and again when the wait is over.
+   * `extraAge`: the schedule's wait, which doesn't count against the message's age. Only the wait as
+   * set: a timer that fires late (the laptop slept through it) finds the message too old.
+   */
+  #check(config: Config, msg: IncomingMessage, at: number, paged: boolean, extraAge: number): Skip | Ok {
+    const { away } = config
+    if (!away.enabled) return { skip: 'away is off' } // R1
+    const chat = msg.chat
+    // R4: the chat's rules. A Blocked chat (listed, or unlisted under defaultPolicy "block") never gets
+    // one. Ask every time chats do: the reply is your own fixed text, so there is nothing to approve.
+    if (decideSend(config, chat, { isWatching: false }).action === 'block') return { skip: 'blocked' }
+    // R5: away now, not just when it was sent (a catch-up at 09:05 of a message from 08:58 is too late),
+    // and the message came in during this same window.
+    const now = this.#now()
+    const window = awayWindowAt(away, new Date(now))
+    if (!window || at < window.start.getTime()) return { skip: 'not in an away window' }
+    if (now - at > AWAY_MAX_AGE_MS + extraAge) return { skip: 'too old' }
+    // R6: once per chat per window, or again after the schedule's repeat minutes; and never twice within
+    // AWAY_MIN_GAP_MINUTES, even across schedules (a Daytime reply at 20:59, then Night's at 21:01).
+    const prev = this.#repliedMap().get(chat.id)
+    if (prev !== undefined) {
+      const { repeatMinutes } = window.schedule
+      if (now - prev < AWAY_MIN_GAP_MINUTES * 60_000) return { skip: 'replied lately' }
+      if (repeatMinutes === 0 ? prev >= window.start.getTime() : now - prev < repeatMinutes * 60_000) return { skip: 'already replied' }
+    }
+    const lastOut = this.#lastOutgoing.get(chat.id)
+    if (away.quietMinutes > 0 && lastOut !== undefined && now - lastOut < away.quietMinutes * 60_000) return { skip: 'you wrote there lately' } // R7
+    if (this.d.hub.takeoverOf(chat.id) !== null) return { skip: 'handed to Claude' } // R8
+    if (this.d.hub.handledLive(chat.id) && isListed(config, 'autoReply', chat)) return { skip: 'Claude is answering' }
+    if (paged || this.d.pages().some(p => p.senderKey === String(msg.from?.id ?? chat.id))) return { skip: 'paged' } // R9
+    return { window }
+  }
+
+  async onIncoming(msg: IncomingMessage, paged: boolean): Promise<'sent' | 'skipped' | 'waiting'> {
     try {
-      const config = this.d.config()
-      const { away } = config
-      if (!away.enabled) return 'skipped' // R1
       if (msg.outgoing) return 'skipped' // R2
       const chat = msg.chat
       // R3: bots are type 'bot'; Telegram's service account and support staff are users but not people to answer.
       if (chat.type !== 'user' || chat.isSelf || chat.isSupport || chat.id === TELEGRAM_SERVICE_ID) return 'skipped'
-      // R4: the chat's rules, as for the pager's fixed replies. Blocked (listed, or unlisted under
-      // defaultPolicy "block") and Ask every time chats never get a message nobody approved.
-      const rule = decideSend(config, chat, { isWatching: false })
-      if (rule.action === 'block' || isListed(config, 'requireApproval', chat)) return 'skipped'
       const at = Date.parse(msg.date)
       if (Number.isNaN(at)) return 'skipped'
-      // R5: away now, not just when it was sent (a catch-up at 09:05 of a message from 08:58 is too late),
-      // and the message came in during this same window.
-      const now = this.#now()
-      const window = awayWindowAt(away, new Date(now))
-      if (!window || at < window.start.getTime()) return 'skipped'
-      if (now - at > AWAY_MAX_AGE_MS) return 'skipped'
-      const replied = this.#repliedMap()
-      const prev = replied.get(chat.id)
-      if (prev !== undefined && prev >= window.start.getTime()) return 'skipped' // R6
-      const lastOut = this.#lastOutgoing.get(chat.id)
-      if (away.quietMinutes > 0 && lastOut !== undefined && now - lastOut < away.quietMinutes * 60_000) return 'skipped' // R7
-      if (this.d.hub.takeoverOf(chat.id) !== null) return 'skipped' // R8
-      if (this.d.hub.handledLive(chat.id) && isListed(config, 'autoReply', chat)) return 'skipped'
-      if (paged || this.d.pages().some(p => p.senderKey === String(msg.from?.id ?? chat.id))) return 'skipped' // R9
-      // R10: a nightly limit, whoever writes. Counted from the saved replies, so a restart doesn't reset it.
-      const start = window.start.getTime()
-      let tonight = 0
-      for (const t of replied.values()) if (t >= start) tonight++
-      if (tonight >= AWAY_MAX_PER_WINDOW) {
-        if (this.#limitLogged !== window.id) {
-          this.#limitLogged = window.id
-          this.#log(`away: reached the limit of ${AWAY_MAX_PER_WINDOW} replies tonight; no more until the next away window`)
-        }
-        return 'skipped'
-      }
-
-      // Mark before the first await so a second message arriving meanwhile sees it.
-      replied.set(chat.id, now)
-      this.#save()
-      const text = this.#text(config)
-      try {
-        const sent = await this.d.tg.sendText(chat.id, text)
-        this.d.record({ chatId: chat.id, chatLabel: chat.name, text, messageId: sent.id, via: 'away', sessionLabel: null })
-        this.#log(`away reply to ${chat.id}`)
-        return 'sent'
-      } catch (e) {
-        // Restore what was there, unless something else has written this chat since.
-        if (replied.get(chat.id) === now) {
-          if (prev === undefined) replied.delete(chat.id)
-          else replied.set(chat.id, prev)
-          this.#save()
-        }
-        throw e
-      }
+      if (this.#waiting.has(chat.id)) return 'skipped' // one wait per chat; its reply covers this message too
+      const r = this.#check(this.d.config(), msg, at, paged, 0)
+      if ('skip' in r) return 'skipped'
+      const delay = r.window.schedule.delaySeconds
+      if (delay === 0) return await this.#reply(msg, at, paged, 0)
+      const timer = (this.d.setTimer ?? realTimer)(() => this.#afterWait(chat.id), delay * 1000)
+      this.#waiting.set(chat.id, { at, arrived: this.#now(), chat, msg, paged, delayMs: delay * 1000, timer })
+      return 'waiting'
     } catch (e) {
       this.#log(`away: ${e instanceof Error ? e.message : String(e)}`)
       return 'skipped'
     }
   }
 
+  async #afterWait(chatId: number): Promise<'sent' | 'skipped'> {
+    const w = this.#waiting.get(chatId)
+    if (!w) return 'skipped'
+    this.#waiting.delete(chatId)
+    try {
+      if (this.#lastRead >= w.arrived || this.#lastSent >= w.at) return 'skipped'
+      return await this.#reply(w.msg, w.at, w.paged, w.delayMs)
+    } catch (e) {
+      this.#log(`away: ${e instanceof Error ? e.message : String(e)}`)
+      return 'skipped'
+    }
+  }
+
+  async #reply(msg: IncomingMessage, at: number, paged: boolean, waited: number): Promise<'sent' | 'skipped'> {
+    const config = this.d.config()
+    const r = this.#check(config, msg, at, paged, waited)
+    if ('skip' in r) return 'skipped'
+    const chat = msg.chat
+    const now = this.#now()
+    const replied = this.#repliedMap()
+    // R10: at most AWAY_MAX_PER_HOUR in any hour and AWAY_MAX_PER_WINDOW in one window, whoever writes.
+    // Counted from the saved log, so a restart doesn't reset either.
+    const lastHour = this.#sentLog.filter(t => t > now - HOUR_MS).length
+    const thisWindow = this.#sentLog.filter(t => t >= r.window.start.getTime()).length
+    const limit =
+      lastHour >= AWAY_MAX_PER_HOUR
+        ? { key: `hour@${Math.floor(now / HOUR_MS)}`, text: `${AWAY_MAX_PER_HOUR} replies an hour` }
+        : thisWindow >= AWAY_MAX_PER_WINDOW
+          ? { key: `window@${r.window.id}`, text: `${AWAY_MAX_PER_WINDOW} replies in this ${r.window.schedule.name} window` }
+          : null
+    if (limit) {
+      if (this.#limitLogged !== limit.key) {
+        this.#limitLogged = limit.key
+        this.#log(`away: reached the limit of ${limit.text}; holding off`)
+      }
+      return 'skipped'
+    }
+
+    // Mark before the first await so a second message arriving meanwhile sees it.
+    const prev = replied.get(chat.id)
+    replied.set(chat.id, now)
+    this.#sentLog.push(now)
+    this.#save()
+    const text = awayText(config, this.d.tg.state().me, r.window.schedule)
+    try {
+      const sent = await (this.d.send ?? ((id, t) => this.d.tg.sendText(id, t)))(chat.id, text)
+      this.d.record({ chatId: chat.id, chatLabel: chat.name, text, messageId: sent.id, via: 'away', sessionLabel: null })
+      this.#log(`away reply (${r.window.schedule.name}) to ${chat.id}`)
+      return 'sent'
+    } catch (e) {
+      // Restore what was there, unless something else has written this chat since.
+      if (replied.get(chat.id) === now) {
+        if (prev === undefined) replied.delete(chat.id)
+        else replied.set(chat.id, prev)
+        const i = this.#sentLog.lastIndexOf(now)
+        if (i >= 0) this.#sentLog.splice(i, 1)
+        this.#save()
+      }
+      throw e
+    }
+  }
+
+  /** Something was sent in this chat from your account (you or Claude): R7's quiet time starts. */
   noteOutgoing(chatId: number, at: number = this.#now()) {
     this.#lastOutgoing.set(chatId, at)
   }
 
+  /**
+   * You read a chat, on any device: you are around. `at` is this PC's clock (Telegram's read updates
+   * carry no time). Replies waiting for a message that reached the daemon before then are dropped.
+   */
+  noteRead(at: number = this.#now()) {
+    if (at > this.#lastRead) this.#lastRead = at
+    this.#dropWaiting(w => w.arrived <= at)
+  }
+
+  /**
+   * You sent a message yourself (not Claude, the pager or an away reply), on any device. `sentAt` is the
+   * message's own date, Telegram's clock, so it's compared with the waiting messages' own dates.
+   */
+  noteSent(sentAt: number) {
+    if (sentAt > this.#lastSent) this.#lastSent = sentAt
+    this.#dropWaiting(w => w.at <= sentAt)
+  }
+
+  #dropWaiting(before: (w: Waiting) => boolean) {
+    for (const [chatId, w] of this.#waiting) {
+      if (!before(w)) continue
+      w.timer.cancel()
+      this.#waiting.delete(chatId)
+      this.#log(`away: you're back, no away reply to ${chatId}`)
+    }
+  }
+
+  /** Chats whose reply is waiting out a schedule's delay right now. */
+  waitingCount(): number {
+    return this.#waiting.size
+  }
+
+  /** Stops every waiting reply (the daemon is stopping). */
+  stop() {
+    for (const w of this.#waiting.values()) w.timer.cancel()
+    this.#waiting.clear()
+  }
+
   ui(): UiAway {
-    return uiAway(this.d.config(), this.d.tg.state().me, new Date(this.#now()))
+    return uiAway(this.d.config(), this.d.tg.state().me, new Date(this.#now()), this.#waiting.size)
   }
 
   summary(): string {
