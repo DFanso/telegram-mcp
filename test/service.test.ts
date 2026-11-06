@@ -638,6 +638,19 @@ describe('editing a sent message', () => {
     expect(tg.edits).toEqual([{ chatId: LEO.id, messageId: id, text: `fixed${FOOTER}`, parseMode: 'plain' }])
   })
 
+  test('after the footer changed, an edit that copied the old footer gets only the new one', async () => {
+    const id = await sentId('leo')
+    store.update(c => {
+      c.footer = '\n\n— new'
+    })
+    const r = await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: id, text: `fixed${FOOTER}` })
+    expect(r.isError).toBeFalsy()
+    expect(tg.edits.at(-1)!.text).toBe('fixed\n\n— new')
+    // And the next edit knows the footer is the new one now.
+    await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: id, text: 'again\n\n— new' })
+    expect(tg.edits.at(-1)!.text).toBe('again\n\n— new')
+  })
+
   // The rule is checked at edit time: a chat that moved to Ask every time waits for a yes, one that
   // moved to Blocked is refused.
   test('a chat on ask every time waits for approval, showing the text now and the new text', async () => {

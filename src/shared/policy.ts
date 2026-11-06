@@ -66,6 +66,18 @@ export function footerFor(footer: string, parseMode: 'plain' | 'markdown' | 'htm
   return footer
 }
 
+/**
+ * Takes an earlier footer off the end of a text, as written plain or in the parse mode: a session
+ * editing a message it copied, footer and all, after the footer changed.
+ */
+export function withoutFooter(text: string, footer: string, parseMode: 'plain' | 'markdown' | 'html' = 'plain'): string {
+  const body = text.trimEnd()
+  for (const mark of [footerFor(footer, parseMode).trim(), footer.trim()]) {
+    if (mark !== '' && body.endsWith(mark)) return body.slice(0, body.length - mark.length).trimEnd()
+  }
+  return text
+}
+
 /** Appends the footer once, in the message's parse mode. Text that already ends with it is left alone. */
 export function withFooter(text: string, footer: string, parseMode: 'plain' | 'markdown' | 'html' = 'plain'): string {
   if (footer.trim() === '') return text

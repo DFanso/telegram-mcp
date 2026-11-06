@@ -18,7 +18,7 @@ import {
 import { listContacts, pageTarget, renameContact, setAutoReply, setPageFrom, setSendMode } from '../shared/contacts'
 import { applyAwayPatch, awaySummary } from '../shared/away'
 import { applyFooterPatch, footerOn, footerSummary, footerText } from '../shared/footer'
-import { decideSend, policyLabel, withFooter } from '../shared/policy'
+import { decideSend, policyLabel, withFooter, withoutFooter } from '../shared/policy'
 import { readFileSync, renameSync, writeFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
@@ -444,6 +444,7 @@ export class Service {
             sessionLabel: item.sessionLabel,
             sessionId: item.sessionId,
             kind: item.sticker ? 'sticker' : file ? 'file' : 'text',
+            footer: item.footer,
           })
           let saved = ''
           if (item.firstTime) {
@@ -732,6 +733,7 @@ export class Service {
         sessionLabel: this.d.hub.label(sid),
         sessionId: sid,
         kind: draft.sticker ? 'sticker' : file ? 'file' : 'text',
+        footer: draft.sticker || file ? undefined : config.footer,
       })
       return { text: `Sent to ${t.label} (message #${sent.id}${topicId ? `, topic ${topicId}` : ''}). Allowed because ${decision.reason}.` }
     }
@@ -759,6 +761,7 @@ export class Service {
       replyTo: p.replyTo,
       topicId,
       parseMode: p.parseMode,
+      footer: draft.sticker || file ? undefined : config.footer,
       reason: decision.reason,
     })
     return {
@@ -900,7 +903,9 @@ export class Service {
     const edited = await this.d.tg.editMessage(chatId, messageId, text, { parseMode })
     const at = new Date().toISOString()
     this.#recent = this.#recent.map(r =>
-      r.chatId === chatId && r.messageId === messageId ? { ...r, text, edited: { at, by, original: r.edited?.original ?? r.text } } : r,
+      r.chatId === chatId && r.messageId === messageId
+        ? { ...r, text, footer: this.d.store.get().footer, edited: { at, by, original: r.edited?.original ?? r.text } }
+        : r,
     )
     this.#saveRecent()
     return edited
@@ -1099,7 +1104,11 @@ export class Service {
         takenOver: this.d.hub.isTakenOverBy(sid, t.peer.id),
       })
       if (decision.action === 'block') return fail(`Not edited in ${t.label}: ${decision.reason}.`)
-      const text = withFooter(p.text, config.footer, p.parseMode)
+      // The session may have copied the message with the footer it had then: take that one off, so a
+      // changed footer isn't added after the old one.
+      const old = rec.footer
+      const body = old !== undefined && old.trim() !== config.footer.trim() ? withoutFooter(p.text, old, p.parseMode) : p.text
+      const text = withFooter(body, config.footer, p.parseMode)
       if (decision.action === 'approve') {
         return this.#askToChange(sid, t, decision.reason, { action: 'edit', messageId: p.messageId, previousText: rec.text, text, parseMode: p.parseMode })
       }

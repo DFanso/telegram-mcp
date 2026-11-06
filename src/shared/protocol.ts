@@ -140,6 +140,8 @@ export interface SentRecord {
   sessionId?: string
   /** What went out. Only a text message can be edited. */
   kind?: 'text' | 'file' | 'sticker'
+  /** The footer it carries (a text message), so an edit after the footer changed can take the old one off. */
+  footer?: string
   /** Set once a session edited it: when, by which session, and the text before the first edit. */
   edited?: { at: string; by: string | null; original: string }
 }
