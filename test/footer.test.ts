@@ -33,6 +33,23 @@ describe('applyFooterPatch', () => {
     expect(applyFooterPatch(on, null).ok).toBe(false)
   })
 
+  test('control characters, direction marks and invisible-only text are refused', () => {
+    const error = (footer: string) => {
+      const r = applyFooterPatch(on, { footer })
+      return r.ok ? null : r.error
+    }
+    expect(error('\n\nhi\u0007')).toBe("The footer can't contain control characters.")
+    expect(error('\n\nhi\tthere')).toBe("The footer can't contain control characters.")
+    expect(error('\n\n‮evil')).toBe("The footer can't contain text direction marks.")
+    expect(error('\n\nhi‏')).toBe("The footer can't contain text direction marks.")
+    expect(error('\n\n​‍﻿ ')).toBe("The footer can't be empty. Turn it off instead.")
+    // Saving new text while switching off is checked too.
+    expect(applyFooterPatch(on, { footer: '\n\n‮x', enabled: false }).ok).toBe(false)
+    // Emoji built with joiners, other scripts and line breaks are fine; \r\n becomes \n.
+    expect(error('\n\n👨‍👩‍👧 ස්තූතියි')).toBeNull()
+    expect(applyFooterPatch(on, { footer: '\r\n\r\nline one\r\nline two' })).toEqual({ ok: true, footer: '\n\nline one\nline two', savedFooter: undefined })
+  })
+
   test('words and state', () => {
     expect(footerOn(on)).toBe(true)
     expect(footerOn(off)).toBe(false)

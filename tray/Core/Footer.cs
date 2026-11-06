@@ -49,8 +49,14 @@ public static class Footer
     /// <summary>The first problem with the words as typed, or null.</summary>
     public static string? Check(string body)
     {
-        if (body.Trim() == "") return "Write something, or switch the footer off.";
-        if (body.Trim().Length + 2 > Max) return $"The footer is too long ({Max - 2} characters at most).";
+        // The daemon's footerProblem (src/shared/footer.ts) makes the same checks.
+        var text = body.Replace("\r\n", "\n", StringComparison.Ordinal).Trim();
+        if (text.Any(c => (c < ' ' && c != '\n') || c is >= '\u007f' and <= '\u009f')) return "Remove the control characters.";
+        if (text.Any(c => c is '؜' or '‎' or '‏' or (>= '‪' and <= '‮') or (>= '⁦' and <= '⁩')))
+            return "Remove the text direction marks.";
+        if (text.All(c => char.IsWhiteSpace(c) || c is '­' or '᠎' or (>= '​' and <= '‍') or '⁠' or '﻿'))
+            return "Write something, or switch the footer off.";
+        if (text.Length + 2 > Max) return $"The footer is too long ({Max - 2} characters at most).";
         return null;
     }
 

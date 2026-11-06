@@ -28,6 +28,22 @@ export function footerOn(c: FooterState): boolean {
   return c.footer.trim() !== ''
 }
 
+/** Control characters other than a line break: they'd show as boxes, or not at all. */
+const CONTROL = /[\u0000-\u0009\u000B-\u001F\u007F-\u009F]/u
+/** Direction overrides and marks: they can flip how the message above the footer reads. */
+const BIDI = /[؜‎‏‪-‮⁦-⁩]/u
+/** Characters that take no space: fine inside an emoji, but not all there is. */
+const INVISIBLE = /[\s­᠎​-‍⁠﻿]/gu
+
+/** What's wrong with footer text, or null. The tray makes the same checks (Footer.Check). */
+export function footerProblem(text: string): string | null {
+  if (CONTROL.test(text)) return "The footer can't contain control characters."
+  if (BIDI.test(text)) return "The footer can't contain text direction marks."
+  if (text.replace(INVISIBLE, '') === '') return "The footer can't be empty. Turn it off instead."
+  if (text.length > FOOTER_MAX) return `The footer is too long (${FOOTER_MAX} characters at most).`
+  return null
+}
+
 /** The new footer and savedFooter, or what's wrong. A rejected patch changes nothing. */
 export function applyFooterPatch(
   current: FooterState,
@@ -40,11 +56,14 @@ export function applyFooterPatch(
   if (!('footer' in p) && !('enabled' in p)) return { ok: false, error: 'nothing to change: send footer or enabled' }
   if ('footer' in p && typeof p.footer !== 'string') return { ok: false, error: 'footer must be text' }
   if ('enabled' in p && typeof p.enabled !== 'boolean') return { ok: false, error: 'enabled must be true or false' }
-  const text = (p.footer as string | undefined) ?? footerText(current)
-  if (text.length > FOOTER_MAX) return { ok: false, error: `The footer is too long (${FOOTER_MAX} characters at most).` }
+  // Windows text boxes write \r\n; Telegram wants \n.
+  const text = ((p.footer as string | undefined) ?? footerText(current)).replace(/\r\n?/g, '\n')
   const enabled = (p.enabled as boolean | undefined) ?? (p.footer !== undefined ? true : footerOn(current))
-  if (!enabled) return { ok: true, footer: '', savedFooter: text.trim() === '' ? current.savedFooter : text }
-  if (text.trim() === '') return { ok: false, error: "The footer can't be empty. Turn it off instead." }
+  // Switching off without new text keeps whatever is there; new text is checked either way.
+  if (!enabled && p.footer === undefined) return { ok: true, footer: '', savedFooter: text.trim() === '' ? current.savedFooter : text }
+  const problem = footerProblem(text)
+  if (problem) return { ok: false, error: problem }
+  if (!enabled) return { ok: true, footer: '', savedFooter: text }
   return { ok: true, footer: text, savedFooter: undefined }
 }
 

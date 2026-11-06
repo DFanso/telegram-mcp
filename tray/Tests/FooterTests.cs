@@ -34,6 +34,16 @@ public class FooterTests
     }
 
     [Fact]
+    public void Check_refuses_what_the_daemon_refuses()
+    {
+        Assert.Equal("Remove the control characters.", Footer.Check("hi\u0007"));
+        Assert.Equal("Remove the text direction marks.", Footer.Check("‮evil"));
+        Assert.Equal("Write something, or switch the footer off.", Footer.Check("​‍﻿ "));
+        Assert.Null(Footer.Check("line one\r\nline two"));
+        Assert.Null(Footer.Check("👨‍👩‍👧 ස්තූතියි"));
+    }
+
+    [Fact]
     public void Restyle_changes_letters_and_digits_and_leaves_the_rest()
     {
         Assert.Equal("✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ", Footer.Restyle("✨ sent via claude", FooterStyle.SmallCaps));
