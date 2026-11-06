@@ -698,8 +698,12 @@ export class Service {
     if (decision.action === 'block') return fail(`Not sent to ${t.label}: ${decision.reason}.`)
     // A file with no caption still carries the footer, without the blank lines that lead into it.
     // A sticker takes no caption, so it goes out without the footer.
-    const footed = draft.sticker ? '' : withFooter(draft.text, config.footer)
-    const text = file && draft.text.trim() === '' ? footed.trimStart() : footed
+    const footed = draft.sticker
+      ? ''
+      : file && draft.text.trim() === ''
+        ? withFooter('', config.footer.trimStart(), p.parseMode)
+        : withFooter(draft.text, config.footer, p.parseMode)
+    const text = footed
     const shown = draft.sticker ? STICKER_TEXT : describeOutgoing(text, file)
     if (decision.action === 'send') {
       const sent = await this.#deliver(
@@ -1085,7 +1089,7 @@ export class Service {
         takenOver: this.d.hub.isTakenOverBy(sid, t.peer.id),
       })
       if (decision.action === 'block') return fail(`Not edited in ${t.label}: ${decision.reason}.`)
-      const text = withFooter(p.text, config.footer)
+      const text = withFooter(p.text, config.footer, p.parseMode)
       if (decision.action === 'approve') {
         return this.#askToChange(sid, t, decision.reason, { action: 'edit', messageId: p.messageId, previousText: rec.text, text, parseMode: p.parseMode })
       }
