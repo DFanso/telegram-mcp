@@ -113,6 +113,8 @@ function autoReplyText(c: UiContact): string {
 }
 
 const STICKER_TEXT = '[sticker]'
+/** The longest caption Telegram takes under a file (without Premium). */
+const CAPTION_MAX = 1024
 
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e))
 const fail = (text: string): ToolResult => ({ text, isError: true })
@@ -704,6 +706,14 @@ export class Service {
         ? withFooter('', config.footer.trimStart(), p.parseMode)
         : withFooter(draft.text, config.footer, p.parseMode)
     const text = footed
+    // Telegram takes at most 1024 characters under a file. Say so now rather than after an approval.
+    const captionLength = file ? visibleText(text, p.parseMode).length : 0
+    if (captionLength > CAPTION_MAX) {
+      return fail(
+        `Not sent: the caption with the footer is ${captionLength} characters, and Telegram allows ${CAPTION_MAX} under a file. ` +
+          'Shorten the caption, or send the text as a message and the file without it.',
+      )
+    }
     const shown = draft.sticker ? STICKER_TEXT : describeOutgoing(text, file)
     if (decision.action === 'send') {
       const sent = await this.#deliver(

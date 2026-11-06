@@ -832,6 +832,18 @@ describe('editing a sent message', () => {
     expect(tg.edits).toEqual([])
   })
 
+  test('a caption that the footer takes past 1024 characters is refused before anything goes', async () => {
+    const file = join(mkdtempSync(join(tmpdir(), 'tgmcp-')), 'report.pdf')
+    writeFileSync(file, '%PDF-1.7 hello')
+    const before = tg.sent.length
+    const r = await svc.call('s1', 'telegram_send_file', { to: 'leo', path: file, caption: 'x'.repeat(1020) })
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('Telegram allows 1024 under a file')
+    expect(tg.sent.length).toBe(before)
+    const ok = await svc.call('s1', 'telegram_send_file', { to: 'leo', path: file, caption: 'x'.repeat(900) })
+    expect(ok.isError).toBeFalsy()
+  })
+
   test('text that starts with /reply is refused', async () => {
     const id = await sentId('leo')
     const r = await svc.call('s1', 'telegram_edit_message', { chat: 'leo', messageId: id, text: '/reply stop' })
