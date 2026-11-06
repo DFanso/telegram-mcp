@@ -223,7 +223,7 @@ Hours are in the laptop's local time; the start is included and the end is not, 
 - **Hours** (from, until), and **days** of the week (all, weekdays, weekends, or any you pick).
 - **Dates** (optional): only from one date, until another, or between the two, e.g. a holiday. Outside them the schedule does nothing.
 - **Wait**: 0 (reply at once) to 600 seconds.
-- **Repeat**: 0 means once per chat per window; a number of minutes means again after that long, if they write again.
+- **Repeat**: 0 means once per chat per window; a number of minutes means again after that long (30 at the least), if they write again.
 - **Message**: at most 1000 characters.
 
 Up to 12 schedules. When two cover the same moment, the more specific one replies: one with dates beats one without, then the shorter window wins. So a "Lunch break" 13:00–14:00 schedule takes over from Daytime for that hour, and a "Time off" schedule with dates covers whole days.
@@ -232,21 +232,22 @@ The rules, so it never gets in the way:
 
 - Only private chats with people: not groups, bots, Saved Messages, or Telegram's service and support accounts.
 - Never a **Blocked** chat, nor a chat that isn't saved when `defaultPolicy` is `"block"`. **Ask every time** chats do get it: the reply is your own fixed text, so there is nothing to approve.
-- Once per chat per window (or per the schedule's repeat), and at most 20 replies in any hour in all, so a wave of messages doesn't look like spam from your account. A restart doesn't reset either.
+- Once per chat per window (or per the schedule's repeat), and never twice to the same chat within 30 minutes, even across schedules (no Daytime reply at 20:59 and Night's at 21:01). At most 20 replies in any hour and 30 in one window in all, so a wave of messages doesn't look like spam from your account. A restart doesn't reset any of these.
 - Only while it's still the same away window: a message from 07:58 that the laptop picks up at 08:05 gets nothing, and one from 20:58 picked up at 21:01 gets neither reply.
 - Not for 30 minutes after anything was sent from your account in that chat, whether you typed it or Claude sent it (`quietMinutes`; 0 turns this off). The Page button's message and the away reply itself don't count.
 - Not while a Claude session is handling the chat (watching it, or after `/reply`).
 - Not to someone who is paging you, or whose page is still waiting.
-- Only for messages less than 10 minutes old (plus the wait), so catching up after the laptop sleeps doesn't send night-time replies in the morning.
+- Only for messages less than 10 minutes old (plus the wait), so catching up after the laptop sleeps doesn't send night-time replies in the morning. A wait that ends late because the laptop slept through it sends nothing either.
 
-Set it up on the **Away** tab of the tray app (Windows), with `tgmcp away`, or in `config.json`. The menu bar app's Away page (macOS) and the `hours` / `message` commands change the first schedule.
+Set it up on the **Away** tab of the tray app (Windows), with `tgmcp away`, or in `config.json`. The menu bar app's Away page (macOS) shows and changes one schedule: the one that would reply now, else the first switched on. `hours` and `message` change that one too, unless you name another.
 
 ```
 tgmcp away                          # every schedule, and what's replying now
 tgmcp away on | off
 tgmcp away quiet 60
-tgmcp away hours 19:00 08:30        # the first schedule's hours
-tgmcp away message "{name} is away until tomorrow."   # the first schedule's message
+tgmcp away night hours 21:30 07:30  # a schedule's hours, by name or id
+tgmcp away night message "Gone to bed, back tomorrow 🌙"
+tgmcp away message "Back soon."     # without a name: the schedule replying now
 ```
 
 ```jsonc
@@ -264,13 +265,13 @@ tgmcp away message "{name} is away until tomorrow."   # the first schedule's mes
 }
 ```
 
-`days` is 0 (Sunday) to 6 (Saturday); from and until equal means all day. A file with the older single window (`from`, `until`, `message`) still works: it's read as one schedule.
+`days` is 0 (Sunday) to 6 (Saturday); from and until equal means all day. A file from an earlier build (`enabled`, `from`, `until`, `message` at the top of `away`, any of them) still works: it's read as one schedule with that build's defaults for what's missing (18:00 to 09:00), so upgrading never starts replying all day. Only a file with no `away` gets Daytime and Night.
 
 An away reply shows under Recently sent as "away reply", and `daemon.log` names the schedule. No MCP tool can change these settings, so sessions can't turn it on or rewrite the message; only you can, through the file, the CLI, the menu bar app or the tray (`POST /ui/away` with the token).
 
 ## Footer
 
-The footer goes under everything sent from your account for you: Claude's messages, away replies and the pager's fixed replies (not what you type yourself, and not stickers or `/page`). It's `"\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ"` unless you change it. Make it anything you like, up to 300 characters, emoji included, or switch it off: off keeps its text (`savedFooter`) for when you switch it back on.
+The footer goes under everything sent from your account for you: Claude's messages, away replies and the pager's fixed replies (not what you type yourself, and not stickers or `/page`). It's `"\n\n✨ sᴇɴᴛ ᴠɪᴀ ᴄʟᴀᴜᴅᴇ"` unless you change it. Make it anything you like, up to 300 characters, emoji and line breaks included (not control characters, text direction marks, or nothing but invisible characters), or switch it off: off keeps its text (`savedFooter`) for when you switch it back on. In a markdown or html message it's escaped, so it always reads as typed. A file's caption with the footer has to fit Telegram's 1024 characters, or the send is refused before anything goes. A session editing a message after the footer changed gets the new footer instead of the old one.
 
 ```
 tgmcp footer                        # show it, and whether it's on
@@ -290,7 +291,7 @@ The tray's **Footer** tab edits it with a live preview, ready-made ideas, letter
   - **Listening now**: each session watching chats, whether its Monitor is connected, and a **switch on each chat** to pause or resume listening there. A session watching several saved chats also gets an **all** switch. A switch is the chat's auto-reply: off, the daemon stops passing that chat's messages to every session at once (the watches stay, so switching it back on resumes them). Under it, **Chats Claude may listen to** lists your saved chats, each with its switch, so you can choose who Claude may watch without opening Contacts.
   - **Recently sent**: the last 5 chats you sent to. Click a chat to see its messages, when they went, how they were approved, and from which session; click again to close it.
 - **Contacts**: every saved chat, to change its rules without editing `config.json`. See [Contacts](#contacts).
-- **Away**: the [away auto-reply](#away-auto-reply). The switch saves at once; the first schedule's hours and message, and the quiet minutes, save with **Save** (⌘S), with a preview of the reply. It says whether it's away now and until when. While it is, the tab shows a green dot and Home shows a line saying so.
+- **Away**: the [away auto-reply](#away-auto-reply). The switch saves at once; the hours and message of the schedule shown (the one replying now, else the first switched on) and the quiet minutes save with **Save** (⌘S), with a preview of the reply. It says whether it's away now and until when. While it is, the tab shows a green dot and Home shows a line saying so.
 
 Avatars show each chat's Telegram profile photo, with initials (or a glyph for groups, channels and bots) until it loads and when there's none. See [Avatars](#avatars).
 
