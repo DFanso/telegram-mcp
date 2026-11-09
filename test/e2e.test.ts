@@ -95,7 +95,7 @@ describe('proxy <-> daemon', () => {
     const client = await spawnProxy()
     const { tools } = await client.listTools()
     expect(tools.map(t => t.name)).toContain('telegram_send_message')
-    expect(tools).toHaveLength(22)
+    expect(tools).toHaveLength(23)
     const inst = client.getInstructions() ?? ''
     expect(inst).toContain('Be brief.')
     const s = await call(client, 'telegram_status')
@@ -167,6 +167,22 @@ describe('proxy <-> daemon', () => {
     )
     expect(del.text).toBe(`Approved in the Claude Code dialog. Deleted message #${id} in Team QA [qa].`)
     expect(tg.deleted.at(-1)).toEqual({ chatId: TEAM_QA.id, messageId: id })
+    await client.close()
+  })
+
+  test('a topic is created where sending is automatic and refused where it needs approval', async () => {
+    const client = await spawnProxy()
+    const made = await call(client, 'telegram_create_topic', { chat: 'leo', title: 'KYC' })
+    expect(made.isError).toBe(false)
+    const topic = tg.topics.at(-1)!
+    expect(topic).toMatchObject({ chatId: LEO.id, title: 'KYC' })
+    expect(made.text).toContain(`topic id ${topic.id}`)
+
+    const before = tg.topics.length
+    const refused = await call(client, 'telegram_create_topic', { chat: 'qa', title: 'KYC' })
+    expect(refused.isError).toBe(true)
+    expect(refused.text).toContain('requireApproval')
+    expect(tg.topics.length).toBe(before)
     await client.close()
   })
 
@@ -249,7 +265,7 @@ describe('proxy <-> daemon', () => {
   test('the session survives the daemon being down at first', async () => {
     await daemon.stop()
     const client = await spawnProxy()
-    expect((await client.listTools()).tools.length).toBe(22)
+    expect((await client.listTools()).tools.length).toBe(23)
     tg = new FakeTelegram().add(LEO, ANNA, TEAM_QA)
     daemon = await createDaemon({ paths, port, telegram: tg, log: silent })
     const s = await call(client, 'telegram_status')

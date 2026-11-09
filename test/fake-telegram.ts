@@ -115,6 +115,14 @@ export class FakeTelegram implements TelegramPort {
     this.deleted.push({ chatId, messageId })
   }
 
+  topics: { chatId: number; title: string; id: number }[] = []
+
+  async createTopic(chatId: number, title: string): Promise<{ id: number }> {
+    const topic = { chatId, title, id: this.#nextId++ }
+    this.topics.push(topic)
+    return { id: topic.id }
+  }
+
   /** What Telegram would say about who read which of your messages, keyed `${chatId}:${messageId}`. */
   readStatuses = new Map<string, ReadStatus>()
 

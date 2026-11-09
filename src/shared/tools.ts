@@ -132,6 +132,14 @@ export const TOOLS = {
       topicId: z.number().int().optional().describe('Forum topic id. Defaults to the nickname\'s saved topic.'),
     }),
   },
+  telegram_create_topic: {
+    description:
+      'Create a forum topic in a group that has topics turned on (the user\'s account needs the manage-topics right). The chat sees the new topic, so it follows the sending rules: it is created at once where sending is automatic (auto-send, a watched autoReply chat, or a /reply takeover); where sending needs approval, or the chat is blocked, it is refused. Returns the topic id, to use as topicId in telegram_send_message, telegram_read_messages and telegram_watch, or as the topicId of a saved nickname.',
+    input: z.object({
+      chat: chatRef,
+      title: z.string().min(1).max(128).describe('Topic name, e.g. a project name.'),
+    }),
+  },
   telegram_answer_reply: {
     description:
       'Make this session the one that answers /reply (on: false to stop). When the user types /reply in any Telegram chat from their own account, that chat is handed to this session for a while: you get a notice with any instruction ("/reply say I am on my way"), new messages there come to you, and your replies go out without approval until they type /reply stop. The command message is deleted so the chat never sees it. Blocked chats are never taken over.',

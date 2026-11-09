@@ -1139,6 +1139,25 @@ export class Service {
       return { text: `Deleted message #${p.messageId} in ${t.label}. Allowed because ${decision.reason}.` }
     },
 
+    telegram_create_topic: async (sid, p) => {
+      const config = this.d.store.get()
+      const t = await this.#resolve(p.chat, true)
+      // The chat sees the new topic, so it needs the same yes as a send. There is no approval draft
+      // for a topic, so it is created only where sending is automatic.
+      const decision = decideSend(config, t.peer, {
+        isWatching: this.d.hub.isWatching(sid, t.peer.id),
+        takenOver: this.d.hub.isTakenOverBy(sid, t.peer.id),
+      })
+      if (decision.action !== 'send') {
+        return fail(
+          `No topic created in ${t.label}: ${decision.reason}. Topics are only created where sending is automatic; ask the user to create it, or to put this chat on autoSend.`,
+        )
+      }
+      const topic = await this.d.tg.createTopic(t.peer.id, p.title)
+      this.d.log?.(`create topic: "${p.title}" (${topic.id}) in ${t.label} (${t.peer.id}) by ${this.d.hub.label(sid)}`)
+      return { text: `Created topic "${p.title}" in ${t.label}: topic id ${topic.id}. Allowed because ${decision.reason}.` }
+    },
+
     telegram_page: async (sid, p) => {
       const { pager, hub } = this.d
       if (!pager) return fail('Paging is not available in this daemon.')
