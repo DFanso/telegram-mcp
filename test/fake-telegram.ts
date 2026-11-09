@@ -117,6 +117,10 @@ export class FakeTelegram implements TelegramPort {
 
   topics: { chatId: number; title: string; id: number }[] = []
 
+  async listTopics(chatId: number): Promise<{ id: number; title: string }[]> {
+    return this.topics.filter(t => t.chatId === chatId).map(t => ({ id: t.id, title: t.title }))
+  }
+
   async createTopic(chatId: number, title: string): Promise<{ id: number }> {
     const topic = { chatId, title, id: this.#nextId++ }
     this.topics.push(topic)

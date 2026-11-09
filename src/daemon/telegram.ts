@@ -49,6 +49,8 @@ export interface TelegramPort {
   sendSticker(chatId: number, from: StickerRef, opts?: SendOptions): Promise<MessageInfo>
   /** Delete one of your own messages for everyone. */
   deleteMessage(chatId: number, messageId: number): Promise<void>
+  /** The topics of a forum group, with their ids. */
+  listTopics(chatId: number): Promise<{ id: number; title: string }[]>
   /** Create a forum topic and return its id (the id of its first message). */
   createTopic(chatId: number, title: string): Promise<{ id: number }>
   /** Replace the text of one of your own text messages. */
@@ -487,6 +489,12 @@ export class MtcuteTelegram implements TelegramPort {
   async deleteMessage(chatId: number, messageId: number): Promise<void> {
     const c = await this.#ready()
     await c.deleteMessagesById(chatId, [messageId], { revoke: true })
+  }
+
+  async listTopics(chatId: number): Promise<{ id: number; title: string }[]> {
+    const c = await this.#ready()
+    const topics = await c.getForumTopics(chatId, { limit: 100 })
+    return topics.map(t => ({ id: t.id, title: t.title }))
   }
 
   async createTopic(chatId: number, title: string): Promise<{ id: number }> {

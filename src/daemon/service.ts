@@ -1139,6 +1139,13 @@ export class Service {
       return { text: `Deleted message #${p.messageId} in ${t.label}. Allowed because ${decision.reason}.` }
     },
 
+    telegram_list_topics: async (_sid, p) => {
+      const t = await this.#resolve(p.chat, false)
+      const topics = await this.d.tg.listTopics(t.peer.id)
+      const head = `${t.label} · ${fmtPeer(t.peer)} · ${topics.length} topics`
+      return { text: [head, ...(t.warning ? [`Warning: ${t.warning}`] : []), ...topics.map(x => `topic ${x.id} · ${x.title}`)].join('\n') }
+    },
+
     telegram_create_topic: async (sid, p) => {
       const config = this.d.store.get()
       const t = await this.#resolve(p.chat, true)

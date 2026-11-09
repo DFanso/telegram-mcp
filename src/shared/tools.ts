@@ -140,6 +140,11 @@ export const TOOLS = {
       title: z.string().min(1).max(128).describe('Topic name, e.g. a project name.'),
     }),
   },
+  telegram_list_topics: {
+    description:
+      'List the topics of a forum group (id and title), to find the topic named after a project before watching it, or to check that one exists before creating it. Read-only.',
+    input: z.object({ chat: chatRef }),
+  },
   telegram_answer_reply: {
     description:
       'Make this session the one that answers /reply (on: false to stop). When the user types /reply in any Telegram chat from their own account, that chat is handed to this session for a while: you get a notice with any instruction ("/reply say I am on my way"), new messages there come to you, and your replies go out without approval until they type /reply stop. The command message is deleted so the chat never sees it. Blocked chats are never taken over.',

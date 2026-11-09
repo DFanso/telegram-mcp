@@ -152,6 +152,7 @@ Nothing is sent unless you accept. Drafts expire after 20 minutes. The rules are
 | `telegram_send_file` | send a local file with a caption, following the same rules (but see files to watched chats, above); credentials and this tool's own files are always refused |
 | `telegram_send_sticker` | re-send a sticker someone posted (by chat and message id), following the same rules; stickers take no caption, so no footer |
 | `telegram_page` | page the user for something that needs a human now: the desktop rings until they ack, and the phone gets a push (see [Pages](#pages)) |
+| `telegram_list_topics` | list a forum group's topics (id and title), to find the one named after a project before watching it |
 | `telegram_create_topic` | create a forum topic in a group with topics on (needs the manage-topics right) and return its id for `topicId`; follows the sending rules but has no approval step, so it works only where sending is automatic and is refused elsewhere |
 | `telegram_answer_reply` | make this session answer `/reply`: type `/reply` (or `/reply <what to say>`) in any chat from your own account and that chat is handed to the session; `/reply stop` takes it back |
 | `telegram_message_readers` | whether one of your own messages has been read: in a private chat whether the other person did, in a group of up to 100 people who did and when (about a week); only what Telegram shows, read-only |
