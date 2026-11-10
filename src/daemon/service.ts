@@ -1018,8 +1018,9 @@ export class Service {
 
   /**
    * One short line in the chat where a moderator typed a /bots command, so they see this account
-   * obeyed. Only where the rules let a fixed reply go out unasked (as with the pager's replies), and
-   * at most one stop ack and one resume ack a minute per chat.
+   * obeyed. Only where sending needs no approval: an autoSend chat, or an autoReply chat that a session
+   * here watches (where it could already reply unasked). At most one stop ack and one resume ack a
+   * minute per chat.
    */
   async #ack(kind: 'stop' | 'resume', chatId: number, text: string, replyTo: number): Promise<void> {
     const now = Date.now()
@@ -1027,8 +1028,8 @@ export class Service {
     if (now - (this.#lastAck.get(key) ?? 0) < MODERATION_ACK_GAP_MS) return
     const config = this.d.store.get()
     const peer = await this.#peerById(chatId)
-    const rule = decideSend(config, peer, { isWatching: false })
-    if (rule.action === 'block' || isListed(config, 'requireApproval', peer)) return
+    const rule = decideSend(config, peer, { isWatching: this.d.hub.subscribers(chatId).length > 0 })
+    if (rule.action !== 'send') return
     this.#lastAck.set(key, now)
     const footed = withFooter(text, config.footer)
     const sent = await this.#deliver(chatId, footed, undefined, { replyTo, parseMode: 'plain' }, undefined, false)
@@ -1081,7 +1082,7 @@ export class Service {
     // A resume lifts only pauses from before it: an old resume replayed after a restart can't undo a newer stop.
     const lifted = pauses.resume(cmd.all ? 'all' : msg.chatId, sentAt)
     if (lifted.length === 0) return `/bots resume from ${from.id} in ${msg.chatId}: nothing was paused`
-    const told = hub.moderate(cmd.all ? null : msg.chatId, { ...base, moderation: { action: 'resume', all: cmd.all } }, false)
+    const told = this.#announceResume(cmd.all ? 'all' : msg.chatId, base)
     const still = this.paused(msg.chatId)
     done.push(
       this.#noteToSelf(`telegram-mcp: moderator ${who} resumed your Claude sessions in ${where}.${still ? ` Still paused there until ${fmtClock(still.until)} by an earlier "/bots stop all".` : ''}`),
@@ -1105,9 +1106,32 @@ export class Service {
     return `/bots resume typed by you in ${msg.chatId}: ${r.text}`
   }
 
+  /**
+   * Tells sessions a pause was lifted, without ever saying "lifted" for a chat that is still paused:
+   * a chat held by a stop for every chat gets that pause instead, and after lifting every pause, a
+   * chat stopped again since keeps its own. Returns the sessions told.
+   */
+  #announceResume(scope: number | 'all', base: Omit<TgEvent, 'seq' | 'watchIds'>): string[] {
+    const { hub } = this.d
+    const pauseEvent = (p: Pause, chat: Omit<TgEvent, 'seq' | 'watchIds'>): Omit<TgEvent, 'seq' | 'watchIds'> => ({
+      ...chat,
+      moderation: { action: 'pause', all: p.scope === 'all', until: fmtClock(p.until), minutes: Math.max(1, Math.ceil((p.until - Date.now()) / 60_000)) },
+    })
+    if (scope !== 'all') {
+      const still = this.paused(scope)
+      return still ? hub.moderate(scope, pauseEvent(still, base), false) : hub.moderate(scope, { ...base, moderation: { action: 'resume', all: false } }, false)
+    }
+    const told = new Set(hub.moderate(null, { ...base, moderation: { action: 'resume', all: true } }, false))
+    for (const p of this.d.pauses?.list() ?? []) {
+      if (p.scope === 'all') continue
+      for (const id of hub.moderate(p.scope, pauseEvent(p, { ...base, chatId: p.scope, chatLabel: p.chatLabel, chatNickname: nicknameFor(this.d.store.get(), p.scope) }), false)) told.add(id)
+    }
+    return [...told]
+  }
+
   /** The owner lifting pauses on this account (their own /bots resume, the CLI, the menu bar). */
   resumeLocally(scope: number | 'all', msg?: IncomingMessage): { ok: boolean; text: string } {
-    const { pauses, hub, store } = this.d
+    const { pauses, store } = this.d
     // Your own /bots resume lifts only pauses from before you typed it, so one replayed after a restart
     // can't undo a newer stop. The CLI and the menu bar act now, on everything in force.
     const typedAt = msg ? Date.parse(msg.date) : Number.NaN
@@ -1125,7 +1149,7 @@ export class Service {
     const base: Omit<TgEvent, 'seq' | 'watchIds'> = msg
       ? describeMessage(store, msg)
       : { chatId: scope === 'all' ? 0 : scope, chatLabel: lifted[0]!.chatLabel, fromId: null, fromName: 'you', fromUsername: null, messageId: 0, topicId: null, replyToId: null, text: '', media: null, date: new Date().toISOString() }
-    hub.moderate(scope === 'all' ? null : scope, { ...base, moderation: { action: 'resume', all: scope === 'all' } }, false)
+    this.#announceResume(scope, base)
     const names = lifted.map(p => (p.scope === 'all' ? 'every chat' : p.chatLabel)).join(', ')
     this.d.log?.(`moderation: you lifted ${lifted.length} pause(s): ${names}`)
     const still = scope === 'all' ? null : this.paused(scope)

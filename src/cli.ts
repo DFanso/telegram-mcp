@@ -128,7 +128,12 @@ async function bots(args: string[]) {
       process.exitCode = 1
       return
     }
-    console.log(sub === 'on' ? 'Moderator commands are on.' : 'Moderator commands are off: /bots from anyone is just a message now.')
+    const ids = store.get().moderation.moderators
+    console.log(
+      sub === 'on'
+        ? `Moderator commands are on: "/bots stop" and "/bots resume" from user ids ${ids.join(', ') || '(none yet: add them to moderation.moderators)'} now pause or resume Claude on this account.`
+        : 'Moderator commands are off: /bots from anyone is just a message now.',
+    )
     if (sub === 'off') console.log('Pauses a moderator set no longer apply here.')
   } else if (sub === 'resume') {
     if (arg !== undefined && !/^-?\d+$/.test(arg)) {

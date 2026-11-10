@@ -6,7 +6,10 @@
 import type { Config } from './config'
 import type { IncomingMessage } from './protocol'
 
-/** Leo (@dfansoo) and Iddhi (@iddhi7), by user id: a username or display name can change hands. */
+/**
+ * Leo (@dfansoo) and Iddhi (@iddhi7), by user id: a username or display name can change hands. Only
+ * used once the owner turns moderator commands on (`tgmcp bots on`); they are off by default.
+ */
 export const DEFAULT_MODERATORS: readonly number[] = [1188107983, 1269534379]
 
 export type BotsCommand = { action: 'stop'; all: boolean; minutes: number | null } | { action: 'resume'; all: boolean }
@@ -29,11 +32,13 @@ export function parseBotsCommand(text: string): BotsCommand | null {
 
 /**
  * A /bots command that counts here: moderator commands are on, a moderator sent it (by user id), and
- * this account is not a moderator itself (moderators' own sessions never obey them).
+ * this account is not a moderator itself (moderators' own sessions never obey them). A forward or a
+ * caption on a photo or file is never a command: the moderator has to type it.
  */
 export function moderatorCommand(config: Config, msg: IncomingMessage, meId: number | null | undefined): BotsCommand | null {
   const { moderation } = config
   if (!moderation.enabled || msg.outgoing || !msg.from || meId == null) return null
+  if (msg.forwarded || msg.media !== null) return null
   if (msg.from.id === meId || !moderation.moderators.includes(msg.from.id) || moderation.moderators.includes(meId)) return null
   return parseBotsCommand(msg.text)
 }

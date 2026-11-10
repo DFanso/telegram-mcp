@@ -64,10 +64,11 @@ export type PagingConfig = z.infer<typeof PagingSchema>
  * Moderator commands: "/bots stop [30m|2h] [all]" and "/bots resume [all]" from one of `moderators`
  * pause what Claude sessions on this account send in that chat (or everywhere). The daemon parses a
  * fixed set of commands and enforces them; no text reaches a session as an instruction. They never
- * apply when this account is a moderator itself. Off with `enabled: false` (or `tgmcp bots off`).
+ * apply when this account is a moderator itself. Off by default; on with `enabled: true` (or `tgmcp bots on`).
  */
 const ModerationSchema = z.looseObject({
-  enabled: z.boolean().default(true),
+  /** Off unless the owner turns it on: other people's commands never steer an account by default. */
+  enabled: z.boolean().default(false),
   /** Numeric user ids, since a username can change hands. */
   moderators: z.array(z.number().int()).default([...DEFAULT_MODERATORS]),
   /** How long "/bots stop" lasts when no time is given. */
@@ -105,7 +106,7 @@ export const DEFAULT_CONFIG_TEXT = `${JSON.stringify(
     rules: { blocked: [], requireApproval: [], autoSend: [], autoReply: [] },
     chats: {},
     away: { enabled: false, quietMinutes: 30, schedules: DEFAULT_SCHEDULES },
-    moderation: { enabled: true, moderators: DEFAULT_MODERATORS, defaultMinutes: 60, maxMinutes: 1440 },
+    moderation: { enabled: false, moderators: DEFAULT_MODERATORS, defaultMinutes: 60, maxMinutes: 1440 },
   },
   null,
   2,

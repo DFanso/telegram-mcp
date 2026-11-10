@@ -23,6 +23,8 @@ export interface MessageInfo {
   media: string | null
   replyToId: number | null
   topicId: number | null
+  /** Forwarded from somewhere else: the sender here didn't write it. Absent when not forwarded. */
+  forwarded?: boolean
 }
 
 /**

@@ -212,11 +212,11 @@ The bot only messages the account you're logged in as, and ignores button presse
 
 ## Moderator commands
 
-When several people's Claude sessions auto-reply in the same group, they can end up answering each other non-stop. Moderator commands let a moderator stop that in one message. **They are on by default**, with two moderators: Leo (user id `1188107983`) and Iddhi (`1269534379`). You can see and change this in the `moderation` section of `config.json`:
+When several people's Claude sessions auto-reply in the same group, they can end up answering each other non-stop. Moderator commands let a moderator stop that in one message. **They are off by default**: nobody else's command steers your account until you turn them on with `tgmcp bots on` (or `"enabled": true`). Once on, the moderators are Leo (user id `1188107983`) and Iddhi (`1269534379`) unless you list others. All of this is in the `moderation` section of `config.json`:
 
 ```jsonc
 "moderation": {
-  "enabled": true,                          // false (or `tgmcp bots off`): /bots from anyone is just a message
+  "enabled": false,                         // true (or `tgmcp bots on`) to obey; while false, /bots from anyone is just a message
   "moderators": [1188107983, 1269534379],   // numeric user ids, never usernames or names
   "defaultMinutes": 60,                     // how long "/bots stop" lasts if they don't say
   "maxMinutes": 1440                        // the longest a stop can last
@@ -231,7 +231,7 @@ A moderator types one of these in a chat, and the message must be exactly that (
 | `/bots stop all` · `/bots stop all 2h` | Claude is paused **in every chat** |
 | `/bots resume` · `/bots resume all` | The pause in that chat, or every pause, is lifted |
 
-Anything else, like `/bots stop now`, `/bots@x stop`, or a forwarded command, is an ordinary message. Only the moderator's numeric user id counts, so someone with the same name or a look-alike username can't pause you. **A moderator's own account never obeys moderator commands**, from themselves or another moderator.
+Anything else, like `/bots stop now`, `/bots@x stop`, a forwarded command, or a command written as a photo or file caption, is an ordinary message. Only the moderator's numeric user id counts, so someone with the same name or a look-alike username can't pause you. **A moderator's own account never obeys moderator commands**, from themselves or another moderator.
 
 **While a chat is paused**, the daemon enforces it, whatever a session tries:
 - `telegram_send_message`, `telegram_send_file` and `telegram_send_sticker` to it are refused, and so are edits and new topics. Drafts waiting for approval are refused even if you approve them. A session can still delete its own messages there.
@@ -241,14 +241,14 @@ Anything else, like `/bots stop now`, `/bots@x stop`, or a forwarded command, is
 
 The moderator's text never reaches a Claude session as an instruction. The daemon recognises a fixed set of commands and does the pausing itself.
 
-**What you see**: a note in your Saved Messages saying who paused what and until when, and how to undo it. One line in the chat (for example "🤖 Claude on this account is paused here for 1h, by a moderator."), unless the chat is Blocked or Ask every time. A line in `daemon.log`. Each watching session is told to stop replying. `tgmcp bots`, `telegram_status` and `telegram_get_rules` show the pauses. A pause ends on time even if the command arrived late, and a restart doesn't lift it.
+**What you see**: a note in your Saved Messages saying who paused what and until when, and how to undo it. One line in the chat (for example "🤖 Claude on this account is paused here for 1h, by a moderator."), only where sending needs no approval: an Always allow chat, or an auto-reply chat one of your sessions is watching. A line in `daemon.log`. Each watching session is told to stop replying. `tgmcp bots`, `telegram_status` and `telegram_get_rules` show the pauses. A pause ends on time even if the command arrived late, and a restart doesn't lift it.
 
 **You can always override it** on your own account:
 
 ```sh
 tgmcp bots                  # on or off, the moderators, and what's paused now
 tgmcp bots resume           # lift every pause now (or: tgmcp bots resume <chat id>)
-tgmcp bots off | on         # ignore moderator commands (pauses in force stop applying too), or obey them again
+tgmcp bots on | off         # obey moderator commands, or ignore them again (pauses in force stop applying too)
 ```
 
 Typing `/bots resume` (or `/bots resume all`) yourself in a chat also lifts the pause on your account. Claude can't send or edit in a message that starts with `/bots`, so a moderator's own session can't be talked into posting one.

@@ -7,6 +7,8 @@ import { ConfigSchema } from '../src/shared/config'
 import { DEFAULT_MODERATORS, looksLikeBotsCommand, moderatorCommand, parseBotsCommand, stopMinutes } from '../src/shared/moderation'
 import type { IncomingMessage, PeerInfo } from '../src/shared/protocol'
 import { ANNA, FakeTelegram, TEAM_QA } from './fake-telegram'
+import { channelPayload } from '../src/mcp/proxy'
+import type { TgEvent } from '../src/shared/protocol'
 
 const LEO_MOD: PeerInfo = { id: 1188107983, type: 'user', name: 'Leo', username: 'dfansoo' }
 const IDDHI_MOD: PeerInfo = { id: 1269534379, type: 'user', name: 'Iddhi', username: 'iddhi7' }
@@ -63,7 +65,8 @@ describe('parsing /bots', () => {
 })
 
 describe('who a /bots command counts from', () => {
-  const config = (moderation: object = {}) => ConfigSchema.parse({ moderation })
+  // Moderator commands are off by default; these tests are about who counts once they're on.
+  const config = (moderation: object = {}) => ConfigSchema.parse({ moderation: { enabled: true, ...moderation } })
   const msg = (from: PeerInfo | null, text = '/bots stop', extra: Partial<IncomingMessage> = {}): IncomingMessage => ({
     id: 1,
     chatId: TEAM_QA.id,
@@ -79,10 +82,18 @@ describe('who a /bots command counts from', () => {
   })
   const ME = 1
 
-  test('on by default, with Leo and Iddhi as the moderators', () => {
-    const c = config()
-    expect(c.moderation).toMatchObject({ enabled: true, moderators: [...DEFAULT_MODERATORS], defaultMinutes: 60, maxMinutes: 1440 })
+  test('off by default: nobody steers an account until its owner turns it on', () => {
+    const c = ConfigSchema.parse({})
+    expect(c.moderation).toMatchObject({ enabled: false, moderators: [...DEFAULT_MODERATORS], defaultMinutes: 60, maxMinutes: 1440 })
     expect(DEFAULT_MODERATORS).toEqual([1188107983, 1269534379])
+    expect(moderatorCommand(c, msg(LEO_MOD), ME)).toBeNull()
+    expect(config().moderation.moderators).toEqual([...DEFAULT_MODERATORS])
+  })
+
+  test('a forward or a caption is never a command, even from a moderator', () => {
+    expect(moderatorCommand(config(), msg(LEO_MOD, '/bots stop all', { forwarded: true }), ME)).toBeNull()
+    expect(moderatorCommand(config(), msg(LEO_MOD, '/bots stop all', { media: 'photo' }), ME)).toBeNull()
+    expect(moderatorCommand(config(), msg(LEO_MOD, '/bots stop all', { media: 'document: x.txt, 1 KB' }), ME)).toBeNull()
   })
 
   test('a moderator, by user id', () => {
@@ -186,6 +197,8 @@ describe('moderator commands in the daemon', () => {
         chats: { qa: { id: TEAM_QA.id, name: TEAM_QA.name, type: 'group' }, anna: { id: ANNA.id, username: 'anna_k', name: ANNA.name } },
         rules: { autoReply: ['qa'], autoSend: ['anna'] },
         ...extra,
+        // Off by default; these tests turn it on unless they say otherwise.
+        moderation: { enabled: true, ...((extra as { moderation?: object }).moderation ?? {}) },
       }),
     )
     const tg = new FakeTelegram().add(ANNA, TEAM_QA, LEO_MOD, IDDHI_MOD, FAKE_LEO)
@@ -340,7 +353,8 @@ describe('moderator commands in the daemon', () => {
   })
 
   test('a repeated stop extends it but the chat gets one ack a minute', async () => {
-    const { tg, d, say } = await daemon()
+    const { tg, d, call, say } = await daemon()
+    await call('telegram_watch', { chat: 'qa' })
     say(LEO_MOD, '/bots stop 10m')
     await settle()
     say(IDDHI_MOD, '/bots stop 2h')
@@ -406,6 +420,140 @@ describe('moderator commands in the daemon', () => {
     await settle()
     expect(frames.length).toBe(before)
     expect(tg.sent).toHaveLength(0)
+    await d.stop()
+  })
+
+  test('off by default: with no moderation section, a moderator\'s /bots stop is just a message', async () => {
+    const { createDaemon } = await import('../src/daemon/main')
+    const { getPaths } = await import('../src/shared/paths')
+    const paths = getPaths(mkdtempSync(join(tmpdir(), 'tgmcp-mod-')))
+    writeFileSync(paths.config, JSON.stringify({ footer: '', chats: { qa: { id: TEAM_QA.id, name: TEAM_QA.name, type: 'group' } }, rules: { autoReply: ['qa'] } }))
+    const tg = new FakeTelegram().add(TEAM_QA, LEO_MOD)
+    const d = await createDaemon({ paths, port: 0, telegram: tg, log: () => {}, pageBotToken: null })
+    tg.emit(TEAM_QA.id, '/bots stop all', LEO_MOD.id)
+    await settle()
+    expect(d.service.paused(TEAM_QA.id)).toBeNull()
+    expect(tg.sent).toHaveLength(0)
+    expect(d.service.moderationState().enabled).toBe(false)
+    await d.stop()
+  })
+
+  test('a forwarded command or a captioned photo from a moderator pauses nothing, and reaches sessions as a message', async () => {
+    const { tg, d, frames, call, say } = await daemon()
+    await call('telegram_watch', { chat: 'qa' })
+    say(LEO_MOD, '/bots stop all', { forwarded: true })
+    say(LEO_MOD, '/bots stop', { media: 'photo' })
+    await settle()
+    expect(d.service.paused(TEAM_QA.id)).toBeNull()
+    expect(frames.filter(f => f.includes('Telegram message from'))).toHaveLength(2)
+    expect(tg.sent).toHaveLength(0)
+    await d.stop()
+  })
+
+  test('the ack goes only where sending needs no approval', async () => {
+    const cases: [object, boolean, boolean][] = [
+      // rules, watched, acked
+      [{ autoReply: ['qa'] }, true, true],
+      [{ autoReply: ['qa'] }, false, false],
+      [{ autoSend: ['qa'] }, false, true],
+      [{}, false, false],
+    ]
+    for (const [rules, watched, acked] of cases) {
+      const { tg, d, call, say } = await daemon({ rules })
+      if (watched) await call('telegram_watch', { chat: 'qa' })
+      say(LEO_MOD, '/bots stop')
+      await settle()
+      expect(d.service.paused(TEAM_QA.id)).not.toBeNull()
+      expect(tg.sent.filter(x => x.chatId === TEAM_QA.id)).toHaveLength(acked ? 1 : 0)
+      await d.stop()
+    }
+  })
+
+  test('sessions are never told "lifted" for a chat that is still paused', async () => {
+    const { frames, d, call, say } = await daemon()
+    await call('telegram_watch', { chat: 'qa' })
+    await call('telegram_watch', { chat: 'anna' })
+    say(LEO_MOD, '/bots stop all 2h', { date: new Date(Date.now() - 2 * MIN).toISOString() })
+    say(LEO_MOD, '/bots stop 30m')
+    await settle()
+    // The chat's own stop is lifted, but the stop for every chat still holds: the session hears that.
+    const before = frames.length
+    say(LEO_MOD, '/bots resume')
+    await settle()
+    const told = frames.slice(before)
+    expect(told).toHaveLength(1)
+    expect(told[0]).toContain('Paused by a moderator')
+    expect(told[0]).toContain('every chat')
+    expect(told[0]).not.toContain('Moderator pause lifted')
+    expect(d.service.paused(TEAM_QA.id)?.scope).toBe('all')
+
+    // The owner's per-chat resume says the same.
+    const before2 = frames.length
+    say(LEO_MOD, '/bots stop 30m')
+    await settle()
+    d.service.resumeLocally(TEAM_QA.id)
+    expect(frames.slice(before2 + 1).every(f => !f.includes('Moderator pause lifted'))).toBe(true)
+    expect(frames.length).toBeGreaterThan(before2 + 1)
+    await d.stop()
+  })
+
+  test('after "/bots resume all", a chat stopped again since keeps its pause, and its sessions hear it', async () => {
+    const { frames, d, call, say } = await daemon()
+    await call('telegram_watch', { chat: 'qa' })
+    say(LEO_MOD, '/bots stop all', { date: new Date(Date.now() - 3 * MIN).toISOString() })
+    say(LEO_MOD, '/bots stop 30m', { date: new Date(Date.now() - 1 * MIN).toISOString() })
+    await settle()
+    const before = frames.length
+    // Sent between the two stops, arriving late: it lifts the stop for every chat, not the newer one.
+    say(IDDHI_MOD, '/bots resume all', { date: new Date(Date.now() - 2 * MIN).toISOString() })
+    await settle()
+    expect(d.service.paused(ANNA.id)).toBeNull()
+    expect(d.service.paused(TEAM_QA.id)?.scope).toBe(TEAM_QA.id)
+    const told = frames.slice(before)
+    expect(told[0]).toContain('Moderator pause lifted for every chat')
+    expect(told.at(-1)).toContain('Paused by a moderator')
+    expect(told.at(-1)).toContain(`chat_id ${TEAM_QA.id}`)
+    await d.stop()
+  })
+
+  test('channel-mode sessions get the notice, not the /bots text', async () => {
+    const base: TgEvent = {
+      seq: 1,
+      watchIds: ['moderation'],
+      chatId: TEAM_QA.id,
+      chatLabel: 'Team QA',
+      fromId: LEO_MOD.id,
+      fromName: 'Leo',
+      fromUsername: 'dfansoo',
+      messageId: 7,
+      topicId: null,
+      replyToId: null,
+      text: '/bots stop',
+      media: null,
+      date: new Date().toISOString(),
+    }
+    const paused = channelPayload({ ...base, moderation: { action: 'pause', all: false, until: '15:00', minutes: 60 } })
+    expect(paused.meta.moderation).toBe('pause')
+    expect(paused.content).toContain('Paused by a moderator')
+    expect(paused.content).toContain('Stop replying there now')
+    expect(paused.content).not.toBe('/bots stop')
+    const resumed = channelPayload({ ...base, text: '/bots resume', moderation: { action: 'resume', all: true } })
+    expect(resumed.meta.moderation).toBe('resume')
+    expect(resumed.content).toContain('Moderator pause lifted for every chat')
+  })
+
+  test('a channel-mode session watching the chat gets the pause notice through the hub', async () => {
+    const { d, say } = await daemon()
+    const pushed: TgEvent[] = []
+    d.hub.attachProxy('s2', { label: 'channel', channel: true, watches: [] }, { send: (raw: string) => {
+      const m = JSON.parse(raw) as { t: string; event?: TgEvent }
+      if (m.t === 'event' && m.event) pushed.push(m.event)
+    } })
+    await d.service.call('s2', 'telegram_watch', { chat: 'qa' })
+    say(LEO_MOD, '/bots stop')
+    await settle()
+    expect(pushed).toHaveLength(1)
+    expect(channelPayload(pushed[0]!).content).toContain('Paused by a moderator')
     await d.stop()
   })
 

@@ -42,7 +42,7 @@ Nothing is sent unless the user accepts. Drafts expire after 20 minutes, and the
 
 ## Moderator commands
 
-`moderation` (on by default) lets the user ids in `moderation.moderators` pause Claude on this account with `/bots stop [30m|2h]`, `/bots stop all` and `/bots resume [all]`. While a chat is paused, sends, edits, watches, `/reply` takeovers and away replies there are refused. Never on a moderator's own account. `tgmcp bots` shows it, `tgmcp bots resume` lifts a pause, and `tgmcp bots off` turns it off.
+`moderation` (off by default; the user turns it on with `tgmcp bots on`) lets the user ids in `moderation.moderators` pause Claude on this account with `/bots stop [30m|2h]`, `/bots stop all` and `/bots resume [all]`. While a chat is paused, sends, edits, watches, `/reply` takeovers and away replies there are refused. Never on a moderator's own account. `tgmcp bots` shows it, `tgmcp bots resume` lifts a pause, and `tgmcp bots off` turns it off again.
 
 ## Changing rules without editing the file
 

@@ -145,6 +145,7 @@ export function messageInfo(m: Message): MessageInfo {
     media: mediaLabel(m.media),
     replyToId,
     topicId,
+    ...(m.forward ? { forwarded: true } : {}),
   }
 }
 
