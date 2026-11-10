@@ -391,6 +391,24 @@ describe('moderator commands in the daemon', () => {
     await d.stop()
   })
 
+  test('a forum topic is part of its chat: topic sends, topic messages and new topics are paused too', async () => {
+    const { tg, d, frames, call, say } = await daemon({ rules: { autoReply: ['qa'], autoSend: ['anna', 'qa'] } })
+    await call('telegram_watch', { chat: 'qa', topicId: 42 })
+    say(LEO_MOD, '/bots stop')
+    await settle()
+    tg.sent.length = 0
+    expect((await call('telegram_send_message', { to: 'qa', topicId: 42, text: 'roast in a topic' })).isError).toBe(true)
+    const topic = await call('telegram_create_topic', { chat: 'qa', title: 'roast-arena' })
+    expect(topic.isError).toBe(true)
+    expect(topic.text).toContain('No topic created: a moderator')
+    const before = frames.length
+    say(ANNA, 'in the topic', { topicId: 42 })
+    await settle()
+    expect(frames.length).toBe(before)
+    expect(tg.sent).toHaveLength(0)
+    await d.stop()
+  })
+
   test('a /reply takeover there ends, and a new one is not started', async () => {
     const { tg, d, frames, call, say } = await daemon()
     await call('telegram_answer_reply', {})
