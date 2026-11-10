@@ -1108,8 +1108,20 @@ export class Service {
   /** The owner lifting pauses on this account (their own /bots resume, the CLI, the menu bar). */
   resumeLocally(scope: number | 'all', msg?: IncomingMessage): { ok: boolean; text: string } {
     const { pauses, hub, store } = this.d
-    const lifted = pauses?.resume(scope, Infinity) ?? []
-    if (lifted.length === 0) return { ok: true, text: scope === 'all' ? 'Nothing was paused.' : `Nothing was paused in chat ${scope}.` }
+    // Your own /bots resume lifts only pauses from before you typed it, so one replayed after a restart
+    // can't undo a newer stop. The CLI and the menu bar act now, on everything in force.
+    const typedAt = msg ? Date.parse(msg.date) : Number.NaN
+    const lifted = pauses?.resume(scope, Number.isNaN(typedAt) ? Infinity : typedAt) ?? []
+    if (lifted.length === 0) {
+      if (scope === 'all') return { ok: true, text: 'Nothing was paused.' }
+      const still = this.paused(scope)
+      return {
+        ok: true,
+        text: still
+          ? `Chat ${scope} has no pause of its own, but a stop for every chat holds until ${fmtClock(still.until)}. Lift it with tgmcp bots resume.`
+          : `Nothing was paused in chat ${scope}.`,
+      }
+    }
     const base: Omit<TgEvent, 'seq' | 'watchIds'> = msg
       ? describeMessage(store, msg)
       : { chatId: scope === 'all' ? 0 : scope, chatLabel: lifted[0]!.chatLabel, fromId: null, fromName: 'you', fromUsername: null, messageId: 0, topicId: null, replyToId: null, text: '', media: null, date: new Date().toISOString() }

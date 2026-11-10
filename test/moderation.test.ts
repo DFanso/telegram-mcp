@@ -454,6 +454,29 @@ describe('moderator commands in the daemon', () => {
     await d.stop()
   })
 
+  test('your own /bots resume replayed late does not lift a newer stop', async () => {
+    const { tg, d, say } = await daemon()
+    say(LEO_MOD, '/bots stop')
+    await settle()
+    tg.emit(TEAM_QA.id, '/bots resume', tg.me.id, { outgoing: true, from: tg.me, date: new Date(Date.now() - 5 * MIN).toISOString() })
+    await settle()
+    expect(d.service.paused(TEAM_QA.id)).not.toBeNull()
+    await d.stop()
+  })
+
+  test('resuming one chat says so when a stop for every chat still holds', async () => {
+    const { d, say } = await daemon()
+    say(LEO_MOD, '/bots stop all')
+    await settle()
+    const r = d.service.resumeLocally(TEAM_QA.id)
+    expect(r.text).toContain('a stop for every chat holds until')
+    expect(d.service.paused(TEAM_QA.id)).not.toBeNull()
+    expect(d.service.resumeLocally(ANNA.id + 1).text).toContain('a stop for every chat')
+    d.service.resumeLocally('all')
+    expect(d.service.resumeLocally(TEAM_QA.id).text).toBe(`Nothing was paused in chat ${TEAM_QA.id}.`)
+    await d.stop()
+  })
+
   test('a daemon restart does not lift it', async () => {
     const home = mkdtempSync(join(tmpdir(), 'tgmcp-mod-'))
     const first = await daemon({}, { home })
