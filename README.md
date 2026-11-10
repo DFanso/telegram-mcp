@@ -85,6 +85,7 @@ All in `~/.config/telegram-mcp/` (folder mode 0700; override with `TELEGRAM_MCP_
 | `session.db` | mtcute's session: peer cache, update state, and the auth key sealed with `session-key` |
 | `daemon.log` | The daemon log (`tgmcp logs`) |
 | `recent.json` | The last 20 sent messages (shown in the menu bar) |
+| `pauses.json` | Moderator pauses in force (see [Moderator commands](#moderator-commands)), so a restart doesn't lift one |
 | `avatars/` | Small (160×160) profile photos for the menu bar and tray avatars, `<chat id>.jpg` (or `.none` when the chat has none) |
 | `token`, `credentials.json`, `session.key` | Only with `TELEGRAM_MCP_SECRET_STORE=file` |
 
@@ -113,6 +114,8 @@ Downloads go to `~/Downloads/telegram-mcp/<chat>/` (`TELEGRAM_MCP_DOWNLOADS`), n
 ```
 
 **Lists** take a nickname, an `@username`, a numeric id, or `"me"`. If a chat is on more than one list, the safer list wins: blocked > requireApproval > autoSend > autoReply > defaultPolicy. `blocked` matches the raw id, so `5550001111` also blocks `-1005550001111`.
+
+**/bots** from a moderator pauses Claude in a chat or everywhere; see [Moderator commands](#moderator-commands).
 
 **/reply** hands one chat to the session that called `telegram_answer_reply`, for two hours or until `/reply stop`. Typing `/reply` in that chat counts as your approval, so the session's replies there go out without asking even when the chat is on `requireApproval`; `blocked` still refuses, and files still ask. Only a `/reply` you type on your phone or desktop counts: messages the daemon sent itself are ignored, and Claude cannot send a message that starts with `/reply`, formatted or not.
 
@@ -206,6 +209,49 @@ The sender gets fixed replies, never text Claude wrote and never their own reaso
 3. `tgmcp restart`, then `tgmcp page test` to hear the alarm, check the volume and try Ack.
 
 The bot only messages the account you're logged in as, and ignores button presses from anyone else.
+
+## Moderator commands
+
+When several people's Claude sessions auto-reply in the same group, they can end up answering each other non-stop. Moderator commands let a moderator stop that in one message. **They are on by default**, with two moderators: Leo (user id `1188107983`) and Iddhi (`1269534379`). You can see and change this in the `moderation` section of `config.json`:
+
+```jsonc
+"moderation": {
+  "enabled": true,                          // false (or `tgmcp bots off`): /bots from anyone is just a message
+  "moderators": [1188107983, 1269534379],   // numeric user ids, never usernames or names
+  "defaultMinutes": 60,                     // how long "/bots stop" lasts if they don't say
+  "maxMinutes": 1440                        // the longest a stop can last
+}
+```
+
+A moderator types one of these in a chat, and the message must be exactly that (any letter case):
+
+| Command | What happens on your account |
+| --- | --- |
+| `/bots stop` · `/bots stop 30m` · `/bots stop 2h` | Claude is paused **in that chat** for an hour, or the time given |
+| `/bots stop all` · `/bots stop all 2h` | Claude is paused **in every chat** |
+| `/bots resume` · `/bots resume all` | The pause in that chat, or every pause, is lifted |
+
+Anything else, like `/bots stop now`, `/bots@x stop`, or a forwarded command, is an ordinary message. Only the moderator's numeric user id counts, so someone with the same name or a look-alike username can't pause you. **A moderator's own account never obeys moderator commands**, from themselves or another moderator.
+
+**While a chat is paused**, the daemon enforces it, whatever a session tries:
+- `telegram_send_message`, `telegram_send_file` and `telegram_send_sticker` to it are refused, and so are edits and new topics. Drafts waiting for approval are refused even if you approve them. A session can still delete its own messages there.
+- Its messages don't reach watching sessions, `telegram_watch` on it is refused, a `/reply` takeover there ends, and a new `/reply` there isn't handed over.
+- No away reply goes there.
+- Your own Saved Messages are never paused. Neither are you: anything you type yourself goes out as usual, and so does the pager.
+
+The moderator's text never reaches a Claude session as an instruction. The daemon recognises a fixed set of commands and does the pausing itself.
+
+**What you see**: a note in your Saved Messages saying who paused what and until when, and how to undo it. One line in the chat (for example "🤖 Claude on this account is paused here for 1h, by a moderator."), unless the chat is Blocked or Ask every time. A line in `daemon.log`. Each watching session is told to stop replying. `tgmcp bots`, `telegram_status` and `telegram_get_rules` show the pauses. A pause ends on time even if the command arrived late, and a restart doesn't lift it.
+
+**You can always override it** on your own account:
+
+```sh
+tgmcp bots                  # on or off, the moderators, and what's paused now
+tgmcp bots resume           # lift every pause now (or: tgmcp bots resume <chat id>)
+tgmcp bots off | on         # ignore moderator commands (pauses in force stop applying too), or obey them again
+```
+
+Typing `/bots resume` (or `/bots resume all`) yourself in a chat also lifts the pause on your account. Claude can't send or edit in a message that starts with `/bots`, so a moderator's own session can't be talked into posting one.
 
 ## Away auto-reply
 

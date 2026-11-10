@@ -24,10 +24,12 @@ import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { checkSendable, describeOutgoing, fileDigest, fmtBytes, safeFileName, type OutgoingFile } from '../shared/media'
 import { looksLikeReplyCommand, parseReplyCommand } from '../shared/takeover'
-import type { IncomingMessage, MessageInfo, PeerInfo, SendMode, SentRecord, TgEvent, ToolResult, UiContact, UiPage, UiState } from '../shared/protocol'
+import { fmtMinutes, looksLikeBotsCommand, moderatorCommand, parseBotsCommand, stopMinutes } from '../shared/moderation'
+import type { IncomingMessage, MessageInfo, PeerInfo, SendMode, SentRecord, TgEvent, ToolResult, UiContact, UiModeration, UiPage, UiState } from '../shared/protocol'
 import { CHAT_KINDS, TOOLS, chatKindOf, isToolName, type ToolInput, type ToolName } from '../shared/tools'
 import { uiAway, type AwayResponder } from './away'
 import type { Approvals, DecideOptions, PendingSend } from './approvals'
+import type { Pause, Pauses } from './moderation'
 import { visibleText } from './formatting'
 import type { Page, PageAction, PageActor, Pager } from './pager'
 import { formatEvent, type SessionHub } from './sessions'
@@ -54,6 +56,16 @@ export interface ServiceDeps {
   away?: AwayResponder
   /** daemon.log (edits are logged). Absent in tests that do not need it. */
   log?: (msg: string) => void
+  /** Moderator pauses ("/bots stop"). Absent = none can be in force. */
+  pauses?: Pauses
+}
+
+/** At most one ack in a chat per this many ms, however often a moderator repeats a /bots command. */
+const MODERATION_ACK_GAP_MS = 60_000
+
+/** "14:05", the daemon's local time. */
+function fmtClock(ms: number): string {
+  return new Date(ms).toTimeString().slice(0, 5)
 }
 
 const VIA_TEXT: Record<SentRecord['via'], string> = {
@@ -166,6 +178,8 @@ export class Service {
   #ownSent = new Set<string>()
   /** Sends still on the way, per chat: the echo can arrive before the send returns its id. */
   #inflight = new Map<number, Set<Promise<unknown>>>()
+  /** When each chat last got a stop or a resume ack, so a repeated /bots command doesn't make the chat noisy. */
+  #lastAck = new Map<string, number>()
 
   get #mcpHome(): string {
     return this.d.mcpHome ?? join(homedir(), '.config', 'telegram-mcp')
@@ -292,6 +306,13 @@ export class Service {
       sid = hub.stopTakeover(msg.chatId, { ...base, takeover: { action: 'stop' } })
     } else if (isListed(store.get(), 'blocked', msg.chat)) {
       sid = null
+    } else if (this.paused(msg.chatId)) {
+      // A moderator paused Claude here: the /reply stays in the chat (nothing took it), and you hear why.
+      const p = this.paused(msg.chatId)!
+      await this.#noteToSelf(
+        `telegram-mcp: /reply in ${msg.chat.name} was not handed to Claude: a moderator (${p.byName}) paused Claude sessions there until ${fmtClock(p.until)}. To lift it on this account: tgmcp bots resume.`,
+      )
+      sid = null
     } else {
       const minutes = this.d.takeoverMinutes ?? 120
       sid = hub.startTakeover(msg.chatId, minutes * 60_000, { ...base, takeover: { action: 'start', instruction: cmd.instruction, minutes } })
@@ -336,6 +357,8 @@ export class Service {
    * daemon's own, so its echo never reads as you being back.
    */
   sendAway(chatId: number, text: string): Promise<MessageInfo> {
+    const p = this.paused(chatId)
+    if (p) return Promise.reject(new Error(`not sent to ${chatId}: paused by a moderator until ${fmtClock(p.until)}`))
     return this.#deliver(chatId, text, undefined, {}, undefined, false)
   }
 
@@ -416,9 +439,12 @@ export class Service {
     } else if (!approve) {
       result = { text: `Declined ${VIA_TEXT[via]}: the message to ${item.chatLabel} was not sent.` }
     } else {
-      // The rules may have changed since the draft was made.
+      // The rules may have changed since the draft was made, and a moderator may have paused the chat.
       const decision = decideSend(this.d.store.get(), { id: item.chatId, username: item.username }, { isWatching: false })
-      if (decision.action === 'block') {
+      const paused = this.#pauseRefusal(item.chatId, item.chatLabel, 'Not sent')
+      if (paused) {
+        result = paused
+      } else if (decision.action === 'block') {
         result = fail(`Not sent to ${item.chatLabel}: ${decision.reason}.`)
       } else {
         try {
@@ -654,6 +680,7 @@ export class Service {
       contacts: listContacts(config, this.d.tg.state().me?.id),
       pages: (this.d.pager?.active() ?? []).map(uiPage),
       away: this.d.away?.ui() ?? uiAway(config, this.d.tg.state().me, new Date()),
+      moderation: this.moderationState(),
       approvals: this.d.approvals.list().map(a => {
         // An edit or delete shows the message as the chat sees it now (Recently sent has it; a file
         // there is already described), which an edit approved since the ask may have changed.
@@ -693,6 +720,9 @@ export class Service {
     const file = draft.file ? checkSendable(draft.file, { mcpHome: this.#mcpHome }) : undefined
     const topicId = p.topicId ?? t.entry?.topicId
     if (looksLikeReplyCommand(visibleText(draft.text, p.parseMode))) return fail('Not sent: a message starting with /reply would start a takeover. Reword it.')
+    if (looksLikeBotsCommand(visibleText(draft.text, p.parseMode))) return fail('Not sent: a message starting with /bots is a moderator command, which only a person types. Reword it.')
+    const paused = this.#pauseRefusal(t.peer.id, t.label, 'Not sent', t.peer.isSelf === true)
+    if (paused) return paused
     const decision = decideSend(config, t.peer, {
       isWatching: this.d.hub.isWatching(sid, t.peer.id),
       file: file !== undefined,
@@ -879,6 +909,9 @@ export class Service {
       this.d.log?.(`${action} declined ${VIA_TEXT[via]}: ${changeLogLine(item)}`)
       return { text: `Declined ${VIA_TEXT[via]}: message #${messageId} in ${item.chatLabel} was not ${done}.` }
     }
+    // A delete only takes something back, so a moderator's pause doesn't stop it; an edit says something new.
+    const paused = action === 'edit' ? this.#pauseRefusal(item.chatId, item.chatLabel, 'Not edited') : null
+    if (paused) return paused
     const decision = decideSend(this.d.store.get(), { id: item.chatId, username: item.username }, { isWatching: false })
     if (decision.action === 'block') {
       this.d.log?.(`${action} refused after approval (${decision.reason}): ${changeLogLine(item)}`)
@@ -919,6 +952,174 @@ export class Service {
     this.#saveRecent()
   }
 
+  // ---- moderator commands ------------------------------------------------------------
+
+  /** The moderator pause in force for this chat, if any. With moderator commands off, none is. */
+  paused(chatId: number): Pause | null {
+    if (!this.d.store.get().moderation.enabled) return null
+    return this.d.pauses?.get(chatId) ?? null
+  }
+
+  /** The refusal while a chat is paused; null when it isn't. Your own Saved Messages are never paused. */
+  #pauseRefusal(chatId: number, label: string, what: string, isSelf = false): ToolResult | null {
+    if (isSelf || chatId === this.d.tg.state().me?.id) return null
+    const p = this.paused(chatId)
+    if (!p) return null
+    return fail(
+      `${what}: a moderator (${p.byName}) paused Claude sessions ${p.scope === 'all' ? 'in every chat' : `in ${label}`} until ${fmtClock(p.until)} (${fmtMinutes(p.until - Date.now())} left). Nothing can be sent there until then. Only the user can lift it early, with tgmcp bots resume. Tell the user; do not try another way.`,
+    )
+  }
+
+  /** For the menu bar, tray and `tgmcp bots`. */
+  moderationState(): UiModeration {
+    const m = this.d.store.get().moderation
+    return {
+      enabled: m.enabled,
+      moderators: m.moderators,
+      appliesHere: this.#moderationAppliesHere(),
+      pauses: (this.d.pauses?.list() ?? []).map(p => ({
+        chatId: p.scope === 'all' ? null : p.scope,
+        chatLabel: p.scope === 'all' ? 'every chat' : p.chatLabel,
+        until: new Date(p.until).toISOString(),
+        by: p.by,
+        byName: p.byName,
+      })),
+    }
+  }
+
+  #moderationAppliesHere(): boolean {
+    const me = this.d.tg.state().me?.id
+    return me === undefined || !this.d.store.get().moderation.moderators.includes(me)
+  }
+
+  #moderationLines(): string[] {
+    const m = this.d.store.get().moderation
+    const head = !m.enabled
+      ? 'Moderator commands: off (moderation.enabled is false)'
+      : !this.#moderationAppliesHere()
+        ? 'Moderator commands: this account is a moderator, so /bots commands never pause it'
+        : `Moderator commands: on; "/bots stop" and "/bots resume" from user ids ${m.moderators.join(', ') || '(none)'} pause or resume Claude here`
+    const pauses = (this.d.pauses?.list() ?? []).map(
+      p => `  paused: ${p.scope === 'all' ? 'every chat' : `${p.chatLabel} (chat ${p.scope})`} until ${fmtClock(p.until)}, by ${p.byName} (${p.by})`,
+    )
+    return [head, ...pauses]
+  }
+
+  /** A line in your Saved Messages, from the daemon. Never counts as you speaking. */
+  async #noteToSelf(text: string): Promise<void> {
+    const me = this.d.tg.state().me
+    if (!me) return
+    try {
+      await this.#deliver(me.id, text, undefined, { parseMode: 'plain' }, undefined, false)
+    } catch (e) {
+      this.d.log?.(`moderation: could not write to Saved Messages: ${errText(e)}`)
+    }
+  }
+
+  /**
+   * One short line in the chat where a moderator typed a /bots command, so they see this account
+   * obeyed. Only where the rules let a fixed reply go out unasked (as with the pager's replies), and
+   * at most one stop ack and one resume ack a minute per chat.
+   */
+  async #ack(kind: 'stop' | 'resume', chatId: number, text: string, replyTo: number): Promise<void> {
+    const now = Date.now()
+    const key = `${kind}:${chatId}`
+    if (now - (this.#lastAck.get(key) ?? 0) < MODERATION_ACK_GAP_MS) return
+    const config = this.d.store.get()
+    const peer = await this.#peerById(chatId)
+    const rule = decideSend(config, peer, { isWatching: false })
+    if (rule.action === 'block' || isListed(config, 'requireApproval', peer)) return
+    this.#lastAck.set(key, now)
+    const footed = withFooter(text, config.footer)
+    const sent = await this.#deliver(chatId, footed, undefined, { replyTo, parseMode: 'plain' }, undefined, false)
+    const nickname = nicknameFor(config, chatId)
+    this.#record({ chatId, chatLabel: nickname ? `${peer.name} [${nickname}]` : peer.name, text: footed, messageId: sent.id, via: 'auto', sessionLabel: 'moderation' })
+  }
+
+  /**
+   * An incoming "/bots stop|resume" from a moderator. Returns a line for daemon.log, or null when the
+   * message isn't one that counts here (then it is an ordinary message).
+   *
+   * The pause takes effect before the first await, so the daemon can route the next message (and
+   * this one) knowing it.
+   */
+  async handleModeratorMessage(msg: IncomingMessage): Promise<string | null> {
+    const { store, hub, pauses, tg } = this.d
+    if (!pauses) return null
+    const config = store.get()
+    const cmd = moderatorCommand(config, msg, tg.state().me?.id)
+    if (!cmd) return null
+    const from = msg.from!
+    const sentAt = Number.isNaN(Date.parse(msg.date)) ? Date.now() : Date.parse(msg.date)
+    const base = describeMessage(store, msg)
+    const where = cmd.all ? 'every chat' : msg.chat.name
+    const who = `${from.name}${from.username ? ` (@${from.username})` : ''}, id ${from.id}`
+    const done: Promise<void>[] = []
+
+    if (cmd.action === 'stop') {
+      const minutes = stopMinutes(config, cmd)
+      // Counted from when it was sent: a stop that arrives late (a catch-up after sleep) ends on time.
+      const until = sentAt + minutes * 60_000
+      if (until <= Date.now()) return `/bots stop from ${from.id} in ${msg.chatId} ignored: it ran out before it arrived`
+      pauses.stop({ scope: cmd.all ? 'all' : msg.chatId, chatLabel: msg.chat.name, at: sentAt, until, by: from.id, byName: from.name })
+      const left = until - Date.now()
+      const told = hub.moderate(
+        cmd.all ? null : msg.chatId,
+        { ...base, moderation: { action: 'pause', all: cmd.all, until: fmtClock(until), minutes: Math.ceil(left / 60_000) } },
+        true,
+      )
+      done.push(
+        this.#noteToSelf(
+          `telegram-mcp: moderator ${who} paused your Claude sessions in ${where} until ${fmtClock(until)} ("${msg.text.trim()}" in ${msg.chat.name}). Nothing they send there goes out until then. To lift it now: tgmcp bots resume. To ignore moderator commands from now on: tgmcp bots off.`,
+        ),
+        this.#ack('stop', msg.chatId, `🤖 Claude on this account is paused ${cmd.all ? 'everywhere' : 'here'} for ${fmtMinutes(left)}, by a moderator.`, msg.id),
+      )
+      await Promise.allSettled(done)
+      return `/bots stop from ${from.id} in ${msg.chatId}: paused ${cmd.all ? 'every chat' : `chat ${msg.chatId}`} until ${new Date(until).toISOString()}; told ${told.length} session(s)`
+    }
+
+    // A resume lifts only pauses from before it: an old resume replayed after a restart can't undo a newer stop.
+    const lifted = pauses.resume(cmd.all ? 'all' : msg.chatId, sentAt)
+    if (lifted.length === 0) return `/bots resume from ${from.id} in ${msg.chatId}: nothing was paused`
+    const told = hub.moderate(cmd.all ? null : msg.chatId, { ...base, moderation: { action: 'resume', all: cmd.all } }, false)
+    const still = this.paused(msg.chatId)
+    done.push(
+      this.#noteToSelf(`telegram-mcp: moderator ${who} resumed your Claude sessions in ${where}.${still ? ` Still paused there until ${fmtClock(still.until)} by an earlier "/bots stop all".` : ''}`),
+      this.#ack('resume', msg.chatId, still ? `🤖 Claude on this account is still paused here for ${fmtMinutes(still.until - Date.now())} (a stop for every chat).` : `🤖 Claude on this account is back on ${cmd.all ? 'everywhere' : 'here'}.`, msg.id),
+    )
+    await Promise.allSettled(done)
+    return `/bots resume from ${from.id} in ${msg.chatId}: lifted ${lifted.length} pause(s); told ${told.length} session(s)`
+  }
+
+  /**
+   * You can always lift a pause on your own account: "/bots resume" (or "/bots resume all") typed by
+   * you in a chat, `tgmcp bots resume`, or turning moderator commands off. Returns a line for
+   * daemon.log, or null when the message isn't that.
+   */
+  async handleOwnBotsCommand(msg: IncomingMessage): Promise<string | null> {
+    if (!msg.outgoing) return null
+    const cmd = parseBotsCommand(msg.text)
+    if (cmd?.action !== 'resume') return null
+    if (await this.isOwnSend(msg)) return null
+    const r = this.resumeLocally(cmd.all ? 'all' : msg.chatId, msg)
+    return `/bots resume typed by you in ${msg.chatId}: ${r.text}`
+  }
+
+  /** The owner lifting pauses on this account (their own /bots resume, the CLI, the menu bar). */
+  resumeLocally(scope: number | 'all', msg?: IncomingMessage): { ok: boolean; text: string } {
+    const { pauses, hub, store } = this.d
+    const lifted = pauses?.resume(scope, Infinity) ?? []
+    if (lifted.length === 0) return { ok: true, text: scope === 'all' ? 'Nothing was paused.' : `Nothing was paused in chat ${scope}.` }
+    const base: Omit<TgEvent, 'seq' | 'watchIds'> = msg
+      ? describeMessage(store, msg)
+      : { chatId: scope === 'all' ? 0 : scope, chatLabel: lifted[0]!.chatLabel, fromId: null, fromName: 'you', fromUsername: null, messageId: 0, topicId: null, replyToId: null, text: '', media: null, date: new Date().toISOString() }
+    hub.moderate(scope === 'all' ? null : scope, { ...base, moderation: { action: 'resume', all: scope === 'all' } }, false)
+    const names = lifted.map(p => (p.scope === 'all' ? 'every chat' : p.chatLabel)).join(', ')
+    this.d.log?.(`moderation: you lifted ${lifted.length} pause(s): ${names}`)
+    const still = scope === 'all' ? null : this.paused(scope)
+    return { ok: true, text: `Lifted: ${names}.${still ? ` Still paused there by a stop for every chat until ${fmtClock(still.until)} (tgmcp bots resume all).` : ''}` }
+  }
+
   // ---- delivery hint -------------------------------------------------------------------
 
   #delivery(sessionId: string): string {
@@ -954,6 +1155,7 @@ export class Service {
         if (t.sessionId !== sid) continue
         lines.push(`  taken over: chat ${t.chatId} until ${new Date(t.until).toISOString()}`)
       }
+      lines.push(...this.#moderationLines())
       lines.push(watches.length ? 'Watches:' : 'Watches: none')
       for (const w of watches) {
         lines.push(
@@ -982,6 +1184,7 @@ export class Service {
       out.push('', `Footer added to every message: ${footerSummary(c)}`)
       out.push(`Chats in no list: ${c.defaultPolicy === 'block' ? 'blocked' : 'need approval'}`)
       out.push(`Away auto-reply: ${this.d.away?.summary() ?? awaySummary(c.away, new Date())}`)
+      out.push(...this.#moderationLines())
       for (const list of RULE_LISTS) {
         out.push(`${list}: ${c.rules[list].length ? c.rules[list].map(name).join(', ') : '(empty)'}`)
       }
@@ -1097,6 +1300,9 @@ export class Service {
         return fail(`Not edited: message #${p.messageId} in ${t.label} is a ${rec.kind ?? 'message of unknown kind'}. Only text messages can be edited.`)
       }
       if (looksLikeReplyCommand(visibleText(p.text, p.parseMode))) return fail('Not edited: a message starting with /reply would start a takeover. Reword it.')
+      if (looksLikeBotsCommand(visibleText(p.text, p.parseMode))) return fail('Not edited: a message starting with /bots is a moderator command, which only a person types. Reword it.')
+      const paused = this.#pauseRefusal(t.peer.id, t.label, 'Not edited', t.peer.isSelf === true)
+      if (paused) return paused
       // The chat sees the new text, so it needs the same yes as a send: where a send would wait for
       // approval, so does the edit.
       const decision = decideSend(config, t.peer, {
@@ -1149,6 +1355,8 @@ export class Service {
     telegram_create_topic: async (sid, p) => {
       const config = this.d.store.get()
       const t = await this.#resolve(p.chat, true)
+      const paused = this.#pauseRefusal(t.peer.id, t.label, 'No topic created')
+      if (paused) return paused
       // The chat sees the new topic, so it needs the same yes as a send. There is no approval draft
       // for a topic, so it is created only where sending is automatic.
       const decision = decideSend(config, t.peer, {
@@ -1309,6 +1517,8 @@ export class Service {
           `${t.label} is not on the autoReply list, so sessions can't listen to it. Ask the user to add it to rules.autoReply in ${this.d.store.path} (only a human can change the rules), then watch again.`,
         )
       }
+      const paused = this.#pauseRefusal(t.peer.id, t.label, 'Not watching')
+      if (paused) return paused
       const from = p.from !== undefined ? await this.#resolve(p.from, false) : undefined
       const topicId = p.topicId ?? t.entry?.topicId
       const w = this.d.hub.addWatch(sid, {

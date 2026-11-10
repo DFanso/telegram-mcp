@@ -3,11 +3,12 @@ import { basename, dirname } from 'node:path'
 import { z } from 'zod'
 import { AwaySchema, DEFAULT_SCHEDULES } from './away'
 import { DEFAULT_FOOTER } from './footer'
+import { DEFAULT_MODERATORS } from './moderation'
 
 /**
  * The rules file. Humans edit it by hand; Claude sessions can only change `chats`
  * (through the daemon), never `rules`, `footer` or `guides`. `away` (the away auto-reply schedules)
- * is changed only by hand, by the CLI or by the tray, never by a session.
+ * and `moderation` (moderator commands) are changed only by hand, by the CLI or by the tray, never by a session.
  */
 
 const ChatRefSchema = z.union([z.string().min(1), z.number().int()])
@@ -59,6 +60,23 @@ const PagingSchema = z.looseObject({
 })
 export type PagingConfig = z.infer<typeof PagingSchema>
 
+/**
+ * Moderator commands: "/bots stop [30m|2h] [all]" and "/bots resume [all]" from one of `moderators`
+ * pause what Claude sessions on this account send in that chat (or everywhere). The daemon parses a
+ * fixed set of commands and enforces them; no text reaches a session as an instruction. They never
+ * apply when this account is a moderator itself. Off with `enabled: false` (or `tgmcp bots off`).
+ */
+const ModerationSchema = z.looseObject({
+  enabled: z.boolean().default(true),
+  /** Numeric user ids, since a username can change hands. */
+  moderators: z.array(z.number().int()).default([...DEFAULT_MODERATORS]),
+  /** How long "/bots stop" lasts when no time is given. */
+  defaultMinutes: z.number().int().min(1).default(60),
+  /** The longest a stop can last, whatever the moderator asked for. */
+  maxMinutes: z.number().int().min(1).default(24 * 60),
+})
+export type ModerationConfig = z.infer<typeof ModerationSchema>
+
 export const ConfigSchema = z.looseObject({
   guides: z.array(z.string()).default([]),
   footer: z.string().default(''),
@@ -70,6 +88,7 @@ export const ConfigSchema = z.looseObject({
   chats: z.record(z.string(), ChatEntrySchema).default({}),
   paging: PagingSchema.prefault({}),
   away: AwaySchema.prefault({}),
+  moderation: ModerationSchema.prefault({}),
 })
 export type Config = z.infer<typeof ConfigSchema>
 export type RuleList = 'blocked' | 'requireApproval' | 'autoSend' | 'autoReply'
@@ -86,6 +105,7 @@ export const DEFAULT_CONFIG_TEXT = `${JSON.stringify(
     rules: { blocked: [], requireApproval: [], autoSend: [], autoReply: [] },
     chats: {},
     away: { enabled: false, quietMinutes: 30, schedules: DEFAULT_SCHEDULES },
+    moderation: { enabled: true, moderators: DEFAULT_MODERATORS, defaultMinutes: 60, maxMinutes: 1440 },
   },
   null,
   2,

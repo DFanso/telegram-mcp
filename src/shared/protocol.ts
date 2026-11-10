@@ -92,6 +92,8 @@ export interface TgEvent {
   date: string
   /** Set on the notices "/reply" sends: a chat was handed to this session, or taken back. */
   takeover?: { action: 'start'; instruction: string; minutes: number } | { action: 'stop' }
+  /** Set on the notices a moderator's /bots command sends: this chat (or every chat) is paused, or no longer. */
+  moderation?: { action: 'pause'; all: boolean; until: string; minutes: number } | { action: 'resume'; all: boolean }
 }
 
 // ---- tool results ------------------------------------------------------------------
@@ -222,6 +224,16 @@ export interface UiState {
   /** Pages still waiting for someone: the menu bar and tray ring while any is ringing or unanswered. */
   pages: UiPage[]
   away: UiAway
+  /** Moderator commands: whether they apply to this account, and the pauses in force. */
+  moderation: UiModeration
+}
+
+export interface UiModeration {
+  enabled: boolean
+  moderators: number[]
+  /** False when this account is a moderator itself: then /bots commands never pause it. */
+  appliesHere: boolean
+  pauses: { chatId: number | null; chatLabel: string; until: string; by: number; byName: string }[]
 }
 
 /**
