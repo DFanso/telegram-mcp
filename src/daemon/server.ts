@@ -55,6 +55,7 @@ export function eventsKey(token: string, sessionId: string): string {
  *   GET  /ui/state               what the menu bar app shows
  *   GET  /ui/avatars/:chatId     that chat's small profile photo (JPEG), 404 when it has none; only
  *                                chats in /ui/state, fetched once and cached on disk for a day
+ *   POST /ui/bots/resume         {"chatId"?: number}  lift a moderator's pause on this account (one chat, or all of them)
  *   POST /ui/approvals/:id       {"decision": "approve" | "deny", "remember"?: "autoSend" | "requireApproval", "nickname"?: "…"}
  *   POST /ui/contacts            {"nickname": "…", "sendMode"?: "autoSend" | "requireApproval" | "blocked" | "none",
  *                                 "autoReply"?: true | false, "pageFrom"?: true | false, "rename"?: "…"}
@@ -133,6 +134,16 @@ export function startServer(o: ServerOptions) {
           } catch (e) {
             return Response.json({ ok: false, text: e instanceof Error ? e.message : String(e) }, { status: 409 })
           }
+        })()
+      }
+      if (url.pathname === '/ui/bots/resume' && req.method === 'POST') {
+        return (async () => {
+          const body = (await req.json().catch(() => ({}))) as { chatId?: unknown }
+          if (body.chatId !== undefined && !Number.isSafeInteger(body.chatId)) {
+            return Response.json({ ok: false, text: 'chatId must be a whole number' }, { status: 400 })
+          }
+          const r = o.service.resumeLocally(body.chatId === undefined ? 'all' : (body.chatId as number))
+          return Response.json(r)
         })()
       }
       if (url.pathname === '/ui/away' && req.method === 'POST') {
@@ -217,6 +228,7 @@ export function startServer(o: ServerOptions) {
           secrets: o.secrets,
           menubar: o.service.uiActive(),
           sessions: o.hub.summary(),
+          moderation: o.service.moderationState(),
         })
       }
       if (url.pathname === '/admin/reconnect' && req.method === 'POST') {

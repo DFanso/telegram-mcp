@@ -50,7 +50,7 @@ function dialogText(a: ApprovalRequest): string {
   return `Send this Telegram message?\n\nTo: ${a.to}\n${why}${a.firstTime ? '\nFirst message to this chat.' : ''}\n\n${a.text}`
 }
 
-function channelPayload(e: TgEvent) {
+export function channelPayload(e: TgEvent) {
   const meta: Record<string, string> = {
     chat: e.chatNickname ?? e.chatLabel,
     chat_id: String(e.chatId),
@@ -65,6 +65,11 @@ function channelPayload(e: TgEvent) {
   if (e.media) meta.media = e.media
   if (e.takeover) {
     meta.takeover = e.takeover.action
+    return { content: formatEvent(e), meta }
+  }
+  // A moderator's pause or its end: the notice, never the /bots text that caused it.
+  if (e.moderation) {
+    meta.moderation = e.moderation.action
     return { content: formatEvent(e), meta }
   }
   return { content: e.text || (e.media ? `[${e.media}]` : '[empty message]'), meta }

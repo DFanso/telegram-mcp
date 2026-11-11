@@ -40,6 +40,10 @@ The first of these that's available:
 
 Nothing is sent unless the user accepts. Drafts expire after 20 minutes, and the rules are checked again at send time. Edits and deletes ask the same way.
 
+## Moderator commands
+
+`moderation` (off by default; the user turns it on with `tgmcp bots on`) lets the user ids in `moderation.moderators` pause Claude on this account with `/bots stop [30m|2h]`, `/bots stop all` and `/bots resume [all]`. While a chat is paused, sends, edits, watches, `/reply` takeovers and away replies there are refused. Never on a moderator's own account. `tgmcp bots` shows it, `tgmcp bots resume` lifts a pause, and `tgmcp bots off` turns it off again.
+
 ## Changing rules without editing the file
 
 The menu bar or tray app's **Contacts** page lists every saved chat. There the user can rename a chat, choose **Always allow**, **Ask every time** or **Blocked**, turn **Listen** (autoReply) on or off, and choose who can page them. Each change saves to `config.json` at once.

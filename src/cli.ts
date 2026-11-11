@@ -27,6 +27,8 @@ const HELP = `tgmcp ${VERSION}: always-on Telegram daemon + per-session MCP brid
   tgmcp page setup    connect your own pager bot (from @BotFather) so pages reach your phone
   tgmcp page test     ring a test page: hear the alarm, check the volume, try Ack
   tgmcp away          show the away schedules; tgmcp away on|off|quiet <minutes>, or [<schedule>] hours HH:MM HH:MM|message <text>
+  tgmcp bots          moderator commands: who can pause Claude here and what is paused now;
+                      tgmcp bots on|off | resume [chat id]   (resume with no id lifts every pause)
   tgmcp footer        show the footer added to every message; tgmcp footer on|off|<text>
   tgmcp call <tool> [json]   call a tool as a one-off session, e.g. tgmcp call telegram_get_rules
   tgmcp mcp-add       print the command that registers the MCP server with Claude Code
@@ -107,6 +109,76 @@ async function away(args: string[]) {
     console.log(withFooter(renderAwayMessage(s.message, name), config.footer).replace(/^/gm, '  '))
   }
   if (a.schedules.length === 0) console.log('No schedules: add one in the tray or menu bar app, or in config.json.')
+}
+
+/**
+ * Moderator commands on this account: show them, switch them on or off (config.json), or lift a pause
+ * (the daemon holds those). You can always override a moderator here.
+ */
+async function bots(args: string[]) {
+  const [sub, arg] = args
+  const store = new ConfigStore(getPaths().config) // no watch(): nothing keeps the process alive
+  if (sub === 'on' || sub === 'off') {
+    try {
+      store.update(c => {
+        c.moderation.enabled = sub === 'on'
+      })
+    } catch (e) {
+      console.log(e instanceof Error ? e.message : String(e))
+      process.exitCode = 1
+      return
+    }
+    const ids = store.get().moderation.moderators
+    console.log(
+      sub === 'on'
+        ? `Moderator commands are on: "/bots stop" and "/bots resume" from user ids ${ids.join(', ') || '(none yet: add them to moderation.moderators)'} now pause or resume Claude on this account.`
+        : 'Moderator commands are off: /bots from anyone is just a message now.',
+    )
+    if (sub === 'off') console.log('Pauses a moderator set no longer apply here.')
+  } else if (sub === 'resume') {
+    if (arg !== undefined && !/^-?\d+$/.test(arg)) {
+      console.log('usage: tgmcp bots resume [chat id]')
+      process.exitCode = 1
+      return
+    }
+    try {
+      const res = await daemonFetch('/ui/bots/resume', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(arg === undefined ? {} : { chatId: Number(arg) }),
+      })
+      const body = await readDaemonReply(res)
+      console.log(body.text)
+      if (!body.ok) process.exitCode = 1
+    } catch (e) {
+      console.log(`The daemon did not answer (${e instanceof Error ? e.message : String(e)}). Is it running? tgmcp status`)
+      process.exitCode = 1
+    }
+    return
+  } else if (sub !== undefined) {
+    console.log('usage: tgmcp bots [on|off|resume [chat id]]')
+    process.exitCode = 1
+    return
+  }
+  const m = store.get().moderation
+  console.log(`Moderator commands: ${m.enabled ? 'on' : 'off'}`)
+  console.log(`Moderators (user ids): ${m.moderators.join(', ') || '(none)'}`)
+  console.log(`"/bots stop" lasts ${m.defaultMinutes} min unless they say (at most ${m.maxMinutes} min).`)
+  try {
+    // /status, not /ui/state: reading that one counts as the menu bar being open.
+    const res = await daemonFetch('/status')
+    if (!res.ok) return
+    const st = (await res.json()) as { moderation?: { appliesHere: boolean; pauses: { chatId: number | null; chatLabel: string; until: string; byName: string; by: number }[] } }
+    if (!st.moderation) return
+    if (!st.moderation.appliesHere) console.log('This account is a moderator, so /bots commands never pause it.')
+    if (st.moderation.pauses.length === 0) console.log('Nothing is paused.')
+    for (const p of st.moderation.pauses) {
+      const where = p.chatId === null ? 'every chat' : `${p.chatLabel} (chat ${p.chatId})`
+      console.log(`Paused: ${where} until ${new Date(p.until).toLocaleTimeString()}, by ${p.byName} (${p.by})`)
+    }
+  } catch {
+    console.log('(The daemon is not answering, so pauses in force are not shown.)')
+  }
 }
 
 function footer(args: string[]) {
@@ -413,6 +485,9 @@ switch (cmd) {
   }
   case 'away':
     await away(rest)
+    break
+  case 'bots':
+    await bots(rest)
     break
   case 'footer':
     footer(rest)

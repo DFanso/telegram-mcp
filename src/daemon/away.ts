@@ -33,6 +33,8 @@ export interface AwayDeps {
    * message as its own so its echo is never mistaken for you being back.
    */
   send?: (chatId: number, text: string) => Promise<MessageInfo>
+  /** A moderator paused Claude in this chat ("/bots stop"): no away reply goes there either. */
+  paused?: (chatId: number) => boolean
   /** away.json; absent = memory only. */
   statePath?: string
   now?: () => number
@@ -220,6 +222,7 @@ export class AwayResponder {
     const lastOut = this.#lastOutgoing.get(chat.id)
     if (away.quietMinutes > 0 && lastOut !== undefined && now - lastOut < away.quietMinutes * 60_000) return { skip: 'you wrote there lately' } // R7
     if (this.d.hub.takeoverOf(chat.id) !== null) return { skip: 'handed to Claude' } // R8
+    if (this.d.paused?.(chat.id)) return { skip: 'paused by a moderator' }
     if (this.d.hub.handledLive(chat.id) && isListed(config, 'autoReply', chat)) return { skip: 'Claude is answering' }
     if (paged || this.d.pages().some(p => p.senderKey === String(msg.from?.id ?? chat.id))) return { skip: 'paged' } // R9
     return { window }

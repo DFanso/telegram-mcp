@@ -5,6 +5,8 @@ import { ensureHome, makeLogger } from '../shared/files'
 import { getPaths, getPort, type Paths } from '../shared/paths'
 import { ensureToken, loadCredentials, openSecretStore, type SecretStore } from '../shared/secrets'
 import { Approvals } from './approvals'
+import { Pauses } from './moderation'
+import { moderatorCommand } from '../shared/moderation'
 import { AvatarCache } from './avatars'
 import { AwayResponder } from './away'
 import { PageBot } from './page-bot'
@@ -79,9 +81,13 @@ export async function createDaemon(o: DaemonOptions) {
     pages: () => pager.active(),
     record: r => service.recordSent(r),
     send: (chatId, text) => service.sendAway(chatId, text),
+    paused: chatId => service.paused(chatId) !== null,
     statePath: join(o.paths.home, 'away.json'),
     log,
   })
+
+  // Moderator pauses ("/bots stop"). Kept in a file, so restarting the daemon doesn't lift one.
+  const pauses = new Pauses({ path: join(o.paths.home, 'pauses.json'), log })
 
   let port = o.port
   const service = new Service({
@@ -97,6 +103,7 @@ export async function createDaemon(o: DaemonOptions) {
     pager,
     away,
     log,
+    pauses,
   })
 
   // Bind first: if another daemon already owns the port, fail before touching the Telegram session.
@@ -129,6 +136,20 @@ export async function createDaemon(o: DaemonOptions) {
         .handleOwnMessage(msg)
         .then(cmd => cmd && log(`/reply in ${msg.chatId}: ${hub.takeoverOf(msg.chatId) ?? 'no session took it (or it ended)'}`))
         .catch(e => log(`/reply in ${msg.chatId} failed: ${e instanceof Error ? e.message : String(e)}`))
+      // Your own "/bots resume" lifts a moderator's pause on your account.
+      service
+        .handleOwnBotsCommand(msg)
+        .then(line => line && log(line))
+        .catch(e => log(`/bots resume in ${msg.chatId} failed: ${e instanceof Error ? e.message : String(e)}`))
+      return
+    }
+    // A moderator's "/bots stop|resume" is handled here and goes no further: no page, no away reply,
+    // and no session sees it. The pause is in force before this returns.
+    if (moderatorCommand(store.get(), msg, tg.state().me?.id)) {
+      service
+        .handleModeratorMessage(msg)
+        .then(line => line && log(line))
+        .catch(e => log(`/bots in ${msg.chatId} failed: ${e instanceof Error ? e.message : String(e)}`))
       return
     }
     const trigger = pageTrigger(store.get(), msg)
@@ -154,6 +175,8 @@ export async function createDaemon(o: DaemonOptions) {
     // Taking a chat off autoReply ends listening to it at once, even for existing watches. A chat
     // handed over with /reply is listened to for as long as the takeover lasts.
     if (!hub.takeoverOf(msg.chatId) && !isListed(store.get(), 'autoReply', msg.chat)) return
+    // While a moderator has Claude paused here, no session hears this chat.
+    if (service.paused(msg.chatId)) return
     const n = hub.dispatch(msg, m => describeMessage(store, m))
     if (n > 0) log(`message ${msg.chatId}:${msg.id} -> ${n} session(s)`)
   })
