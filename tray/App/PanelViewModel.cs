@@ -667,6 +667,48 @@ public sealed class PanelViewModel : Observable
     /// <summary>Home → Listening: every saved chat with its listen switch, alphabetical so a row doesn't jump when switched.</summary>
     public ObservableCollection<ContactVM> MayListen { get; } = [];
 
+    /// <summary>The Away tab: every saved person with a switch for whether they get away replies (away.skip).</summary>
+    public ObservableCollection<ContactVM> AwayPeople { get; } = [];
+
+    /// <summary>Instead of that list: a daemon without the skip list, or no saved people yet.</summary>
+    public string? AwayPeoplePlaceholder =>
+        !AwayShown ? null : State?.Away?.Skip is null ? Away.OlderDaemon : AwayPeople.Count == 0 ? "No saved people yet. Save a chat in Contacts to choose here." : null;
+
+    internal bool AwaySkips(long chatId) => Away.Skips(State?.Away, chatId);
+
+    /// <summary>
+    /// True from a skip switch's save until the poll after it: the next switch builds its list from
+    /// State.Away.Skip, so it has to wait for the saved list or it would send the old one back.
+    /// </summary>
+    internal bool SkipBusy => _skipBusy;
+    bool _skipBusy;
+
+    /// <summary>A person's away switch: off puts them on away.skip, on takes them off. Saved at once.</summary>
+    public async Task SetAwayReplyAsync(ContactVM vm, bool gets)
+    {
+        if (State?.Away is not { Skip: not null } a || _awaySaving || _skipBusy)
+        {
+            if (State?.Away is { Skip: null }) ShowFlash(Away.OlderDaemon, false);
+            vm.AwayResync();
+            return;
+        }
+        _skipBusy = true;
+        vm.AwayPending = gets;
+        CommandManager.InvalidateRequerySuggested();
+        try
+        {
+            await SaveAwayChangeAsync(new AwayChange(Skip: Away.SkipWith(a, vm.ChatId, vm.Nickname, skip: !gets)), null,
+                gets ? $"{vm.Nickname} gets away replies again." : $"{vm.Nickname} won't get away replies.");
+            await PollFreshAsync();
+        }
+        finally
+        {
+            _skipBusy = false;
+            vm.AwayPending = null;
+            CommandManager.InvalidateRequerySuggested();
+        }
+    }
+
     /// <summary>"Show all 9" / "Show fewer" under that list, or null when it's short.</summary>
     public string? MayListenMore =>
         (State?.Contacts?.Count ?? 0) <= ShortList ? null : _showAllListen ? "Show fewer" : $"Show all {State!.Contacts!.Count}";
@@ -942,6 +984,10 @@ public sealed class PanelViewModel : Observable
         ListSync.Apply(MayListen, (_showAllListen ? sorted : sorted.Take(ShortList)).ToList());
         Raise(nameof(MayListenMore));
         Raise(nameof(MayListenPlaceholder));
+
+        ListSync.Apply(AwayPeople, sorted.Where(c => c.IsPerson).ToList());
+        foreach (var vm in AwayPeople) vm.AwayResync();
+        Raise(nameof(AwayPeoplePlaceholder));
     }
 
     static bool Changed(ref string key, string now)
